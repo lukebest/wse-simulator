@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import simpy
 
+from wsesim.core.stats import SimResult
 from wsesim.network.flow_control.credit_vc import CreditBasedVCFlowControl
 from wsesim.network.network import UnifiedNetwork
 from wsesim.network.packet import Packet
@@ -181,3 +182,8 @@ def test_vc_is_reserved_per_packet_until_tail() -> None:
     assert net.stats.pipeline_cycles > 0
     assert len(net.stats.per_router_vc_wait_cycles) > 0
     assert all(len(router.active_vc_packets) == 0 for router in net.routers.values())
+
+    sim_result = SimResult(total_latency_cycles=int(env.now))
+    sim_result.update_from_network_stats(net.stats, sim_time_cycles=int(env.now))
+    assert sim_result.network_cycles > 0
+    assert sim_result.network_throughput > 0

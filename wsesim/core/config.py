@@ -88,7 +88,12 @@ class DSEConfig:
     max_trials: int = 50
     random_seed: int = 1234
     score_weights: dict[str, float] = field(
-        default_factory=lambda: {"total_latency_cycles": -1.0}
+        default_factory=lambda: {
+            "total_latency_cycles": -1.0,
+            "vc_wait_cycles": -0.1,
+            "buffer_wait_cycles": -0.1,
+            "link_wait_cycles": -0.05,
+        }
     )
 
 

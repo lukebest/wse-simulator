@@ -10,8 +10,15 @@ from wsesim.dse.search.random import RandomSearch
 
 
 def evaluate(config: WSEConfig) -> SimResult:
-    # Placeholder evaluator: lower pe_width gives higher latency.
-    result = SimResult(total_latency_cycles=max(1, 10_000 // config.compute.pe_width))
+    # Placeholder evaluator: lower pe_width gives higher latency and more congestion.
+    base_latency = max(1, 10_000 // config.compute.pe_width)
+    congestion_scale = max(1, 64 // config.compute.pe_width)
+    result = SimResult(
+        total_latency_cycles=base_latency,
+        vc_wait_cycles=5 * congestion_scale,
+        buffer_wait_cycles=4 * congestion_scale,
+        link_wait_cycles=3 * congestion_scale,
+    )
     return result
 
 
