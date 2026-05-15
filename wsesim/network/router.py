@@ -22,11 +22,19 @@ class Router:
     crossbar_bw_flits_per_cycle: int = 1
     arbitration: str = "round_robin"
     input_buffer: simpy.Store = field(init=False)
-    switch_allocator: simpy.Resource = field(init=False)
+    pipeline_unit: simpy.Resource = field(init=False)
+    rc_unit: simpy.Resource = field(init=False)
+    va_unit: simpy.Resource = field(init=False)
+    sa_unit: simpy.Resource = field(init=False)
+    st_unit: simpy.Resource = field(init=False)
 
     def __post_init__(self) -> None:
         self.input_buffer = simpy.Store(self.env, capacity=self.num_vcs * self.buffer_depth)
-        self.switch_allocator = simpy.Resource(self.env, capacity=1)
+        self.pipeline_unit = simpy.Resource(self.env, capacity=1)
+        self.rc_unit = simpy.Resource(self.env, capacity=1)
+        self.va_unit = simpy.Resource(self.env, capacity=1)
+        self.sa_unit = simpy.Resource(self.env, capacity=1)
+        self.st_unit = simpy.Resource(self.env, capacity=1)
 
     def enqueue(self, item):
         if len(self.input_buffer.items) >= self.input_buffer.capacity:
@@ -34,23 +42,32 @@ class Router:
         return self.input_buffer.put(item)
 
     def _route_compute(self):
-        yield self.env.timeout(self.routing_latency_cycles)
+        with self.rc_unit.request() as req:
+            yield req
+            yield self.env.timeout(self.routing_latency_cycles)
 
     def _vc_allocate(self):
-        yield self.env.timeout(self.vc_alloc_latency_cycles)
+        with self.va_unit.request() as req:
+            yield req
+            yield self.env.timeout(self.vc_alloc_latency_cycles)
 
     def _switch_allocate(self):
-        with self.switch_allocator.request() as req:
+        with self.sa_unit.request() as req:
             yield req
             yield self.env.timeout(self.switch_alloc_latency_cycles)
 
     def _switch_traverse(self, flits: int):
-        traversal_cycles = self.switch_traversal_latency_cycles + ceil(
-            flits / max(self.crossbar_bw_flits_per_cycle, 1)
-        )
-        yield self.env.timeout(traversal_cycles)
+        with self.st_unit.request() as req:
+            yield req
+            traversal_cycles = self.switch_traversal_latency_cycles + ceil(
+                flits / max(self.crossbar_bw_flits_per_cycle, 1)
+            )
+            yield self.env.timeout(traversal_cycles)
 
     def pipeline(self, flits: int):
+        # Model ingress dequeue from input buffer before entering pipeline stages.
+        yield self.input_buffer.get()
+
         if self.pipeline_mode == "1_stage":
             # Compressed model: combine control stages into one stage.
             control_cycles = max(
@@ -59,10 +76,10 @@ class Router:
                 self.switch_alloc_latency_cycles,
                 self.switch_traversal_latency_cycles,
             )
-            total_cycles = control_cycles + ceil(
-                flits / max(self.crossbar_bw_flits_per_cycle, 1)
-            )
-            yield self.env.timeout(total_cycles)
+            total_cycles = control_cycles + ceil(flits / max(self.crossbar_bw_flits_per_cycle, 1))
+            with self.pipeline_unit.request() as req:
+                yield req
+                yield self.env.timeout(total_cycles)
             return
 
         if self.pipeline_mode != "4_stage":
