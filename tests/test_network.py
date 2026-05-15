@@ -177,4 +177,7 @@ def test_vc_is_reserved_per_packet_until_tail() -> None:
     assert net.stats.packets_sent == 2
     # Both packets share the same path and single VC; second packet should wait.
     assert net.stats.avg_latency() > 0
+    assert net.stats.vc_wait_cycles > 0
+    assert net.stats.pipeline_cycles > 0
+    assert len(net.stats.per_router_vc_wait_cycles) > 0
     assert all(len(router.active_vc_packets) == 0 for router in net.routers.values())
