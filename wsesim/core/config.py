@@ -42,6 +42,12 @@ class NetworkDomainConfig:
     link_latency_cycles: int = 1
     num_vcs: int = 2
     buffer_depth: int = 8
+    router_pipeline_mode: str = "4_stage"
+    rc_latency_cycles: int = 1
+    va_latency_cycles: int = 1
+    sa_latency_cycles: int = 1
+    st_latency_cycles: int = 1
+    crossbar_bw_flits_per_cycle: int = 1
 
 
 @dataclass(slots=True)

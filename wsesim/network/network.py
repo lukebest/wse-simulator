@@ -37,6 +37,12 @@ class UnifiedNetwork:
     link_latency_cycles: int
     num_vcs: int
     buffer_depth: int
+    router_pipeline_mode: str = "4_stage"
+    rc_latency_cycles: int = 1
+    va_latency_cycles: int = 1
+    sa_latency_cycles: int = 1
+    st_latency_cycles: int = 1
+    crossbar_bw_flits_per_cycle: int = 1
     graph: dict[int, list[int]] = field(init=False)
     routers: dict[int, Router] = field(init=False)
     links: dict[tuple[int, int], Link] = field(init=False)
@@ -50,6 +56,12 @@ class UnifiedNetwork:
                 node_id=node,
                 num_vcs=self.num_vcs,
                 buffer_depth=self.buffer_depth,
+                pipeline_mode=self.router_pipeline_mode,
+                routing_latency_cycles=self.rc_latency_cycles,
+                vc_alloc_latency_cycles=self.va_latency_cycles,
+                switch_alloc_latency_cycles=self.sa_latency_cycles,
+                switch_traversal_latency_cycles=self.st_latency_cycles,
+                crossbar_bw_flits_per_cycle=self.crossbar_bw_flits_per_cycle,
             )
             for node in self.graph
         }
@@ -109,7 +121,7 @@ class UnifiedNetwork:
                 continue
 
             yield router.enqueue(packet)
-            yield self.env.process(router.route_compute())
+            yield self.env.process(router.pipeline(flits))
             yield self.env.process(self.links[(current, next_hop)].transfer(flits))
             hops += 1
             current = next_hop
@@ -122,4 +134,21 @@ class UnifiedNetwork:
 
     def estimate_transfer_cycles(self, size_bytes: int) -> int:
         flits = max(1, ceil(size_bytes / 32))
-        return self.link_latency_cycles + ceil(flits / max(self.link_bw_flits_per_cycle, 1))
+        crossbar_cycles = ceil(flits / max(self.crossbar_bw_flits_per_cycle, 1))
+        if self.router_pipeline_mode == "1_stage":
+            router_cycles = max(
+                self.rc_latency_cycles,
+                self.va_latency_cycles,
+                self.sa_latency_cycles,
+                self.st_latency_cycles,
+            ) + crossbar_cycles
+        else:
+            router_cycles = (
+                self.rc_latency_cycles
+                + self.va_latency_cycles
+                + self.sa_latency_cycles
+                + self.st_latency_cycles
+                + crossbar_cycles
+            )
+        link_cycles = self.link_latency_cycles + ceil(flits / max(self.link_bw_flits_per_cycle, 1))
+        return router_cycles + link_cycles

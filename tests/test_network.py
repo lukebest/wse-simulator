@@ -48,3 +48,34 @@ def test_table_based_routing_with_removed_link() -> None:
     env.process(net.send_packet(Packet(src=0, dst=15, size_bytes=64, payload_type="activation")))
     env.run()
     assert net.stats.packets_sent == 1
+
+
+def test_router_4stage_pipeline_increases_latency_vs_1stage() -> None:
+    def run(mode: str) -> float:
+        env = simpy.Environment()
+        net = UnifiedNetwork(
+            env=env,
+            topology=Mesh2D(),
+            routing=DimensionOrderRouting(),
+            flow_control=CreditBasedVCFlowControl(),
+            num_nodes=16,
+            link_bw_flits_per_cycle=2,
+            link_latency_cycles=1,
+            num_vcs=2,
+            buffer_depth=8,
+            router_pipeline_mode=mode,
+            rc_latency_cycles=1,
+            va_latency_cycles=1,
+            sa_latency_cycles=1,
+            st_latency_cycles=1,
+            crossbar_bw_flits_per_cycle=2,
+        )
+        env.process(
+            net.send_packet(Packet(src=0, dst=15, size_bytes=128, payload_type="activation"))
+        )
+        env.run()
+        return net.stats.avg_latency()
+
+    latency_1stage = run("1_stage")
+    latency_4stage = run("4_stage")
+    assert latency_4stage > latency_1stage
