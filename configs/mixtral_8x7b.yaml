@@ -1,0 +1,11 @@
+workload:
+  model_name: mixtral_8x7b
+  hidden_dim: 4096
+  expert_ffn_dim: 14336
+  num_experts: 8
+  top_k: 2
+  decode_batch_size: 1
+  decode_tokens: 32
+  partition_strategy: expert
+  collective_algorithm: ring
+  mapping_strategy: nearest_neighbor

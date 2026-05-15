@@ -1,0 +1,24 @@
+wafer:
+  reticles_x: 2
+  reticles_y: 2
+  cores_per_reticle: 16
+  defect_rate: 0.01
+  defect_seed: 42
+compute:
+  pe_type: systolic
+  pe_width: 16
+  pe_freq_ghz: 1.0
+  l1_capacity_kb: 256
+network:
+  noc:
+    topology: mesh2d
+    routing: xy
+    flow_control: credit_vc
+    link_bw_flits_per_cycle: 2
+    link_latency_cycles: 1
+  now:
+    topology: mesh2d
+    routing: table_based
+    flow_control: credit_vc
+    link_bw_flits_per_cycle: 1
+    link_latency_cycles: 5

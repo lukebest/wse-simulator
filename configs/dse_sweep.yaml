@@ -1,0 +1,9 @@
+dse:
+  objective: latency_min
+  max_trials: 20
+  random_seed: 1234
+search_space:
+  pe_width: [8, 16, 32]
+  noc_buffer_depth: [4, 8, 16]
+  noc_num_vcs: [1, 2, 4]
+  partition_strategy: [row, col, block, expert]

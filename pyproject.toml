@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "wsesim"
+version = "0.1.0"
+description = "Wafer Scale Engine simulator with modular NoC/NoW and MoE FFN mapping."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+  "simpy>=4.1",
+  "numpy>=1.24",
+  "pyyaml>=6.0",
+  "matplotlib>=3.7",
+]
+
+[project.optional-dependencies]
+dse = ["scikit-optimize>=0.10.2"]
+dev = ["pytest>=8.0", "ruff>=0.6.0"]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["wsesim*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
