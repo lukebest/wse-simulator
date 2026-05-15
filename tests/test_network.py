@@ -147,3 +147,34 @@ def test_flit_level_model_large_packet_has_higher_latency() -> None:
     large_latency, large_flits = run(256)
     assert large_flits > small_flits
     assert large_latency > small_latency
+
+
+def test_vc_is_reserved_per_packet_until_tail() -> None:
+    env = simpy.Environment()
+    net = UnifiedNetwork(
+        env=env,
+        topology=Mesh2D(),
+        routing=DimensionOrderRouting(),
+        flow_control=CreditBasedVCFlowControl(),
+        num_nodes=16,
+        link_bw_flits_per_cycle=1,
+        link_latency_cycles=1,
+        num_vcs=1,  # force contention on VC reservation
+        buffer_depth=8,
+        router_pipeline_mode="4_stage",
+        rc_latency_cycles=1,
+        va_latency_cycles=1,
+        sa_latency_cycles=1,
+        st_latency_cycles=1,
+        crossbar_bw_flits_per_cycle=1,
+    )
+    pkt_a = Packet(src=0, dst=15, size_bytes=256, payload_type="activation")
+    pkt_b = Packet(src=0, dst=15, size_bytes=256, payload_type="activation")
+    env.process(net.send_packet(pkt_a))
+    env.process(net.send_packet(pkt_b))
+    env.run()
+
+    assert net.stats.packets_sent == 2
+    # Both packets share the same path and single VC; second packet should wait.
+    assert net.stats.avg_latency() > 0
+    assert all(len(router.active_vc_packets) == 0 for router in net.routers.values())

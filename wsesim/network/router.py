@@ -27,6 +27,7 @@ class Router:
     va_unit: simpy.Resource = field(init=False)
     sa_unit: simpy.Resource = field(init=False)
     st_unit: simpy.Resource = field(init=False)
+    active_vc_packets: set[int] = field(init=False)
 
     def __post_init__(self) -> None:
         self.input_buffer = simpy.Store(self.env, capacity=self.num_vcs * self.buffer_depth)
@@ -35,6 +36,7 @@ class Router:
         self.va_unit = simpy.Resource(self.env, capacity=1)
         self.sa_unit = simpy.Resource(self.env, capacity=1)
         self.st_unit = simpy.Resource(self.env, capacity=1)
+        self.active_vc_packets = set()
 
     def enqueue(self, item):
         if len(self.input_buffer.items) >= self.input_buffer.capacity:
@@ -89,3 +91,19 @@ class Router:
         yield self.env.process(self._vc_allocate())
         yield self.env.process(self._switch_allocate())
         yield self.env.process(self._switch_traverse(flits))
+
+    def can_reserve_vc(self, packet_id: int) -> bool:
+        if packet_id in self.active_vc_packets:
+            return True
+        return len(self.active_vc_packets) < self.num_vcs
+
+    def reserve_vc(self, packet_id: int) -> bool:
+        if packet_id in self.active_vc_packets:
+            return True
+        if len(self.active_vc_packets) >= self.num_vcs:
+            return False
+        self.active_vc_packets.add(packet_id)
+        return True
+
+    def release_vc(self, packet_id: int) -> None:
+        self.active_vc_packets.discard(packet_id)

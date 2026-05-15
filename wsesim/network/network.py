@@ -104,6 +104,7 @@ class UnifiedNetwork:
             raise ValueError("Packet source/destination is unavailable in graph.")
 
         start = self.env.now
+        packet_id = id(packet)
         hops = 0
         current = packet.src
         flits = packet_to_flits(packet)
@@ -116,6 +117,13 @@ class UnifiedNetwork:
             next_router = self.routers[next_hop]
 
             for flit in flits:
+                if flit.is_head:
+                    while not next_router.can_reserve_vc(packet_id):
+                        yield self.env.timeout(1)
+                    if not next_router.reserve_vc(packet_id):
+                        yield self.env.timeout(1)
+                        continue
+
                 while not self.flow_control.can_send(
                     len(next_router.input_buffer.items), next_router.input_buffer.capacity
                 ):
@@ -124,6 +132,9 @@ class UnifiedNetwork:
                 yield self.env.process(router.pipeline(1))
                 yield self.env.process(self.links[(current, next_hop)].transfer(1))
                 self.stats.flits_sent += 1
+
+                if flit.is_tail:
+                    next_router.release_vc(packet_id)
             hops += 1
             current = next_hop
 
