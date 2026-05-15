@@ -28,6 +28,10 @@ class Router:
     sa_unit: simpy.Resource = field(init=False)
     st_unit: simpy.Resource = field(init=False)
     active_vc_packets: set[int] = field(init=False)
+    vc_wait_cycles: int = 0
+    buffer_wait_cycles: int = 0
+    pipeline_cycles: int = 0
+    flits_processed: int = 0
 
     def __post_init__(self) -> None:
         self.input_buffer = simpy.Store(self.env, capacity=self.num_vcs * self.buffer_depth)
@@ -67,6 +71,7 @@ class Router:
             yield self.env.timeout(traversal_cycles)
 
     def pipeline(self, flits: int):
+        start = self.env.now
         # Model ingress dequeue from input buffer before entering pipeline stages.
         yield self.input_buffer.get()
 
@@ -82,6 +87,8 @@ class Router:
             with self.pipeline_unit.request() as req:
                 yield req
                 yield self.env.timeout(total_cycles)
+            self.pipeline_cycles += int(self.env.now - start)
+            self.flits_processed += flits
             return
 
         if self.pipeline_mode != "4_stage":
@@ -91,6 +98,8 @@ class Router:
         yield self.env.process(self._vc_allocate())
         yield self.env.process(self._switch_allocate())
         yield self.env.process(self._switch_traverse(flits))
+        self.pipeline_cycles += int(self.env.now - start)
+        self.flits_processed += flits
 
     def can_reserve_vc(self, packet_id: int) -> bool:
         if packet_id in self.active_vc_packets:

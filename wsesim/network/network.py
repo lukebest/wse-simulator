@@ -22,6 +22,13 @@ class NetworkStats:
     total_packet_latency: float = 0.0
     max_packet_latency: float = 0.0
     total_hops: int = 0
+    vc_wait_cycles: int = 0
+    buffer_wait_cycles: int = 0
+    pipeline_cycles: int = 0
+    link_wait_cycles: int = 0
+    per_router_vc_wait_cycles: dict[int, int] = field(default_factory=dict)
+    per_router_buffer_wait_cycles: dict[int, int] = field(default_factory=dict)
+    per_router_pipeline_cycles: dict[int, int] = field(default_factory=dict)
 
     def avg_latency(self) -> float:
         return 0.0 if self.packets_sent == 0 else self.total_packet_latency / self.packets_sent
@@ -119,18 +126,43 @@ class UnifiedNetwork:
             for flit in flits:
                 if flit.is_head:
                     while not next_router.can_reserve_vc(packet_id):
+                        self.stats.vc_wait_cycles += 1
+                        router.vc_wait_cycles += 1
+                        self.stats.per_router_vc_wait_cycles[router.node_id] = (
+                            self.stats.per_router_vc_wait_cycles.get(router.node_id, 0) + 1
+                        )
                         yield self.env.timeout(1)
                     if not next_router.reserve_vc(packet_id):
+                        self.stats.vc_wait_cycles += 1
+                        router.vc_wait_cycles += 1
+                        self.stats.per_router_vc_wait_cycles[router.node_id] = (
+                            self.stats.per_router_vc_wait_cycles.get(router.node_id, 0) + 1
+                        )
                         yield self.env.timeout(1)
                         continue
 
                 while not self.flow_control.can_send(
                     len(next_router.input_buffer.items), next_router.input_buffer.capacity
                 ):
+                    self.stats.buffer_wait_cycles += 1
+                    router.buffer_wait_cycles += 1
+                    self.stats.per_router_buffer_wait_cycles[router.node_id] = (
+                        self.stats.per_router_buffer_wait_cycles.get(router.node_id, 0) + 1
+                    )
                     yield self.env.timeout(1)
                 yield router.enqueue(flit)
+                pipeline_before = router.pipeline_cycles
                 yield self.env.process(router.pipeline(1))
-                yield self.env.process(self.links[(current, next_hop)].transfer(1))
+                self.stats.pipeline_cycles += router.pipeline_cycles - pipeline_before
+                self.stats.per_router_pipeline_cycles[router.node_id] = (
+                    self.stats.per_router_pipeline_cycles.get(router.node_id, 0)
+                    + (router.pipeline_cycles - pipeline_before)
+                )
+
+                link = self.links[(current, next_hop)]
+                wait_before = link.total_wait_cycles
+                yield self.env.process(link.transfer(1))
+                self.stats.link_wait_cycles += link.total_wait_cycles - wait_before
                 self.stats.flits_sent += 1
 
                 if flit.is_tail:
