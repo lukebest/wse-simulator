@@ -9,7 +9,7 @@ import simpy
 
 from wsesim.network.flow_control.base import FlowControl
 from wsesim.network.link import Link
-from wsesim.network.packet import Packet, packet_to_num_flits
+from wsesim.network.packet import Packet, packet_to_flits
 from wsesim.network.router import Router
 from wsesim.network.routing.base import RoutingAlgorithm
 from wsesim.network.topology.base import Topology
@@ -18,6 +18,7 @@ from wsesim.network.topology.base import Topology
 @dataclass(slots=True)
 class NetworkStats:
     packets_sent: int = 0
+    flits_sent: int = 0
     total_packet_latency: float = 0.0
     max_packet_latency: float = 0.0
     total_hops: int = 0
@@ -105,7 +106,7 @@ class UnifiedNetwork:
         start = self.env.now
         hops = 0
         current = packet.src
-        flits = packet_to_num_flits(packet)
+        flits = packet_to_flits(packet)
 
         while current != packet.dst:
             router = self.routers[current]
@@ -114,15 +115,15 @@ class UnifiedNetwork:
                 raise ValueError(f"Invalid next hop {next_hop} from {current}.")
             next_router = self.routers[next_hop]
 
-            if not self.flow_control.can_send(
-                len(next_router.input_buffer.items), next_router.input_buffer.capacity
-            ):
-                yield self.env.timeout(1)
-                continue
-
-            yield router.enqueue(packet)
-            yield self.env.process(router.pipeline(flits))
-            yield self.env.process(self.links[(current, next_hop)].transfer(flits))
+            for flit in flits:
+                while not self.flow_control.can_send(
+                    len(next_router.input_buffer.items), next_router.input_buffer.capacity
+                ):
+                    yield self.env.timeout(1)
+                yield router.enqueue(flit)
+                yield self.env.process(router.pipeline(1))
+                yield self.env.process(self.links[(current, next_hop)].transfer(1))
+                self.stats.flits_sent += 1
             hops += 1
             current = next_hop
 
