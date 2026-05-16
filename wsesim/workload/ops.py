@@ -12,6 +12,7 @@ class GEMMOp:
     n: int
     k: int
     op_type: str = "gemm"
+    activation: str | None = None
     expert_id: int | None = None
     expert_kind: str | None = None
     depends_on: list[str] = field(default_factory=list)

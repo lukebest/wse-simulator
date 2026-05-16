@@ -1,29 +1,29 @@
-"""Generate DeepSeek-V3 FFN workload and map it onto WSE cores."""
+"""Generate DeepSeek-V4-Pro FFN workload and map it onto WSE cores."""
 
 from __future__ import annotations
 
 from collections import Counter
 
 from wsesim.workload.generator import (
-    DeepSeekV3FFNProfile,
-    generate_deepseek_v3_decode_ffn_workload,
+    DeepSeekV4ProFFNProfile,
+    generate_deepseek_v4_pro_decode_ffn_workload,
 )
 from wsesim.workload.mapper import ExpertAffinityMapping
 from wsesim.workload.partition.expert import ExpertPartition
 
 
 def main() -> None:
-    profile = DeepSeekV3FFNProfile(
+    profile = DeepSeekV4ProFFNProfile(
         hidden_dim=7168,
-        expert_ffn_dim=18432,
-        num_routed_experts=256,
+        expert_ffn_dim=3072,
+        num_routed_experts=384,
         num_shared_experts=1,
-        top_k=8,
+        top_k=6,
         decode_tokens=32,
         routing_skew_alpha=1.2,
         capacity_factor=1.25,
     )
-    workload = generate_deepseek_v3_decode_ffn_workload(profile)
+    workload = generate_deepseek_v4_pro_decode_ffn_workload(profile)
 
     partitioner = ExpertPartition()
     tasks = {op.name: partitioner.partition(op, shards=1) for op in workload.ops}

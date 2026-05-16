@@ -6,7 +6,7 @@ from pathlib import Path
 
 from wsesim.core.config import WSEConfig
 from wsesim.dse.engine import DSEEngine
-from wsesim.dse.evaluator_deepseek import evaluate_deepseek_v3_ffn
+from wsesim.dse.evaluator_deepseek import evaluate_deepseek_v4_pro_ffn
 from wsesim.dse.report import (
     export_pareto_csv,
     export_trials_csv,
@@ -19,12 +19,12 @@ from wsesim.dse.search.random import RandomSearch
 
 def main() -> None:
     base = WSEConfig()
-    base.workload.model_name = "deepseek_v3_ffn_decode"
+    base.workload.model_name = "deepseek_v4_pro_ffn_decode"
     base.workload.hidden_dim = 7168
-    base.workload.expert_ffn_dim = 18432
-    base.workload.num_routed_experts = 256
+    base.workload.expert_ffn_dim = 3072
+    base.workload.num_routed_experts = 384
     base.workload.num_shared_experts = 1
-    base.workload.top_k = 8
+    base.workload.top_k = 6
     base.workload.decode_tokens = 32
     base.workload.routing_skew_alpha = 1.2
     base.workload.capacity_factor = 1.25
@@ -35,7 +35,7 @@ def main() -> None:
     engine = DSEEngine(
         base_config=base,
         strategy=RandomSearch(base),
-        evaluator=evaluate_deepseek_v3_ffn,
+        evaluator=evaluate_deepseek_v4_pro_ffn,
         workers=1,
     )
     trials = engine.run_detailed(trials=8)

@@ -72,13 +72,13 @@ class MemoryConfig:
 
 @dataclass(slots=True)
 class WorkloadConfig:
-    model_name: str = "mixtral_8x7b"
-    hidden_dim: int = 4096
-    expert_ffn_dim: int = 14336
+    model_name: str = "deepseek_v4_pro_ffn_decode"
+    hidden_dim: int = 7168
+    expert_ffn_dim: int = 3072
     num_experts: int = 8
-    num_routed_experts: int = 256
+    num_routed_experts: int = 384
     num_shared_experts: int = 1
-    top_k: int = 2
+    top_k: int = 6
     decode_batch_size: int = 1
     decode_tokens: int = 32
     routing_skew_alpha: float = 1.2

@@ -1,10 +1,10 @@
 workload:
-  model_name: deepseek_v3_ffn_decode
+  model_name: deepseek_v4_pro_ffn_decode
   hidden_dim: 7168
-  expert_ffn_dim: 18432
-  num_routed_experts: 256
+  expert_ffn_dim: 3072
+  num_routed_experts: 384
   num_shared_experts: 1
-  top_k: 8
+  top_k: 6
   decode_tokens: 32
   routing_skew_alpha: 1.2
   capacity_factor: 1.25

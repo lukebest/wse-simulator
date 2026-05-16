@@ -1,4 +1,4 @@
-"""DeepSeek-V3 FFN-aware DSE evaluator."""
+"""DeepSeek-V4-Pro FFN-aware DSE evaluator."""
 
 from __future__ import annotations
 
@@ -20,16 +20,16 @@ from wsesim.network.topology.flat_butterfly import FlatButterfly
 from wsesim.network.topology.mesh2d import Mesh2D
 from wsesim.network.topology.torus2d import Torus2D
 from wsesim.workload.generator import (
-    DeepSeekV3FFNProfile,
-    generate_deepseek_v3_decode_ffn_workload,
+    DeepSeekV4ProFFNProfile,
+    generate_deepseek_v4_pro_decode_ffn_workload,
 )
 from wsesim.workload.mapper import ExpertAffinityMapping, ExpertLocalityMapping, NearestNeighborMapping
 from wsesim.workload.partition.expert import ExpertPartition
 
 
-def evaluate_deepseek_v3_ffn(config: WSEConfig) -> SimResult:
-    """Evaluate one WSE config using DeepSeek-V3-like FFN decode workload."""
-    profile = DeepSeekV3FFNProfile(
+def evaluate_deepseek_v4_pro_ffn(config: WSEConfig) -> SimResult:
+    """Evaluate one WSE config using DeepSeek-V4-Pro FFN decode workload."""
+    profile = DeepSeekV4ProFFNProfile(
         hidden_dim=config.workload.hidden_dim,
         expert_ffn_dim=config.workload.expert_ffn_dim,
         num_routed_experts=config.workload.num_routed_experts,
@@ -39,7 +39,7 @@ def evaluate_deepseek_v3_ffn(config: WSEConfig) -> SimResult:
         routing_skew_alpha=config.workload.routing_skew_alpha,
         capacity_factor=config.workload.capacity_factor,
     )
-    workload = generate_deepseek_v3_decode_ffn_workload(profile)
+    workload = generate_deepseek_v4_pro_decode_ffn_workload(profile)
 
     partitioner = ExpertPartition()
     tasks = {op.name: partitioner.partition(op, shards=1) for op in workload.ops}
@@ -97,8 +97,10 @@ def _estimate_compute_cycles(workload, config: WSEConfig) -> int:
 
     total_mac = 0
     for op in workload.ops:
-        if op.op_type in {"expert_up_proj", "expert_down_proj", "router"}:
+        if op.op_type in {"expert_w1_proj", "expert_w3_proj", "expert_w2_proj", "router"}:
             total_mac += op.m * op.n * op.k
+        elif op.op_type == "elementwise_mul":
+            total_mac += op.m * op.n
     return max(1, total_mac // throughput_per_cycle)
 
 
@@ -108,7 +110,7 @@ def _estimate_network_metrics(workload, mapping, config: WSEConfig) -> dict[str,
     top_k = int(workload.metadata["top_k"])
     fp_bytes = 2
 
-    coordinator = mapping.assignments.get("deepseek_v3_token_dispatch", [0])[0]
+    coordinator = mapping.assignments.get("deepseek_v4_pro_token_dispatch", [0])[0]
     dispatch_by_core: dict[int, int] = defaultdict(int)
     combine_by_core: dict[int, int] = defaultdict(int)
 
@@ -117,7 +119,7 @@ def _estimate_network_metrics(workload, mapping, config: WSEConfig) -> dict[str,
         if not cores:
             continue
         op = op_lookup.get(op_name)
-        if op is None or op.expert_kind != "routed" or op.op_type != "expert_up_proj":
+        if op is None or op.expert_kind != "routed" or op.op_type != "expert_w1_proj":
             continue
         core = cores[0]
         bytes_for_expert = op.m * hidden * fp_bytes
@@ -129,7 +131,7 @@ def _estimate_network_metrics(workload, mapping, config: WSEConfig) -> dict[str,
         if not cores:
             continue
         op = op_lookup.get(op_name)
-        if op is None or op.expert_kind != "shared" or op.op_type != "expert_up_proj":
+        if op is None or op.expert_kind != "shared" or op.op_type != "expert_w1_proj":
             continue
         core = cores[0]
         bytes_for_shared = decode_tokens * hidden * fp_bytes
@@ -220,7 +222,8 @@ def _estimate_memory_stall_cycles(workload, config: WSEConfig) -> int:
     fp_bytes = 2
 
     # Approximate read+write footprint for active expert FFN passes.
-    bytes_moved = active_routed * decode_tokens * (hidden + ffn_dim + hidden) * fp_bytes
+    # V4-Pro expert path uses W1/W3 (up-projections), elementwise fuse, then W2 down-proj.
+    bytes_moved = active_routed * decode_tokens * (hidden + 2 * ffn_dim + hidden) * fp_bytes
 
     mem_bw_bytes_per_cycle = max(1.0, (config.memory.peak_bandwidth_gbps * 1e9) / (1e9))
     transfer_cycles = int(bytes_moved / mem_bw_bytes_per_cycle)
@@ -496,3 +499,8 @@ def _select_gateways(
 
 def _reticle_coord(reticle_id: int, reticles_x: int) -> tuple[int, int]:
     return reticle_id // reticles_x, reticle_id % reticles_x
+
+
+def evaluate_deepseek_v3_ffn(config: WSEConfig) -> SimResult:
+    """Backward-compatible alias to the V4-Pro evaluator."""
+    return evaluate_deepseek_v4_pro_ffn(config)

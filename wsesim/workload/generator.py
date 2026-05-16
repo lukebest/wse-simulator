@@ -79,37 +79,37 @@ def generate_moe_decode_ffn_workload(
 
 
 @dataclass(slots=True)
-class DeepSeekV3FFNProfile:
+class DeepSeekV4ProFFNProfile:
     hidden_dim: int = 7168
-    expert_ffn_dim: int = 18432
-    num_routed_experts: int = 256
+    expert_ffn_dim: int = 3072
+    num_routed_experts: int = 384
     num_shared_experts: int = 1
-    top_k: int = 8
+    top_k: int = 6
     decode_tokens: int = 32
     routing_skew_alpha: float = 1.2
     capacity_factor: float = 1.25
 
 
-def generate_deepseek_v3_decode_ffn_workload(
-    profile: DeepSeekV3FFNProfile,
+def generate_deepseek_v4_pro_decode_ffn_workload(
+    profile: DeepSeekV4ProFFNProfile,
 ) -> LLMWorkload:
-    """Generate a DeepSeek-V3-like MoE FFN decode workload graph.
+    """Generate a DeepSeek-V4-Pro-like MoE FFN decode workload graph.
 
     The model captures routed experts + shared experts and a skewed top-k token
     routing distribution to make per-expert compute more realistic on WSE.
     """
     ops: list[GEMMOp] = []
     gate = GEMMOp(
-        name="deepseek_v3_router_gate_proj",
+        name="deepseek_v4_pro_router_gate_proj",
         m=profile.decode_tokens,
         n=profile.num_routed_experts,
         k=profile.hidden_dim,
         op_type="router",
         depends_on=[],
-        output_to=["deepseek_v3_token_dispatch"],
+        output_to=["deepseek_v4_pro_token_dispatch"],
     )
     dispatch = GEMMOp(
-        name="deepseek_v3_token_dispatch",
+        name="deepseek_v4_pro_token_dispatch",
         m=profile.decode_tokens,
         n=profile.top_k,
         k=profile.num_routed_experts,
@@ -133,60 +133,108 @@ def generate_deepseek_v3_decode_ffn_workload(
         if token_load <= 0:
             continue
         active_routed_experts += 1
-        up = GEMMOp(
-            name=f"deepseek_v3_expert_routed_{expert_id}_up_proj",
+        w1 = GEMMOp(
+            name=f"deepseek_v4_pro_expert_routed_{expert_id}_w1_proj",
             m=token_load,
             n=profile.expert_ffn_dim,
             k=profile.hidden_dim,
-            op_type="expert_up_proj",
+            op_type="expert_w1_proj",
             expert_id=expert_id,
             expert_kind="routed",
             depends_on=[dispatch.name],
-            output_to=[f"deepseek_v3_expert_routed_{expert_id}_down_proj"],
+            output_to=[f"deepseek_v4_pro_expert_routed_{expert_id}_silu_elemul"],
+            activation="silu",
         )
-        down = GEMMOp(
-            name=f"deepseek_v3_expert_routed_{expert_id}_down_proj",
+        w3 = GEMMOp(
+            name=f"deepseek_v4_pro_expert_routed_{expert_id}_w3_proj",
+            m=token_load,
+            n=profile.expert_ffn_dim,
+            k=profile.hidden_dim,
+            op_type="expert_w3_proj",
+            expert_id=expert_id,
+            expert_kind="routed",
+            depends_on=[dispatch.name],
+            output_to=[f"deepseek_v4_pro_expert_routed_{expert_id}_silu_elemul"],
+        )
+        elem = GEMMOp(
+            name=f"deepseek_v4_pro_expert_routed_{expert_id}_silu_elemul",
+            m=token_load,
+            n=profile.expert_ffn_dim,
+            k=profile.expert_ffn_dim,
+            op_type="elementwise_mul",
+            expert_id=expert_id,
+            expert_kind="routed",
+            depends_on=[w1.name, w3.name],
+            output_to=[f"deepseek_v4_pro_expert_routed_{expert_id}_w2_proj"],
+            activation="silu",
+        )
+        w2 = GEMMOp(
+            name=f"deepseek_v4_pro_expert_routed_{expert_id}_w2_proj",
             m=token_load,
             n=profile.hidden_dim,
             k=profile.expert_ffn_dim,
-            op_type="expert_down_proj",
+            op_type="expert_w2_proj",
             expert_id=expert_id,
             expert_kind="routed",
-            depends_on=[up.name],
-            output_to=["deepseek_v3_token_combine"],
+            depends_on=[elem.name],
+            output_to=["deepseek_v4_pro_token_combine"],
         )
-        ops.extend([up, down])
-        routed_down_ops.append(down.name)
+        ops.extend([w1, w3, elem, w2])
+        routed_down_ops.append(w2.name)
 
     shared_down_ops: list[str] = []
     for shared_idx in range(profile.num_shared_experts):
-        up = GEMMOp(
-            name=f"deepseek_v3_expert_shared_{shared_idx}_up_proj",
+        w1 = GEMMOp(
+            name=f"deepseek_v4_pro_expert_shared_{shared_idx}_w1_proj",
             m=profile.decode_tokens,
             n=profile.expert_ffn_dim,
             k=profile.hidden_dim,
-            op_type="expert_up_proj",
+            op_type="expert_w1_proj",
             expert_id=shared_idx,
             expert_kind="shared",
             depends_on=[dispatch.name],
-            output_to=[f"deepseek_v3_expert_shared_{shared_idx}_down_proj"],
+            output_to=[f"deepseek_v4_pro_expert_shared_{shared_idx}_silu_elemul"],
+            activation="silu",
         )
-        down = GEMMOp(
-            name=f"deepseek_v3_expert_shared_{shared_idx}_down_proj",
+        w3 = GEMMOp(
+            name=f"deepseek_v4_pro_expert_shared_{shared_idx}_w3_proj",
+            m=profile.decode_tokens,
+            n=profile.expert_ffn_dim,
+            k=profile.hidden_dim,
+            op_type="expert_w3_proj",
+            expert_id=shared_idx,
+            expert_kind="shared",
+            depends_on=[dispatch.name],
+            output_to=[f"deepseek_v4_pro_expert_shared_{shared_idx}_silu_elemul"],
+        )
+        elem = GEMMOp(
+            name=f"deepseek_v4_pro_expert_shared_{shared_idx}_silu_elemul",
+            m=profile.decode_tokens,
+            n=profile.expert_ffn_dim,
+            k=profile.expert_ffn_dim,
+            op_type="elementwise_mul",
+            expert_id=shared_idx,
+            expert_kind="shared",
+            depends_on=[w1.name, w3.name],
+            output_to=[f"deepseek_v4_pro_expert_shared_{shared_idx}_w2_proj"],
+            activation="silu",
+        )
+        w2 = GEMMOp(
+            name=f"deepseek_v4_pro_expert_shared_{shared_idx}_w2_proj",
             m=profile.decode_tokens,
             n=profile.hidden_dim,
             k=profile.expert_ffn_dim,
-            op_type="expert_down_proj",
+            op_type="expert_w2_proj",
             expert_id=shared_idx,
             expert_kind="shared",
-            depends_on=[up.name],
-            output_to=["deepseek_v3_token_combine"],
+            depends_on=[elem.name],
+            output_to=["deepseek_v4_pro_token_combine"],
         )
-        ops.extend([up, down])
-        shared_down_ops.append(down.name)
+        ops.extend([w1, w3, elem, w2])
+        shared_down_ops.append(w2.name)
 
     combine = GEMMOp(
-        name="deepseek_v3_token_combine",
+        name="deepseek_v4_pro_token_combine",
         m=profile.decode_tokens,
         n=profile.hidden_dim,
         k=profile.top_k + profile.num_shared_experts,
@@ -197,7 +245,7 @@ def generate_deepseek_v3_decode_ffn_workload(
     ops.append(combine)
 
     return LLMWorkload(
-        model_name="deepseek_v3_ffn_decode",
+        model_name="deepseek_v4_pro_ffn_decode",
         ops=ops,
         metadata={
             "hidden_dim": profile.hidden_dim,
@@ -211,6 +259,13 @@ def generate_deepseek_v3_decode_ffn_workload(
             "active_routed_experts": active_routed_experts,
         },
     )
+
+
+def generate_deepseek_v3_decode_ffn_workload(
+    profile: DeepSeekV4ProFFNProfile,
+) -> LLMWorkload:
+    """Backward-compatible alias to the V4-Pro workload generator."""
+    return generate_deepseek_v4_pro_decode_ffn_workload(profile)
 
 
 def _estimate_routed_expert_token_loads(
