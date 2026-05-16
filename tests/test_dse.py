@@ -99,3 +99,21 @@ def test_dse_exports_json_and_csv(tmp_path) -> None:
     with pareto_path.open("r", encoding="utf-8", newline="") as f:
         pareto_rows = list(csv.DictReader(f))
     assert len(pareto_rows) == len(front)
+
+
+def test_random_search_explores_gateway_dimensions() -> None:
+    base = WSEConfig()
+    search = RandomSearch(base, seed=42)
+    history: list[tuple[WSEConfig, float]] = []
+
+    policies = set()
+    gateway_counts = set()
+    for _ in range(20):
+        cfg = search.suggest(history)
+        policies.add(cfg.network.gateway_policy)
+        gateway_counts.add(cfg.network.gateways_per_reticle)
+        history.append((cfg, 0.0))
+
+    assert "nearest" in policies
+    assert "load_aware" in policies
+    assert len(gateway_counts) >= 2
