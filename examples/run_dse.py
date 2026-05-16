@@ -19,6 +19,19 @@ from wsesim.dse.search.random import RandomSearch
 
 def main() -> None:
     base = WSEConfig()
+    base.wafer.reticle_rows = 6
+    base.wafer.reticle_cols = 8
+    base.wafer.reticle_dead_positions = ((1, 0), (2, 0), (3, 0), (4, 0))
+    base.compute.pe_type = "cube"
+    base.compute.pe_freq_ghz = 2.0
+    base.compute.l1_capacity_kb = 2048
+    base.compute.cube_m_tile = 4
+    base.compute.cube_k_tile = 32
+    base.compute.cube_n_tile = 16
+    base.compute.cube_startup_cycles = 27
+    base.compute.cube_steady_cycles = 5
+    base.memory.per_core_bandwidth_gbps = 256.0
+    base.memory.per_core_latency_ns = 100.0
     base.workload.model_name = "deepseek_v4_pro_ffn_decode"
     base.workload.hidden_dim = 7168
     base.workload.expert_ffn_dim = 3072

@@ -16,6 +16,9 @@ def test_deepseek_evaluator_produces_nontrivial_metrics() -> None:
     cfg.workload.top_k = 6
     cfg.workload.decode_tokens = 16
     cfg.workload.mapping_strategy = "expert_affinity"
+    assert cfg.wafer.cores_per_reticle == 44
+    assert cfg.compute.pe_type == "cube"
+    assert cfg.compute.cube_steady_cycles == 5
 
     result = evaluate_deepseek_v4_pro_ffn(cfg)
     assert result.total_latency_cycles > 0

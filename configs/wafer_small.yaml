@@ -1,14 +1,27 @@
 wafer:
   reticles_x: 2
   reticles_y: 2
-  cores_per_reticle: 16
+  reticle_rows: 6
+  reticle_cols: 8
+  reticle_dead_positions:
+    - [1, 0]
+    - [2, 0]
+    - [3, 0]
+    - [4, 0]
   defect_rate: 0.01
   defect_seed: 42
 compute:
-  pe_type: systolic
-  pe_width: 16
-  pe_freq_ghz: 1.0
-  l1_capacity_kb: 256
+  pe_type: cube
+  pe_freq_ghz: 2.0
+  l1_capacity_kb: 2048
+  cube_m_tile: 4
+  cube_k_tile: 32
+  cube_n_tile: 16
+  cube_startup_cycles: 27
+  cube_steady_cycles: 5
+memory:
+  per_core_bandwidth_gbps: 256.0
+  per_core_latency_ns: 100.0
 network:
   noc:
     topology: mesh2d

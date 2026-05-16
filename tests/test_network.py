@@ -30,6 +30,25 @@ def test_network_packet_delivery_mesh() -> None:
     assert net.stats.max_packet_latency > 0
 
 
+def test_network_packet_delivery_rect_mesh() -> None:
+    env = simpy.Environment()
+    net = UnifiedNetwork(
+        env=env,
+        topology=Mesh2D(rows=6, cols=8),
+        routing=DimensionOrderRouting(),
+        flow_control=CreditBasedVCFlowControl(),
+        num_nodes=48,
+        link_bw_flits_per_cycle=2,
+        link_latency_cycles=1,
+        num_vcs=2,
+        buffer_depth=8,
+    )
+    env.process(net.send_packet(Packet(src=0, dst=47, size_bytes=128, payload_type="weight")))
+    env.run()
+    assert net.stats.packets_sent == 1
+    assert net.stats.max_packet_latency > 0
+
+
 def test_table_based_routing_with_removed_link() -> None:
     env = simpy.Environment()
     net = UnifiedNetwork(

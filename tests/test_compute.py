@@ -13,6 +13,20 @@ def test_systolic_cycles_formula() -> None:
     assert cycles == (2 * 2 * 64) + 16 + 16 - 2
 
 
+def test_cube_cycles_pipeline_formula() -> None:
+    pe = PEModel(
+        pe_type="cube",
+        cube_m_tile=4,
+        cube_k_tile=32,
+        cube_n_tile=16,
+        cube_startup_cycles=27,
+        cube_steady_cycles=5,
+    )
+    # tiles = ceil(8/4) * ceil(32/16) * ceil(64/32) = 2 * 2 * 2 = 8
+    cycles = pe.matmul_cycles(m=8, n=32, k=64)
+    assert cycles == 27 + (8 - 1) * 5
+
+
 def test_core_runs_task() -> None:
     env = simpy.Environment()
     core = Core(

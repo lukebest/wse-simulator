@@ -9,9 +9,17 @@ from dataclasses import dataclass, field
 class WaferConfig:
     reticles_x: int = 2
     reticles_y: int = 2
-    cores_per_reticle: int = 16
+    reticle_rows: int = 6
+    reticle_cols: int = 8
+    reticle_dead_positions: tuple[tuple[int, int], ...] = ((1, 0), (2, 0), (3, 0), (4, 0))
     defect_rate: float = 0.0
     defect_seed: int = 42
+
+    @property
+    def cores_per_reticle(self) -> int:
+        grid_nodes = max(1, self.reticle_rows) * max(1, self.reticle_cols)
+        dead_nodes = len(self.reticle_dead_positions)
+        return max(1, grid_nodes - dead_nodes)
 
     @property
     def reticle_count(self) -> int:
@@ -24,13 +32,18 @@ class WaferConfig:
 
 @dataclass(slots=True)
 class ComputeConfig:
-    pe_type: str = "systolic"
+    pe_type: str = "cube"
     pe_width: int = 16
-    pe_freq_ghz: float = 1.0
-    l1_capacity_kb: int = 256
+    pe_freq_ghz: float = 2.0
+    l1_capacity_kb: int = 2048
     l1_read_bw_gbps: float = 1024.0
     l1_write_bw_gbps: float = 1024.0
     l1_latency_cycles: int = 2
+    cube_m_tile: int = 4
+    cube_k_tile: int = 32
+    cube_n_tile: int = 16
+    cube_startup_cycles: int = 27
+    cube_steady_cycles: int = 5
 
 
 @dataclass(slots=True)
@@ -66,6 +79,8 @@ class MemoryConfig:
     total_capacity_gb: float = 64.0
     peak_bandwidth_gbps: float = 900.0
     base_latency_ns: float = 120.0
+    per_core_bandwidth_gbps: float = 256.0
+    per_core_latency_ns: float = 100.0
     jitter_model: str = "none"
     jitter_value: float = 0.0
 

@@ -18,13 +18,13 @@ from wsesim.dse.search.random import RandomSearch
 
 
 def _evaluate(cfg: WSEConfig) -> SimResult:
-    congestion_scale = max(1, 64 // cfg.compute.pe_width)
+    congestion_scale = max(1, 8 // max(cfg.network.noc.num_vcs, 1))
     return SimResult(
-        total_latency_cycles=max(1, 1000 // cfg.compute.pe_width),
+        total_latency_cycles=max(1, 1000 // max(cfg.network.noc.link_bw_flits_per_cycle, 1)),
         vc_wait_cycles=5 * congestion_scale,
         buffer_wait_cycles=3 * congestion_scale,
         link_wait_cycles=2 * congestion_scale,
-        network_throughput=float(cfg.compute.pe_width) / 64.0,
+        network_throughput=float(cfg.network.noc.link_bw_flits_per_cycle),
     )
 
 
@@ -92,7 +92,7 @@ def test_dse_exports_json_and_csv(tmp_path) -> None:
         rows = list(csv.DictReader(f))
     assert len(rows) == len(trials)
     assert "total_latency_cycles" in rows[0]
-    assert "pe_width" in rows[0]
+    assert "cube_steady_cycles" in rows[0]
     assert "gateway_noc_hops" in rows[0]
     assert "gateway_policy" in rows[0]
 

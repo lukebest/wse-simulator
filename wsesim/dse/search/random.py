@@ -16,7 +16,6 @@ class RandomSearch(SearchStrategy):
 
     def suggest(self, history: list[tuple[WSEConfig, float]]) -> WSEConfig:
         cfg = deepcopy(self.base)
-        cfg.compute.pe_width = self._rng.choice([8, 16, 32])
         cfg.network.noc.buffer_depth = self._rng.choice([4, 8, 16])
         cfg.network.noc.num_vcs = self._rng.choice([1, 2, 4])
         cfg.network.noc.link_bw_flits_per_cycle = self._rng.choice([1, 2, 4])

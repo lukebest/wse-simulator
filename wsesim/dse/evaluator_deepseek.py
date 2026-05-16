@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from math import isqrt
+from math import ceil, isqrt
 
 import simpy
 
@@ -89,12 +89,25 @@ def _resolve_mapper(name: str):
 
 
 def _estimate_compute_cycles(workload, config: WSEConfig) -> int:
-    pe_width = max(1, config.compute.pe_width)
-    if config.compute.pe_type == "vector":
-        throughput_per_cycle = pe_width
-    else:
-        throughput_per_cycle = pe_width * pe_width
+    total_cycles = 0
+    if config.compute.pe_type == "cube":
+        m_tile = max(1, config.compute.cube_m_tile)
+        k_tile = max(1, config.compute.cube_k_tile)
+        n_tile = max(1, config.compute.cube_n_tile)
+        startup_cycles = max(0, config.compute.cube_startup_cycles)
+        steady_cycles = max(1, config.compute.cube_steady_cycles)
 
+        for op in workload.ops:
+            if op.op_type in {"expert_w1_proj", "expert_w3_proj", "expert_w2_proj", "router"}:
+                num_tiles = ceil(op.m / m_tile) * ceil(op.n / n_tile) * ceil(op.k / k_tile)
+                if num_tiles > 0:
+                    total_cycles += startup_cycles + max(0, num_tiles - 1) * steady_cycles
+            elif op.op_type == "elementwise_mul":
+                total_cycles += op.m * op.n
+        return max(1, total_cycles)
+
+    pe_width = max(1, config.compute.pe_width)
+    throughput_per_cycle = pe_width if config.compute.pe_type == "vector" else pe_width * pe_width
     total_mac = 0
     for op in workload.ops:
         if op.op_type in {"expert_w1_proj", "expert_w3_proj", "expert_w2_proj", "router"}:
@@ -225,18 +238,21 @@ def _estimate_memory_stall_cycles(workload, config: WSEConfig) -> int:
     # V4-Pro expert path uses W1/W3 (up-projections), elementwise fuse, then W2 down-proj.
     bytes_moved = active_routed * decode_tokens * (hidden + 2 * ffn_dim + hidden) * fp_bytes
 
-    mem_bw_bytes_per_cycle = max(1.0, (config.memory.peak_bandwidth_gbps * 1e9) / (1e9))
+    cycles_per_ns = max(config.compute.pe_freq_ghz, 0.1)
+    mem_bw_bytes_per_cycle = max(1.0, config.memory.per_core_bandwidth_gbps / cycles_per_ns)
     transfer_cycles = int(bytes_moved / mem_bw_bytes_per_cycle)
-    startup_penalty = int(config.memory.base_latency_ns // 10)
+    startup_penalty = int(config.memory.per_core_latency_ns * cycles_per_ns)
     return max(1, transfer_cycles + startup_penalty)
 
 
 def _build_noc_network(env: simpy.Environment, config: WSEConfig) -> UnifiedNetwork:
     return _build_network_domain(
         env=env,
-        num_nodes=max(4, config.wafer.total_cores),
+        num_nodes=max(4, config.wafer.reticle_rows * config.wafer.reticle_cols),
         domain_config=config.network.noc,
         random_seed=config.dse.random_seed,
+        rows=max(1, config.wafer.reticle_rows),
+        cols=max(1, config.wafer.reticle_cols),
     )
 
 
@@ -249,15 +265,26 @@ def _build_now_network(env: simpy.Environment, config: WSEConfig) -> UnifiedNetw
     )
 
 
-def _build_network_domain(env: simpy.Environment, num_nodes: int, domain_config, random_seed: int) -> UnifiedNetwork:
+def _build_network_domain(
+    env: simpy.Environment,
+    num_nodes: int,
+    domain_config,
+    random_seed: int,
+    rows: int | None = None,
+    cols: int | None = None,
+) -> UnifiedNetwork:
     num_nodes = max(4, num_nodes)
     topology_name = domain_config.topology
     if topology_name in {"mesh2d", "torus2d"}:
-        side = isqrt(num_nodes)
-        if side * side != num_nodes:
-            side += 1
-            num_nodes = side * side
-        topology = Mesh2D() if topology_name == "mesh2d" else Torus2D()
+        if rows is not None and cols is not None and topology_name == "mesh2d":
+            num_nodes = max(4, rows * cols)
+            topology = Mesh2D(rows=rows, cols=cols)
+        else:
+            side = isqrt(num_nodes)
+            if side * side != num_nodes:
+                side += 1
+                num_nodes = side * side
+            topology = Mesh2D() if topology_name == "mesh2d" else Torus2D()
     elif topology_name == "flat_butterfly":
         topology = FlatButterfly()
     else:
@@ -304,6 +331,9 @@ def _run_hierarchical_network_simulation(
 ) -> tuple[float, dict[str, int]]:
     env = simpy.Environment()
     cores_per_reticle = max(1, config.wafer.cores_per_reticle)
+    reticle_rows = max(1, config.wafer.reticle_rows)
+    reticle_cols = max(1, config.wafer.reticle_cols)
+    active_nodes = _reticle_active_nodes(config)
     reticle_count = max(1, config.wafer.reticle_count)
     gateways = _reticle_gateways(
         cores_per_reticle=cores_per_reticle,
@@ -313,9 +343,11 @@ def _run_hierarchical_network_simulation(
     noc_networks = {
         reticle: _build_network_domain(
             env=env,
-            num_nodes=cores_per_reticle,
+            num_nodes=reticle_rows * reticle_cols,
             domain_config=config.network.noc,
             random_seed=config.dse.random_seed + reticle,
+            rows=reticle_rows,
+            cols=reticle_cols,
         )
         for reticle in range(reticle_count)
     }
@@ -334,6 +366,8 @@ def _run_hierarchical_network_simulation(
                 gateway_policy=config.network.gateway_policy,
                 gateways=gateways,
                 gateway_load=gateway_load,
+                active_nodes=active_nodes,
+                reticle_cols=reticle_cols,
                 noc_networks=noc_networks,
                 now_network=now_network,
             )
@@ -372,8 +406,21 @@ def _run_hierarchical_network_simulation(
             gateways=gateways,
             policy=config.network.gateway_policy,
             gateway_load=gateway_load,
+            active_nodes=active_nodes,
+            reticle_cols=reticle_cols,
         )
-        stats["gateway_noc_hops"] += abs(src_local - src_gw) + abs(dst_local - dst_gw)
+        stats["gateway_noc_hops"] += _logical_noc_distance(
+            src_local,
+            src_gw,
+            active_nodes=active_nodes,
+            reticle_cols=reticle_cols,
+        )
+        stats["gateway_noc_hops"] += _logical_noc_distance(
+            dst_local,
+            dst_gw,
+            active_nodes=active_nodes,
+            reticle_cols=reticle_cols,
+        )
     stats["gateway_peak_load"] = max(gateway_load.values()) if gateway_load else 0
     return float(env.now), stats
 
@@ -389,6 +436,8 @@ def _send_hierarchical_packet(
     gateway_policy: str,
     gateways: list[int],
     gateway_load: dict[tuple[int, int], int],
+    active_nodes: list[int],
+    reticle_cols: int,
     noc_networks: dict[int, UnifiedNetwork],
     now_network: UnifiedNetwork,
 ):
@@ -405,12 +454,16 @@ def _send_hierarchical_packet(
         gateways=gateways,
         policy=gateway_policy,
         gateway_load=gateway_load,
+        active_nodes=active_nodes,
+        reticle_cols=reticle_cols,
     )
 
     if src_reticle == dst_reticle:
+        src_phys = _logical_to_physical(src_local, active_nodes)
+        dst_phys = _logical_to_physical(dst_local, active_nodes)
         pkt = Packet(
-            src=src_local,
-            dst=dst_local,
+            src=src_phys,
+            dst=dst_phys,
             size_bytes=size_bytes,
             payload_type=f"{payload_type}_noc_local",
             creation_time=float(env.now),
@@ -422,9 +475,11 @@ def _send_hierarchical_packet(
     gateway_load[(dst_reticle, dst_gateway_local)] += 1
 
     if src_local != src_gateway_local:
+        src_phys = _logical_to_physical(src_local, active_nodes)
+        src_gw_phys = _logical_to_physical(src_gateway_local, active_nodes)
         pkt_egress = Packet(
-            src=src_local,
-            dst=src_gateway_local,
+            src=src_phys,
+            dst=src_gw_phys,
             size_bytes=size_bytes,
             payload_type=f"{payload_type}_noc_egress",
             creation_time=float(env.now),
@@ -441,9 +496,11 @@ def _send_hierarchical_packet(
     yield env.process(now_network.send_packet(pkt_now))
 
     if dst_local != dst_gateway_local:
+        dst_phys = _logical_to_physical(dst_local, active_nodes)
+        dst_gw_phys = _logical_to_physical(dst_gateway_local, active_nodes)
         pkt_ingress = Packet(
-            src=dst_gateway_local,
-            dst=dst_local,
+            src=dst_gw_phys,
+            dst=dst_phys,
             size_bytes=size_bytes,
             payload_type=f"{payload_type}_noc_ingress",
             creation_time=float(env.now),
@@ -470,6 +527,8 @@ def _select_gateways(
     gateways: list[int],
     policy: str,
     gateway_load: dict[tuple[int, int], int] | None = None,
+    active_nodes: list[int] | None = None,
+    reticle_cols: int = 1,
 ) -> tuple[int, int]:
     if not gateways:
         return 0, 0
@@ -485,7 +544,13 @@ def _select_gateways(
         for dst_gw in gateways:
             # NoW distance is reticle-level (gateway choice does not change it), but
             # gateway choice changes intra-reticle NoC ingress/egress costs.
-            cost = abs(src_local - src_gw) + now_distance + abs(dst_local - dst_gw)
+            src_to_gw = _logical_noc_distance(
+                src_local, src_gw, active_nodes=active_nodes, reticle_cols=reticle_cols
+            )
+            dst_to_gw = _logical_noc_distance(
+                dst_local, dst_gw, active_nodes=active_nodes, reticle_cols=reticle_cols
+            )
+            cost = src_to_gw + now_distance + dst_to_gw
             if policy == "load_aware":
                 cost += 0.5 * (
                     gateway_load.get((src_reticle, src_gw), 0)
@@ -499,4 +564,39 @@ def _select_gateways(
 
 def _reticle_coord(reticle_id: int, reticles_x: int) -> tuple[int, int]:
     return reticle_id // reticles_x, reticle_id % reticles_x
+
+
+def _reticle_dead_nodes(config: WSEConfig) -> set[int]:
+    cols = max(1, config.wafer.reticle_cols)
+    return {r * cols + c for r, c in config.wafer.reticle_dead_positions}
+
+
+def _reticle_active_nodes(config: WSEConfig) -> list[int]:
+    rows = max(1, config.wafer.reticle_rows)
+    cols = max(1, config.wafer.reticle_cols)
+    dead_nodes = _reticle_dead_nodes(config)
+    active = [node for node in range(rows * cols) if node not in dead_nodes]
+    return active
+
+
+def _logical_to_physical(local_idx: int, active_nodes: list[int]) -> int:
+    if not active_nodes:
+        return 0
+    bounded = min(max(local_idx, 0), len(active_nodes) - 1)
+    return active_nodes[bounded]
+
+
+def _logical_noc_distance(
+    src_local: int,
+    dst_local: int,
+    active_nodes: list[int] | None,
+    reticle_cols: int,
+) -> int:
+    if not active_nodes:
+        return abs(src_local - dst_local)
+    src_phys = _logical_to_physical(src_local, active_nodes)
+    dst_phys = _logical_to_physical(dst_local, active_nodes)
+    src_row, src_col = divmod(src_phys, max(1, reticle_cols))
+    dst_row, dst_col = divmod(dst_phys, max(1, reticle_cols))
+    return abs(src_row - dst_row) + abs(src_col - dst_col)
 
