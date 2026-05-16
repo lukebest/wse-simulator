@@ -74,9 +74,13 @@ class WorkloadConfig:
     hidden_dim: int = 4096
     expert_ffn_dim: int = 14336
     num_experts: int = 8
+    num_routed_experts: int = 256
+    num_shared_experts: int = 1
     top_k: int = 2
     decode_batch_size: int = 1
     decode_tokens: int = 32
+    routing_skew_alpha: float = 1.2
+    capacity_factor: float = 1.25
     partition_strategy: str = "expert"
     collective_algorithm: str = "ring"
     mapping_strategy: str = "nearest_neighbor"

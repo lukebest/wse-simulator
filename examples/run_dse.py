@@ -5,8 +5,8 @@ from __future__ import annotations
 from pathlib import Path
 
 from wsesim.core.config import WSEConfig
-from wsesim.core.stats import SimResult
 from wsesim.dse.engine import DSEEngine
+from wsesim.dse.evaluator_deepseek import evaluate_deepseek_v3_ffn
 from wsesim.dse.report import (
     export_pareto_csv,
     export_trials_csv,
@@ -17,26 +17,23 @@ from wsesim.dse.report import (
 from wsesim.dse.search.random import RandomSearch
 
 
-def evaluate(config: WSEConfig) -> SimResult:
-    # Placeholder evaluator: lower pe_width gives higher latency and more congestion.
-    base_latency = max(1, 10_000 // config.compute.pe_width)
-    congestion_scale = max(1, 64 // config.compute.pe_width)
-    result = SimResult(
-        total_latency_cycles=base_latency,
-        vc_wait_cycles=5 * congestion_scale,
-        buffer_wait_cycles=4 * congestion_scale,
-        link_wait_cycles=3 * congestion_scale,
-        network_throughput=float(config.compute.pe_width) / 64.0,
-    )
-    return result
-
-
 def main() -> None:
     base = WSEConfig()
+    base.workload.model_name = "deepseek_v3_ffn_decode"
+    base.workload.hidden_dim = 7168
+    base.workload.expert_ffn_dim = 18432
+    base.workload.num_routed_experts = 256
+    base.workload.num_shared_experts = 1
+    base.workload.top_k = 8
+    base.workload.decode_tokens = 32
+    base.workload.routing_skew_alpha = 1.2
+    base.workload.capacity_factor = 1.25
+    base.workload.mapping_strategy = "expert_affinity"
+
     engine = DSEEngine(
         base_config=base,
         strategy=RandomSearch(base),
-        evaluator=evaluate,
+        evaluator=evaluate_deepseek_v3_ffn,
         workers=1,
     )
     trials = engine.run_detailed(trials=8)

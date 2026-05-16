@@ -1,6 +1,6 @@
 [
   {
-    "score": -61321.600000000006,
+    "score": -302698208.6,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -59,16 +59,20 @@
         "jitter_value": 0.0
       },
       "workload": {
-        "model_name": "mixtral_8x7b",
-        "hidden_dim": 4096,
-        "expert_ffn_dim": 14336,
+        "model_name": "deepseek_v3_ffn_decode",
+        "hidden_dim": 7168,
+        "expert_ffn_dim": 18432,
         "num_experts": 8,
-        "top_k": 2,
+        "num_routed_experts": 256,
+        "num_shared_experts": 1,
+        "top_k": 8,
         "decode_batch_size": 1,
         "decode_tokens": 32,
+        "routing_skew_alpha": 1.2,
+        "capacity_factor": 1.25,
         "partition_strategy": "expert",
         "collective_algorithm": "ring",
-        "mapping_strategy": "nearest_neighbor"
+        "mapping_strategy": "expert_affinity"
       },
       "dse": {
         "objective": "latency_min",
@@ -83,31 +87,30 @@
       }
     },
     "result": {
-      "total_latency_cycles": 32270,
-      "compute_cycles": 0,
-      "network_cycles": 410843,
-      "memory_stall_cycles": 0,
-      "network_avg_latency": 14006.84375,
-      "network_max_latency": 32270.0,
-      "network_throughput": 0.6981096994112178,
-      "network_saturation": 1.0,
-      "vc_wait_cycles": 290516,
-      "buffer_wait_cycles": 0,
-      "link_wait_cycles": 0,
-      "pipeline_cycles": 120327,
+      "total_latency_cycles": 302672599,
+      "compute_cycles": 297500672,
+      "network_cycles": 4575392,
+      "memory_stall_cycles": 596535,
+      "network_avg_latency": 142981.0,
+      "network_max_latency": 214471.5,
+      "network_throughput": 0.9023856316573531,
+      "network_saturation": 0.0004546058567222218,
+      "vc_wait_cycles": 800,
+      "buffer_wait_cycles": 1280,
+      "link_wait_cycles": 508032,
+      "pipeline_cycles": 1024,
       "idle_ratio": 0.0,
       "per_core_utilization": {},
       "metadata": {
-        "token_dispatch_transfers": 16,
-        "token_combine_transfers": 16,
-        "total_transfers": 32,
-        "decode_tokens": 8,
-        "num_experts": 4
+        "workload_model": "deepseek_v3_ffn_decode",
+        "active_routed_experts": 256,
+        "mapped_cores": 64,
+        "mapping_strategy": "expert_affinity"
       }
     }
   },
   {
-    "score": -61321.600000000006,
+    "score": -1195199168.6,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -166,16 +169,20 @@
         "jitter_value": 0.0
       },
       "workload": {
-        "model_name": "mixtral_8x7b",
-        "hidden_dim": 4096,
-        "expert_ffn_dim": 14336,
+        "model_name": "deepseek_v3_ffn_decode",
+        "hidden_dim": 7168,
+        "expert_ffn_dim": 18432,
         "num_experts": 8,
-        "top_k": 2,
+        "num_routed_experts": 256,
+        "num_shared_experts": 1,
+        "top_k": 8,
         "decode_batch_size": 1,
         "decode_tokens": 32,
+        "routing_skew_alpha": 1.2,
+        "capacity_factor": 1.25,
         "partition_strategy": "expert",
         "collective_algorithm": "ring",
-        "mapping_strategy": "nearest_neighbor"
+        "mapping_strategy": "expert_affinity"
       },
       "dse": {
         "objective": "latency_min",
@@ -190,31 +197,30 @@
       }
     },
     "result": {
-      "total_latency_cycles": 32270,
-      "compute_cycles": 0,
-      "network_cycles": 410843,
-      "memory_stall_cycles": 0,
-      "network_avg_latency": 14006.84375,
-      "network_max_latency": 32270.0,
-      "network_throughput": 0.6981096994112178,
-      "network_saturation": 1.0,
-      "vc_wait_cycles": 290516,
-      "buffer_wait_cycles": 0,
-      "link_wait_cycles": 0,
-      "pipeline_cycles": 120327,
+      "total_latency_cycles": 1195173655,
+      "compute_cycles": 1190002688,
+      "network_cycles": 4574432,
+      "memory_stall_cycles": 596535,
+      "network_avg_latency": 142951.0,
+      "network_max_latency": 214426.5,
+      "network_throughput": 0.9025750082195997,
+      "network_saturation": 0.0002448391406845702,
+      "vc_wait_cycles": 800,
+      "buffer_wait_cycles": 320,
+      "link_wait_cycles": 508032,
+      "pipeline_cycles": 1024,
       "idle_ratio": 0.0,
       "per_core_utilization": {},
       "metadata": {
-        "token_dispatch_transfers": 16,
-        "token_combine_transfers": 16,
-        "total_transfers": 32,
-        "decode_tokens": 8,
-        "num_experts": 4
+        "workload_model": "deepseek_v3_ffn_decode",
+        "active_routed_experts": 256,
+        "mapped_cores": 64,
+        "mapping_strategy": "expert_affinity"
       }
     }
   },
   {
-    "score": -61321.600000000006,
+    "score": -79571648.6,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -273,16 +279,20 @@
         "jitter_value": 0.0
       },
       "workload": {
-        "model_name": "mixtral_8x7b",
-        "hidden_dim": 4096,
-        "expert_ffn_dim": 14336,
+        "model_name": "deepseek_v3_ffn_decode",
+        "hidden_dim": 7168,
+        "expert_ffn_dim": 18432,
         "num_experts": 8,
-        "top_k": 2,
+        "num_routed_experts": 256,
+        "num_shared_experts": 1,
+        "top_k": 8,
         "decode_batch_size": 1,
         "decode_tokens": 32,
+        "routing_skew_alpha": 1.2,
+        "capacity_factor": 1.25,
         "partition_strategy": "expert",
         "collective_algorithm": "ring",
-        "mapping_strategy": "nearest_neighbor"
+        "mapping_strategy": "expert_affinity"
       },
       "dse": {
         "objective": "latency_min",
@@ -297,31 +307,30 @@
       }
     },
     "result": {
-      "total_latency_cycles": 32270,
-      "compute_cycles": 0,
-      "network_cycles": 410843,
-      "memory_stall_cycles": 0,
-      "network_avg_latency": 14006.84375,
-      "network_max_latency": 32270.0,
-      "network_throughput": 0.6981096994112178,
-      "network_saturation": 1.0,
-      "vc_wait_cycles": 290516,
-      "buffer_wait_cycles": 0,
-      "link_wait_cycles": 0,
-      "pipeline_cycles": 120327,
+      "total_latency_cycles": 79546135,
+      "compute_cycles": 74375168,
+      "network_cycles": 4574432,
+      "memory_stall_cycles": 596535,
+      "network_avg_latency": 142951.0,
+      "network_max_latency": 214426.5,
+      "network_throughput": 0.9025750082195997,
+      "network_saturation": 0.0002448391406845702,
+      "vc_wait_cycles": 800,
+      "buffer_wait_cycles": 320,
+      "link_wait_cycles": 508032,
+      "pipeline_cycles": 1024,
       "idle_ratio": 0.0,
       "per_core_utilization": {},
       "metadata": {
-        "token_dispatch_transfers": 16,
-        "token_combine_transfers": 16,
-        "total_transfers": 32,
-        "decode_tokens": 8,
-        "num_experts": 4
+        "workload_model": "deepseek_v3_ffn_decode",
+        "active_routed_experts": 256,
+        "mapped_cores": 64,
+        "mapping_strategy": "expert_affinity"
       }
     }
   },
   {
-    "score": -61321.600000000006,
+    "score": -1195199520.6,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -380,16 +389,20 @@
         "jitter_value": 0.0
       },
       "workload": {
-        "model_name": "mixtral_8x7b",
-        "hidden_dim": 4096,
-        "expert_ffn_dim": 14336,
+        "model_name": "deepseek_v3_ffn_decode",
+        "hidden_dim": 7168,
+        "expert_ffn_dim": 18432,
         "num_experts": 8,
-        "top_k": 2,
+        "num_routed_experts": 256,
+        "num_shared_experts": 1,
+        "top_k": 8,
         "decode_batch_size": 1,
         "decode_tokens": 32,
+        "routing_skew_alpha": 1.2,
+        "capacity_factor": 1.25,
         "partition_strategy": "expert",
         "collective_algorithm": "ring",
-        "mapping_strategy": "nearest_neighbor"
+        "mapping_strategy": "expert_affinity"
       },
       "dse": {
         "objective": "latency_min",
@@ -404,31 +417,30 @@
       }
     },
     "result": {
-      "total_latency_cycles": 32270,
-      "compute_cycles": 0,
-      "network_cycles": 410843,
-      "memory_stall_cycles": 0,
-      "network_avg_latency": 14006.84375,
-      "network_max_latency": 32270.0,
-      "network_throughput": 0.6981096994112178,
-      "network_saturation": 1.0,
-      "vc_wait_cycles": 290516,
-      "buffer_wait_cycles": 0,
-      "link_wait_cycles": 0,
-      "pipeline_cycles": 120327,
+      "total_latency_cycles": 1195173975,
+      "compute_cycles": 1190002688,
+      "network_cycles": 4574752,
+      "memory_stall_cycles": 596535,
+      "network_avg_latency": 142961.0,
+      "network_max_latency": 214441.5,
+      "network_throughput": 0.9025118738676982,
+      "network_saturation": 0.00031477116136568713,
+      "vc_wait_cycles": 800,
+      "buffer_wait_cycles": 640,
+      "link_wait_cycles": 508032,
+      "pipeline_cycles": 1024,
       "idle_ratio": 0.0,
       "per_core_utilization": {},
       "metadata": {
-        "token_dispatch_transfers": 16,
-        "token_combine_transfers": 16,
-        "total_transfers": 32,
-        "decode_tokens": 8,
-        "num_experts": 4
+        "workload_model": "deepseek_v3_ffn_decode",
+        "active_routed_experts": 256,
+        "mapped_cores": 64,
+        "mapping_strategy": "expert_affinity"
       }
     }
   },
   {
-    "score": -61321.600000000006,
+    "score": -1195200224.6,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -487,16 +499,20 @@
         "jitter_value": 0.0
       },
       "workload": {
-        "model_name": "mixtral_8x7b",
-        "hidden_dim": 4096,
-        "expert_ffn_dim": 14336,
+        "model_name": "deepseek_v3_ffn_decode",
+        "hidden_dim": 7168,
+        "expert_ffn_dim": 18432,
         "num_experts": 8,
-        "top_k": 2,
+        "num_routed_experts": 256,
+        "num_shared_experts": 1,
+        "top_k": 8,
         "decode_batch_size": 1,
         "decode_tokens": 32,
+        "routing_skew_alpha": 1.2,
+        "capacity_factor": 1.25,
         "partition_strategy": "expert",
         "collective_algorithm": "ring",
-        "mapping_strategy": "nearest_neighbor"
+        "mapping_strategy": "expert_affinity"
       },
       "dse": {
         "objective": "latency_min",
@@ -511,31 +527,30 @@
       }
     },
     "result": {
-      "total_latency_cycles": 32270,
-      "compute_cycles": 0,
-      "network_cycles": 410843,
-      "memory_stall_cycles": 0,
-      "network_avg_latency": 14006.84375,
-      "network_max_latency": 32270.0,
-      "network_throughput": 0.6981096994112178,
-      "network_saturation": 1.0,
-      "vc_wait_cycles": 290516,
-      "buffer_wait_cycles": 0,
-      "link_wait_cycles": 0,
-      "pipeline_cycles": 120327,
+      "total_latency_cycles": 1195174615,
+      "compute_cycles": 1190002688,
+      "network_cycles": 4575392,
+      "memory_stall_cycles": 596535,
+      "network_avg_latency": 142981.0,
+      "network_max_latency": 214471.5,
+      "network_throughput": 0.9023856316573531,
+      "network_saturation": 0.0004546058567222218,
+      "vc_wait_cycles": 800,
+      "buffer_wait_cycles": 1280,
+      "link_wait_cycles": 508032,
+      "pipeline_cycles": 1024,
       "idle_ratio": 0.0,
       "per_core_utilization": {},
       "metadata": {
-        "token_dispatch_transfers": 16,
-        "token_combine_transfers": 16,
-        "total_transfers": 32,
-        "decode_tokens": 8,
-        "num_experts": 4
+        "workload_model": "deepseek_v3_ffn_decode",
+        "active_routed_experts": 256,
+        "mapped_cores": 64,
+        "mapping_strategy": "expert_affinity"
       }
     }
   },
   {
-    "score": -16897.7,
+    "score": -302696492.6,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -594,16 +609,20 @@
         "jitter_value": 0.0
       },
       "workload": {
-        "model_name": "mixtral_8x7b",
-        "hidden_dim": 4096,
-        "expert_ffn_dim": 14336,
+        "model_name": "deepseek_v3_ffn_decode",
+        "hidden_dim": 7168,
+        "expert_ffn_dim": 18432,
         "num_experts": 8,
-        "top_k": 2,
+        "num_routed_experts": 256,
+        "num_shared_experts": 1,
+        "top_k": 8,
         "decode_batch_size": 1,
         "decode_tokens": 32,
+        "routing_skew_alpha": 1.2,
+        "capacity_factor": 1.25,
         "partition_strategy": "expert",
         "collective_algorithm": "ring",
-        "mapping_strategy": "nearest_neighbor"
+        "mapping_strategy": "expert_affinity"
       },
       "dse": {
         "objective": "latency_min",
@@ -618,31 +637,30 @@
       }
     },
     "result": {
-      "total_latency_cycles": 12838,
-      "compute_cycles": 0,
-      "network_cycles": 288112,
-      "memory_stall_cycles": 0,
-      "network_avg_latency": 6367.8125,
-      "network_max_latency": 12838.0,
-      "network_throughput": 1.7547904658046425,
-      "network_saturation": 1.0,
-      "vc_wait_cycles": 40597,
-      "buffer_wait_cycles": 0,
-      "link_wait_cycles": 0,
-      "pipeline_cycles": 247515,
+      "total_latency_cycles": 302671039,
+      "compute_cycles": 297500672,
+      "network_cycles": 4573832,
+      "memory_stall_cycles": 596535,
+      "network_avg_latency": 142932.25,
+      "network_max_latency": 214398.375,
+      "network_throughput": 0.9026934089402496,
+      "network_saturation": 0.00011369022736296392,
+      "vc_wait_cycles": 200,
+      "buffer_wait_cycles": 320,
+      "link_wait_cycles": 508032,
+      "pipeline_cycles": 1024,
       "idle_ratio": 0.0,
       "per_core_utilization": {},
       "metadata": {
-        "token_dispatch_transfers": 16,
-        "token_combine_transfers": 16,
-        "total_transfers": 32,
-        "decode_tokens": 8,
-        "num_experts": 4
+        "workload_model": "deepseek_v3_ffn_decode",
+        "active_routed_experts": 256,
+        "mapped_cores": 64,
+        "mapping_strategy": "expert_affinity"
       }
     }
   },
   {
-    "score": -31553.6,
+    "score": -302696712.6,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -701,16 +719,20 @@
         "jitter_value": 0.0
       },
       "workload": {
-        "model_name": "mixtral_8x7b",
-        "hidden_dim": 4096,
-        "expert_ffn_dim": 14336,
+        "model_name": "deepseek_v3_ffn_decode",
+        "hidden_dim": 7168,
+        "expert_ffn_dim": 18432,
         "num_experts": 8,
-        "top_k": 2,
+        "num_routed_experts": 256,
+        "num_shared_experts": 1,
+        "top_k": 8,
         "decode_batch_size": 1,
         "decode_tokens": 32,
+        "routing_skew_alpha": 1.2,
+        "capacity_factor": 1.25,
         "partition_strategy": "expert",
         "collective_algorithm": "ring",
-        "mapping_strategy": "nearest_neighbor"
+        "mapping_strategy": "expert_affinity"
       },
       "dse": {
         "objective": "latency_min",
@@ -725,31 +747,30 @@
       }
     },
     "result": {
-      "total_latency_cycles": 19719,
-      "compute_cycles": 0,
-      "network_cycles": 275807,
-      "memory_stall_cycles": 0,
-      "network_avg_latency": 8626.96875,
-      "network_max_latency": 19719.0,
-      "network_throughput": 1.1424514427709316,
-      "network_saturation": 1.0,
-      "vc_wait_cycles": 118346,
-      "buffer_wait_cycles": 0,
-      "link_wait_cycles": 0,
-      "pipeline_cycles": 157461,
+      "total_latency_cycles": 302671239,
+      "compute_cycles": 297500672,
+      "network_cycles": 4574032,
+      "memory_stall_cycles": 596535,
+      "network_avg_latency": 142938.5,
+      "network_max_latency": 214407.75,
+      "network_throughput": 0.9026539385819775,
+      "network_saturation": 0.0001574103548029397,
+      "vc_wait_cycles": 400,
+      "buffer_wait_cycles": 320,
+      "link_wait_cycles": 508032,
+      "pipeline_cycles": 1024,
       "idle_ratio": 0.0,
       "per_core_utilization": {},
       "metadata": {
-        "token_dispatch_transfers": 16,
-        "token_combine_transfers": 16,
-        "total_transfers": 32,
-        "decode_tokens": 8,
-        "num_experts": 4
+        "workload_model": "deepseek_v3_ffn_decode",
+        "active_routed_experts": 256,
+        "mapped_cores": 64,
+        "mapping_strategy": "expert_affinity"
       }
     }
   },
   {
-    "score": -61321.600000000006,
+    "score": -1195200224.6,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -808,16 +829,20 @@
         "jitter_value": 0.0
       },
       "workload": {
-        "model_name": "mixtral_8x7b",
-        "hidden_dim": 4096,
-        "expert_ffn_dim": 14336,
+        "model_name": "deepseek_v3_ffn_decode",
+        "hidden_dim": 7168,
+        "expert_ffn_dim": 18432,
         "num_experts": 8,
-        "top_k": 2,
+        "num_routed_experts": 256,
+        "num_shared_experts": 1,
+        "top_k": 8,
         "decode_batch_size": 1,
         "decode_tokens": 32,
+        "routing_skew_alpha": 1.2,
+        "capacity_factor": 1.25,
         "partition_strategy": "expert",
         "collective_algorithm": "ring",
-        "mapping_strategy": "nearest_neighbor"
+        "mapping_strategy": "expert_affinity"
       },
       "dse": {
         "objective": "latency_min",
@@ -832,26 +857,25 @@
       }
     },
     "result": {
-      "total_latency_cycles": 32270,
-      "compute_cycles": 0,
-      "network_cycles": 410843,
-      "memory_stall_cycles": 0,
-      "network_avg_latency": 14006.84375,
-      "network_max_latency": 32270.0,
-      "network_throughput": 0.6981096994112178,
-      "network_saturation": 1.0,
-      "vc_wait_cycles": 290516,
-      "buffer_wait_cycles": 0,
-      "link_wait_cycles": 0,
-      "pipeline_cycles": 120327,
+      "total_latency_cycles": 1195174615,
+      "compute_cycles": 1190002688,
+      "network_cycles": 4575392,
+      "memory_stall_cycles": 596535,
+      "network_avg_latency": 142981.0,
+      "network_max_latency": 214471.5,
+      "network_throughput": 0.9023856316573531,
+      "network_saturation": 0.0004546058567222218,
+      "vc_wait_cycles": 800,
+      "buffer_wait_cycles": 1280,
+      "link_wait_cycles": 508032,
+      "pipeline_cycles": 1024,
       "idle_ratio": 0.0,
       "per_core_utilization": {},
       "metadata": {
-        "token_dispatch_transfers": 16,
-        "token_combine_transfers": 16,
-        "total_transfers": 32,
-        "decode_tokens": 8,
-        "num_experts": 4
+        "workload_model": "deepseek_v3_ffn_decode",
+        "active_routed_experts": 256,
+        "mapped_cores": 64,
+        "mapping_strategy": "expert_affinity"
       }
     }
   }

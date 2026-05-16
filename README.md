@@ -33,6 +33,9 @@ This generates:
 - `outputs/pareto_latency_vs_throughput.png`
 - `outputs/pareto_latency_vs_congestion.png`
 
+`examples/run_dse.py` now evaluates configurations using a DeepSeek-V3-style
+decode FFN workload model (routed experts + shared experts + top-k routing).
+
 ## DeepSeek-V3 FFN Mapping Example
 
 ```bash
