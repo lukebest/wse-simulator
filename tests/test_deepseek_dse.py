@@ -45,3 +45,22 @@ def test_deepseek_evaluator_responds_to_network_vc_scaling() -> None:
     low_result = evaluate_deepseek_v3_ffn(low_vc)
     high_result = evaluate_deepseek_v3_ffn(high_vc)
     assert high_result.vc_wait_cycles < low_result.vc_wait_cycles
+
+
+def test_deepseek_evaluator_responds_to_link_bandwidth() -> None:
+    base = WSEConfig()
+    base.workload.model_name = "deepseek_v3_ffn_decode"
+    base.workload.num_routed_experts = 96
+    base.workload.num_shared_experts = 1
+    base.workload.top_k = 8
+    base.workload.decode_tokens = 24
+    base.workload.mapping_strategy = "expert_affinity"
+
+    low_bw = deepcopy(base)
+    high_bw = deepcopy(base)
+    low_bw.network.noc.link_bw_flits_per_cycle = 1
+    high_bw.network.noc.link_bw_flits_per_cycle = 4
+
+    low_result = evaluate_deepseek_v3_ffn(low_bw)
+    high_result = evaluate_deepseek_v3_ffn(high_bw)
+    assert high_result.network_cycles < low_result.network_cycles

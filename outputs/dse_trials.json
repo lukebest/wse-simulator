@@ -1,6 +1,6 @@
 [
   {
-    "score": -302698208.6,
+    "score": -304308845.4,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -87,18 +87,18 @@
       }
     },
     "result": {
-      "total_latency_cycles": 302672599,
+      "total_latency_cycles": 299065399,
       "compute_cycles": 297500672,
-      "network_cycles": 4575392,
+      "network_cycles": 968192,
       "memory_stall_cycles": 596535,
-      "network_avg_latency": 142981.0,
-      "network_max_latency": 214471.5,
-      "network_throughput": 0.9023856316573531,
-      "network_saturation": 0.0004546058567222218,
-      "vc_wait_cycles": 800,
-      "buffer_wait_cycles": 1280,
-      "link_wait_cycles": 508032,
-      "pipeline_cycles": 1024,
+      "network_avg_latency": 7684.063492063492,
+      "network_max_latency": 11526.095238095239,
+      "network_throughput": 8.528820729772606,
+      "network_saturation": 1.0,
+      "vc_wait_cycles": 52434464,
+      "buffer_wait_cycles": 0,
+      "link_wait_cycles": 0,
+      "pipeline_cycles": 8673088,
       "idle_ratio": 0.0,
       "per_core_utilization": {},
       "metadata": {
@@ -110,7 +110,7 @@
     }
   },
   {
-    "score": -1195199168.6,
+    "score": -1196810861.4,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -197,18 +197,18 @@
       }
     },
     "result": {
-      "total_latency_cycles": 1195173655,
+      "total_latency_cycles": 1191567415,
       "compute_cycles": 1190002688,
-      "network_cycles": 4574432,
+      "network_cycles": 968192,
       "memory_stall_cycles": 596535,
-      "network_avg_latency": 142951.0,
-      "network_max_latency": 214426.5,
-      "network_throughput": 0.9025750082195997,
-      "network_saturation": 0.0002448391406845702,
-      "vc_wait_cycles": 800,
-      "buffer_wait_cycles": 320,
-      "link_wait_cycles": 508032,
-      "pipeline_cycles": 1024,
+      "network_avg_latency": 7684.063492063492,
+      "network_max_latency": 11526.095238095239,
+      "network_throughput": 8.528820729772606,
+      "network_saturation": 1.0,
+      "vc_wait_cycles": 52434464,
+      "buffer_wait_cycles": 0,
+      "link_wait_cycles": 0,
+      "pipeline_cycles": 8673088,
       "idle_ratio": 0.0,
       "per_core_utilization": {},
       "metadata": {
@@ -220,7 +220,7 @@
     }
   },
   {
-    "score": -79571648.6,
+    "score": -81183341.4,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -307,18 +307,18 @@
       }
     },
     "result": {
-      "total_latency_cycles": 79546135,
+      "total_latency_cycles": 75939895,
       "compute_cycles": 74375168,
-      "network_cycles": 4574432,
+      "network_cycles": 968192,
       "memory_stall_cycles": 596535,
-      "network_avg_latency": 142951.0,
-      "network_max_latency": 214426.5,
-      "network_throughput": 0.9025750082195997,
-      "network_saturation": 0.0002448391406845702,
-      "vc_wait_cycles": 800,
-      "buffer_wait_cycles": 320,
-      "link_wait_cycles": 508032,
-      "pipeline_cycles": 1024,
+      "network_avg_latency": 7684.063492063492,
+      "network_max_latency": 11526.095238095239,
+      "network_throughput": 8.528820729772606,
+      "network_saturation": 1.0,
+      "vc_wait_cycles": 52434464,
+      "buffer_wait_cycles": 0,
+      "link_wait_cycles": 0,
+      "pipeline_cycles": 8673088,
       "idle_ratio": 0.0,
       "per_core_utilization": {},
       "metadata": {
@@ -330,7 +330,7 @@
     }
   },
   {
-    "score": -1195199520.6,
+    "score": -1196810861.4,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -417,18 +417,18 @@
       }
     },
     "result": {
-      "total_latency_cycles": 1195173975,
+      "total_latency_cycles": 1191567415,
       "compute_cycles": 1190002688,
-      "network_cycles": 4574752,
+      "network_cycles": 968192,
       "memory_stall_cycles": 596535,
-      "network_avg_latency": 142961.0,
-      "network_max_latency": 214441.5,
-      "network_throughput": 0.9025118738676982,
-      "network_saturation": 0.00031477116136568713,
-      "vc_wait_cycles": 800,
-      "buffer_wait_cycles": 640,
-      "link_wait_cycles": 508032,
-      "pipeline_cycles": 1024,
+      "network_avg_latency": 7684.063492063492,
+      "network_max_latency": 11526.095238095239,
+      "network_throughput": 8.528820729772606,
+      "network_saturation": 1.0,
+      "vc_wait_cycles": 52434464,
+      "buffer_wait_cycles": 0,
+      "link_wait_cycles": 0,
+      "pipeline_cycles": 8673088,
       "idle_ratio": 0.0,
       "per_core_utilization": {},
       "metadata": {
@@ -440,7 +440,7 @@
     }
   },
   {
-    "score": -1195200224.6,
+    "score": -1196810861.4,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -527,18 +527,18 @@
       }
     },
     "result": {
-      "total_latency_cycles": 1195174615,
+      "total_latency_cycles": 1191567415,
       "compute_cycles": 1190002688,
-      "network_cycles": 4575392,
+      "network_cycles": 968192,
       "memory_stall_cycles": 596535,
-      "network_avg_latency": 142981.0,
-      "network_max_latency": 214471.5,
-      "network_throughput": 0.9023856316573531,
-      "network_saturation": 0.0004546058567222218,
-      "vc_wait_cycles": 800,
-      "buffer_wait_cycles": 1280,
-      "link_wait_cycles": 508032,
-      "pipeline_cycles": 1024,
+      "network_avg_latency": 7684.063492063492,
+      "network_max_latency": 11526.095238095239,
+      "network_throughput": 8.528820729772606,
+      "network_saturation": 1.0,
+      "vc_wait_cycles": 52434464,
+      "buffer_wait_cycles": 0,
+      "link_wait_cycles": 0,
+      "pipeline_cycles": 8673088,
       "idle_ratio": 0.0,
       "per_core_utilization": {},
       "metadata": {
@@ -550,7 +550,7 @@
     }
   },
   {
-    "score": -302696492.6,
+    "score": -300065690.2,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -637,18 +637,18 @@
       }
     },
     "result": {
-      "total_latency_cycles": 302671039,
+      "total_latency_cycles": 298554007,
       "compute_cycles": 297500672,
-      "network_cycles": 4573832,
+      "network_cycles": 456800,
       "memory_stall_cycles": 596535,
-      "network_avg_latency": 142932.25,
-      "network_max_latency": 214398.375,
-      "network_throughput": 0.9026934089402496,
-      "network_saturation": 0.00011369022736296392,
-      "vc_wait_cycles": 200,
-      "buffer_wait_cycles": 320,
-      "link_wait_cycles": 508032,
-      "pipeline_cycles": 1024,
+      "network_avg_latency": 3625.3968253968255,
+      "network_max_latency": 5438.0952380952385,
+      "network_throughput": 18.0769176882662,
+      "network_saturation": 1.0,
+      "vc_wait_cycles": 15116832,
+      "buffer_wait_cycles": 0,
+      "link_wait_cycles": 0,
+      "pipeline_cycles": 27963360,
       "idle_ratio": 0.0,
       "per_core_utilization": {},
       "metadata": {
@@ -660,7 +660,7 @@
     }
   },
   {
-    "score": -302696712.6,
+    "score": -301092775.0,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -747,18 +747,18 @@
       }
     },
     "result": {
-      "total_latency_cycles": 302671239,
+      "total_latency_cycles": 298627095,
       "compute_cycles": 297500672,
-      "network_cycles": 4574032,
+      "network_cycles": 529888,
       "memory_stall_cycles": 596535,
-      "network_avg_latency": 142938.5,
-      "network_max_latency": 214407.75,
-      "network_throughput": 0.9026539385819775,
-      "network_saturation": 0.0001574103548029397,
-      "vc_wait_cycles": 400,
-      "buffer_wait_cycles": 320,
-      "link_wait_cycles": 508032,
-      "pipeline_cycles": 1024,
+      "network_avg_latency": 4205.460317460317,
+      "network_max_latency": 6308.190476190475,
+      "network_throughput": 15.583549731263965,
+      "network_saturation": 1.0,
+      "vc_wait_cycles": 24656800,
+      "buffer_wait_cycles": 0,
+      "link_wait_cycles": 0,
+      "pipeline_cycles": 12081632,
       "idle_ratio": 0.0,
       "per_core_utilization": {},
       "metadata": {
@@ -770,7 +770,7 @@
     }
   },
   {
-    "score": -1195200224.6,
+    "score": -1196810861.4,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -857,18 +857,18 @@
       }
     },
     "result": {
-      "total_latency_cycles": 1195174615,
+      "total_latency_cycles": 1191567415,
       "compute_cycles": 1190002688,
-      "network_cycles": 4575392,
+      "network_cycles": 968192,
       "memory_stall_cycles": 596535,
-      "network_avg_latency": 142981.0,
-      "network_max_latency": 214471.5,
-      "network_throughput": 0.9023856316573531,
-      "network_saturation": 0.0004546058567222218,
-      "vc_wait_cycles": 800,
-      "buffer_wait_cycles": 1280,
-      "link_wait_cycles": 508032,
-      "pipeline_cycles": 1024,
+      "network_avg_latency": 7684.063492063492,
+      "network_max_latency": 11526.095238095239,
+      "network_throughput": 8.528820729772606,
+      "network_saturation": 1.0,
+      "vc_wait_cycles": 52434464,
+      "buffer_wait_cycles": 0,
+      "link_wait_cycles": 0,
+      "pipeline_cycles": 8673088,
       "idle_ratio": 0.0,
       "per_core_utilization": {},
       "metadata": {
