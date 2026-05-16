@@ -33,7 +33,7 @@ This generates:
 - `outputs/pareto_latency_vs_throughput.png`
 - `outputs/pareto_latency_vs_congestion.png`
 
-`examples/run_dse.py` now evaluates configurations using a DeepSeek-V3-style
+`examples/run_dse.py` now evaluates configurations using a DeepSeek-V4-Pro
 decode FFN workload model (routed experts + shared experts + top-k routing).
 The evaluator uses hierarchical communication simulation: NoC within reticles
 and NoW across reticles.
@@ -41,14 +41,14 @@ Gateway modeling is configurable via `network.gateways_per_reticle` and
 `network.gateway_policy`.
 Supported gateway policies include `nearest` and `load_aware`.
 
-## DeepSeek-V3 FFN Mapping Example
+## DeepSeek-V4-Pro FFN Mapping Example
 
 ```bash
 source .venv/bin/activate
-python examples/deepseek_v3_mapping.py
+python examples/deepseek_v4_pro_mapping.py
 ```
 
-The DeepSeek-V3 profile is provided in `configs/deepseek_v3_ffn.yaml`.
+The DeepSeek-V4-Pro profile is provided in `configs/deepseek_v4_pro_ffn.yaml`.
 It models:
 
 - Routed experts + shared experts
