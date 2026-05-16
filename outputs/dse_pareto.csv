@@ -1,2 +1,2 @@
 trial_idx,score,total_latency_cycles,vc_wait_cycles,buffer_wait_cycles,link_wait_cycles,pipeline_cycles,network_throughput,network_saturation,pe_width,noc_num_vcs,noc_buffer_depth
-0,-314.1,312,10,8,6,0,0.5,0.0,32,1,16
+0,-16897.7,12838,40597,0,0,247515,1.7547904658046425,1.0,16,4,16

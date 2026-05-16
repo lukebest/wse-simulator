@@ -1,6 +1,6 @@
 [
   {
-    "score": -629.2,
+    "score": -61321.600000000006,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -83,25 +83,31 @@
       }
     },
     "result": {
-      "total_latency_cycles": 625,
+      "total_latency_cycles": 32270,
       "compute_cycles": 0,
-      "network_cycles": 0,
+      "network_cycles": 410843,
       "memory_stall_cycles": 0,
-      "network_avg_latency": 0.0,
-      "network_max_latency": 0.0,
-      "network_throughput": 0.25,
-      "network_saturation": 0.0,
-      "vc_wait_cycles": 20,
-      "buffer_wait_cycles": 16,
-      "link_wait_cycles": 12,
-      "pipeline_cycles": 0,
+      "network_avg_latency": 14006.84375,
+      "network_max_latency": 32270.0,
+      "network_throughput": 0.6981096994112178,
+      "network_saturation": 1.0,
+      "vc_wait_cycles": 290516,
+      "buffer_wait_cycles": 0,
+      "link_wait_cycles": 0,
+      "pipeline_cycles": 120327,
       "idle_ratio": 0.0,
       "per_core_utilization": {},
-      "metadata": {}
+      "metadata": {
+        "token_dispatch_transfers": 16,
+        "token_combine_transfers": 16,
+        "total_transfers": 32,
+        "decode_tokens": 8,
+        "num_experts": 4
+      }
     }
   },
   {
-    "score": -1258.4,
+    "score": -61321.600000000006,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -184,25 +190,31 @@
       }
     },
     "result": {
-      "total_latency_cycles": 1250,
+      "total_latency_cycles": 32270,
       "compute_cycles": 0,
-      "network_cycles": 0,
+      "network_cycles": 410843,
       "memory_stall_cycles": 0,
-      "network_avg_latency": 0.0,
-      "network_max_latency": 0.0,
-      "network_throughput": 0.125,
-      "network_saturation": 0.0,
-      "vc_wait_cycles": 40,
-      "buffer_wait_cycles": 32,
-      "link_wait_cycles": 24,
-      "pipeline_cycles": 0,
+      "network_avg_latency": 14006.84375,
+      "network_max_latency": 32270.0,
+      "network_throughput": 0.6981096994112178,
+      "network_saturation": 1.0,
+      "vc_wait_cycles": 290516,
+      "buffer_wait_cycles": 0,
+      "link_wait_cycles": 0,
+      "pipeline_cycles": 120327,
       "idle_ratio": 0.0,
       "per_core_utilization": {},
-      "metadata": {}
+      "metadata": {
+        "token_dispatch_transfers": 16,
+        "token_combine_transfers": 16,
+        "total_transfers": 32,
+        "decode_tokens": 8,
+        "num_experts": 4
+      }
     }
   },
   {
-    "score": -314.1,
+    "score": -61321.600000000006,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -285,25 +297,31 @@
       }
     },
     "result": {
-      "total_latency_cycles": 312,
+      "total_latency_cycles": 32270,
       "compute_cycles": 0,
-      "network_cycles": 0,
+      "network_cycles": 410843,
       "memory_stall_cycles": 0,
-      "network_avg_latency": 0.0,
-      "network_max_latency": 0.0,
-      "network_throughput": 0.5,
-      "network_saturation": 0.0,
-      "vc_wait_cycles": 10,
-      "buffer_wait_cycles": 8,
-      "link_wait_cycles": 6,
-      "pipeline_cycles": 0,
+      "network_avg_latency": 14006.84375,
+      "network_max_latency": 32270.0,
+      "network_throughput": 0.6981096994112178,
+      "network_saturation": 1.0,
+      "vc_wait_cycles": 290516,
+      "buffer_wait_cycles": 0,
+      "link_wait_cycles": 0,
+      "pipeline_cycles": 120327,
       "idle_ratio": 0.0,
       "per_core_utilization": {},
-      "metadata": {}
+      "metadata": {
+        "token_dispatch_transfers": 16,
+        "token_combine_transfers": 16,
+        "total_transfers": 32,
+        "decode_tokens": 8,
+        "num_experts": 4
+      }
     }
   },
   {
-    "score": -1258.4,
+    "score": -61321.600000000006,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -386,25 +404,31 @@
       }
     },
     "result": {
-      "total_latency_cycles": 1250,
+      "total_latency_cycles": 32270,
       "compute_cycles": 0,
-      "network_cycles": 0,
+      "network_cycles": 410843,
       "memory_stall_cycles": 0,
-      "network_avg_latency": 0.0,
-      "network_max_latency": 0.0,
-      "network_throughput": 0.125,
-      "network_saturation": 0.0,
-      "vc_wait_cycles": 40,
-      "buffer_wait_cycles": 32,
-      "link_wait_cycles": 24,
-      "pipeline_cycles": 0,
+      "network_avg_latency": 14006.84375,
+      "network_max_latency": 32270.0,
+      "network_throughput": 0.6981096994112178,
+      "network_saturation": 1.0,
+      "vc_wait_cycles": 290516,
+      "buffer_wait_cycles": 0,
+      "link_wait_cycles": 0,
+      "pipeline_cycles": 120327,
       "idle_ratio": 0.0,
       "per_core_utilization": {},
-      "metadata": {}
+      "metadata": {
+        "token_dispatch_transfers": 16,
+        "token_combine_transfers": 16,
+        "total_transfers": 32,
+        "decode_tokens": 8,
+        "num_experts": 4
+      }
     }
   },
   {
-    "score": -1258.4,
+    "score": -61321.600000000006,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -487,25 +511,31 @@
       }
     },
     "result": {
-      "total_latency_cycles": 1250,
+      "total_latency_cycles": 32270,
       "compute_cycles": 0,
-      "network_cycles": 0,
+      "network_cycles": 410843,
       "memory_stall_cycles": 0,
-      "network_avg_latency": 0.0,
-      "network_max_latency": 0.0,
-      "network_throughput": 0.125,
-      "network_saturation": 0.0,
-      "vc_wait_cycles": 40,
-      "buffer_wait_cycles": 32,
-      "link_wait_cycles": 24,
-      "pipeline_cycles": 0,
+      "network_avg_latency": 14006.84375,
+      "network_max_latency": 32270.0,
+      "network_throughput": 0.6981096994112178,
+      "network_saturation": 1.0,
+      "vc_wait_cycles": 290516,
+      "buffer_wait_cycles": 0,
+      "link_wait_cycles": 0,
+      "pipeline_cycles": 120327,
       "idle_ratio": 0.0,
       "per_core_utilization": {},
-      "metadata": {}
+      "metadata": {
+        "token_dispatch_transfers": 16,
+        "token_combine_transfers": 16,
+        "total_transfers": 32,
+        "decode_tokens": 8,
+        "num_experts": 4
+      }
     }
   },
   {
-    "score": -629.2,
+    "score": -16897.7,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -588,25 +618,31 @@
       }
     },
     "result": {
-      "total_latency_cycles": 625,
+      "total_latency_cycles": 12838,
       "compute_cycles": 0,
-      "network_cycles": 0,
+      "network_cycles": 288112,
       "memory_stall_cycles": 0,
-      "network_avg_latency": 0.0,
-      "network_max_latency": 0.0,
-      "network_throughput": 0.25,
-      "network_saturation": 0.0,
-      "vc_wait_cycles": 20,
-      "buffer_wait_cycles": 16,
-      "link_wait_cycles": 12,
-      "pipeline_cycles": 0,
+      "network_avg_latency": 6367.8125,
+      "network_max_latency": 12838.0,
+      "network_throughput": 1.7547904658046425,
+      "network_saturation": 1.0,
+      "vc_wait_cycles": 40597,
+      "buffer_wait_cycles": 0,
+      "link_wait_cycles": 0,
+      "pipeline_cycles": 247515,
       "idle_ratio": 0.0,
       "per_core_utilization": {},
-      "metadata": {}
+      "metadata": {
+        "token_dispatch_transfers": 16,
+        "token_combine_transfers": 16,
+        "total_transfers": 32,
+        "decode_tokens": 8,
+        "num_experts": 4
+      }
     }
   },
   {
-    "score": -629.2,
+    "score": -31553.6,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -689,25 +725,31 @@
       }
     },
     "result": {
-      "total_latency_cycles": 625,
+      "total_latency_cycles": 19719,
       "compute_cycles": 0,
-      "network_cycles": 0,
+      "network_cycles": 275807,
       "memory_stall_cycles": 0,
-      "network_avg_latency": 0.0,
-      "network_max_latency": 0.0,
-      "network_throughput": 0.25,
-      "network_saturation": 0.0,
-      "vc_wait_cycles": 20,
-      "buffer_wait_cycles": 16,
-      "link_wait_cycles": 12,
-      "pipeline_cycles": 0,
+      "network_avg_latency": 8626.96875,
+      "network_max_latency": 19719.0,
+      "network_throughput": 1.1424514427709316,
+      "network_saturation": 1.0,
+      "vc_wait_cycles": 118346,
+      "buffer_wait_cycles": 0,
+      "link_wait_cycles": 0,
+      "pipeline_cycles": 157461,
       "idle_ratio": 0.0,
       "per_core_utilization": {},
-      "metadata": {}
+      "metadata": {
+        "token_dispatch_transfers": 16,
+        "token_combine_transfers": 16,
+        "total_transfers": 32,
+        "decode_tokens": 8,
+        "num_experts": 4
+      }
     }
   },
   {
-    "score": -1258.4,
+    "score": -61321.600000000006,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -790,21 +832,27 @@
       }
     },
     "result": {
-      "total_latency_cycles": 1250,
+      "total_latency_cycles": 32270,
       "compute_cycles": 0,
-      "network_cycles": 0,
+      "network_cycles": 410843,
       "memory_stall_cycles": 0,
-      "network_avg_latency": 0.0,
-      "network_max_latency": 0.0,
-      "network_throughput": 0.125,
-      "network_saturation": 0.0,
-      "vc_wait_cycles": 40,
-      "buffer_wait_cycles": 32,
-      "link_wait_cycles": 24,
-      "pipeline_cycles": 0,
+      "network_avg_latency": 14006.84375,
+      "network_max_latency": 32270.0,
+      "network_throughput": 0.6981096994112178,
+      "network_saturation": 1.0,
+      "vc_wait_cycles": 290516,
+      "buffer_wait_cycles": 0,
+      "link_wait_cycles": 0,
+      "pipeline_cycles": 120327,
       "idle_ratio": 0.0,
       "per_core_utilization": {},
-      "metadata": {}
+      "metadata": {
+        "token_dispatch_transfers": 16,
+        "token_combine_transfers": 16,
+        "total_transfers": 32,
+        "decode_tokens": 8,
+        "num_experts": 4
+      }
     }
   }
 ]

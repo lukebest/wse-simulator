@@ -32,3 +32,18 @@ This generates:
 - `outputs/dse_pareto.csv`
 - `outputs/pareto_latency_vs_throughput.png`
 - `outputs/pareto_latency_vs_congestion.png`
+
+## DeepSeek-V3 FFN Mapping Example
+
+```bash
+source .venv/bin/activate
+python examples/deepseek_v3_mapping.py
+```
+
+The DeepSeek-V3 profile is provided in `configs/deepseek_v3_ffn.yaml`.
+It models:
+
+- Routed experts + shared experts
+- Top-k decode routing
+- Skewed expert token load distribution
+- Expert-affinity mapping onto WSE cores

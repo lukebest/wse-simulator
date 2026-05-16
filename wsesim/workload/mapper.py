@@ -5,7 +5,6 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 
-from wsesim.workload.collective import CollectiveOps, P2PTransfer
 from wsesim.workload.ops import LLMWorkload
 from wsesim.workload.partition.base import TileTask
 
@@ -14,10 +13,6 @@ from wsesim.workload.partition.base import TileTask
 class Mapping:
     assignments: dict[str, list[int]] = field(default_factory=dict)
     core_tasks: dict[int, list[TileTask]] = field(default_factory=dict)
-    token_home_cores: dict[int, int] = field(default_factory=dict)
-    expert_cores: dict[int, int] = field(default_factory=dict)
-    token_dispatch_transfers: list[P2PTransfer] = field(default_factory=list)
-    token_combine_transfers: list[P2PTransfer] = field(default_factory=list)
 
 
 class MappingStrategy(ABC):
@@ -42,8 +37,6 @@ class NearestNeighborMapping(MappingStrategy):
                 mapping.core_tasks.setdefault(core, []).append(task)
                 cursor += 1
             mapping.assignments[op.name] = mapped_cores
-
-        _attach_token_level_plan(workload, mapping, alive_cores)
         return mapping
 
 
@@ -65,45 +58,52 @@ class ExpertLocalityMapping(MappingStrategy):
                 mapping.core_tasks.setdefault(core, []).append(task)
             mapping.assignments[op.name] = mapped_cores
             start = (start + count) % len(alive_cores)
-        _attach_token_level_plan(workload, mapping, alive_cores)
         return mapping
 
 
-def _attach_token_level_plan(
-    workload: LLMWorkload,
-    mapping: Mapping,
-    alive_cores: list[int],
-) -> None:
-    if not workload.token_routes:
-        return
+class ExpertAffinityMapping(MappingStrategy):
+    """Map routed experts consistently to affinity cores.
 
-    token_home_cores = {
-        route.token_id: alive_cores[route.token_id % len(alive_cores)]
-        for route in workload.token_routes
-    }
-    expert_cores = {}
-    num_experts = int(workload.metadata.get("num_experts", 0))
-    for expert_id in range(num_experts):
-        op_name = f"expert_{expert_id}_gate_proj"
-        assigned = mapping.assignments.get(op_name, [])
-        if assigned:
-            expert_cores[expert_id] = assigned[0]
-        else:
-            expert_cores[expert_id] = alive_cores[expert_id % len(alive_cores)]
+    - Router/dispatch/combine ops are anchored on coordinator cores.
+    - Expert ops with the same expert_id always map to the same core.
+    """
 
-    hidden_dim = int(workload.metadata.get("hidden_dim", 4096))
-    token_bytes = hidden_dim * 2  # fp16/bf16
-    mapping.token_home_cores = token_home_cores
-    mapping.expert_cores = expert_cores
-    mapping.token_dispatch_transfers = CollectiveOps.moe_dispatch(
-        token_routes=workload.token_routes,
-        token_home_cores=token_home_cores,
-        expert_cores=expert_cores,
-        token_bytes=token_bytes,
-    )
-    mapping.token_combine_transfers = CollectiveOps.moe_combine(
-        token_routes=workload.token_routes,
-        token_home_cores=token_home_cores,
-        expert_cores=expert_cores,
-        token_bytes=token_bytes,
-    )
+    def map(self, workload: LLMWorkload, tasks: dict[str, list[TileTask]], alive_cores: list[int]) -> Mapping:
+        if not alive_cores:
+            raise ValueError("No alive cores available for mapping.")
+
+        mapping = Mapping()
+        coordinator = alive_cores[0]
+        lookup = {op.name: op for op in workload.ops}
+
+        for op in workload.ops:
+            op_tasks = tasks.get(op.name, [])
+            mapped_cores: list[int] = []
+            op_meta = lookup[op.name]
+
+            if op_meta.op_type in {"router", "dispatch", "combine"}:
+                for task in op_tasks:
+                    mapped_cores.append(coordinator)
+                    mapping.core_tasks.setdefault(coordinator, []).append(task)
+                mapping.assignments[op.name] = mapped_cores
+                continue
+
+            if op_meta.expert_id is not None:
+                if op_meta.expert_kind == "shared":
+                    core = alive_cores[(op_meta.expert_id + 1) % len(alive_cores)]
+                else:
+                    core = alive_cores[op_meta.expert_id % len(alive_cores)]
+                for task in op_tasks:
+                    mapped_cores.append(core)
+                    mapping.core_tasks.setdefault(core, []).append(task)
+                mapping.assignments[op.name] = mapped_cores
+                continue
+
+            # Fallback for unknown ops.
+            for idx, task in enumerate(op_tasks):
+                core = alive_cores[idx % len(alive_cores)]
+                mapped_cores.append(core)
+                mapping.core_tasks.setdefault(core, []).append(task)
+            mapping.assignments[op.name] = mapped_cores
+
+        return mapping
