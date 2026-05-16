@@ -51,6 +51,7 @@ class UnifiedNetwork:
     sa_latency_cycles: int = 1
     st_latency_cycles: int = 1
     crossbar_bw_flits_per_cycle: int = 1
+    flit_bytes: int = 128
     graph: dict[int, list[int]] = field(init=False)
     routers: dict[int, Router] = field(init=False)
     links: dict[tuple[int, int], Link] = field(init=False)
@@ -114,7 +115,7 @@ class UnifiedNetwork:
         packet_id = id(packet)
         hops = 0
         current = packet.src
-        flits = packet_to_flits(packet)
+        flits = packet_to_flits(packet, flit_bytes=self.flit_bytes)
 
         while current != packet.dst:
             router = self.routers[current]
@@ -177,7 +178,7 @@ class UnifiedNetwork:
         self.stats.total_hops += hops
 
     def estimate_transfer_cycles(self, size_bytes: int) -> int:
-        flits = max(1, ceil(size_bytes / 32))
+        flits = max(1, ceil(size_bytes / max(self.flit_bytes, 1)))
         crossbar_cycles = ceil(flits / max(self.crossbar_bw_flits_per_cycle, 1))
         if self.router_pipeline_mode == "1_stage":
             router_cycles = max(

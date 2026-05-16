@@ -320,6 +320,7 @@ def _build_network_domain(
         sa_latency_cycles=domain_config.sa_latency_cycles,
         st_latency_cycles=domain_config.st_latency_cycles,
         crossbar_bw_flits_per_cycle=domain_config.crossbar_bw_flits_per_cycle,
+        flit_bytes=domain_config.link_width_bytes,
     )
     if routing_name == "table_based":
         network.routing = TableBasedRouting(network.graph)

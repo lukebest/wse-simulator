@@ -18,6 +18,14 @@ compute:
 memory:
   per_core_bandwidth_gbps: 256.0
   per_core_latency_ns: 100.0
+network:
+  noc:
+    freq_ghz: 2.2
+    link_width_bytes: 128
+  now:
+    freq_ghz: 2.2
+    link_width_bytes: 128
+    link_latency_cycles: 5
 workload:
   model_name: deepseek_v4_pro_ffn_decode
   hidden_dim: 7168

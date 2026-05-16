@@ -51,6 +51,8 @@ class NetworkDomainConfig:
     topology: str = "mesh2d"
     routing: str = "xy"
     flow_control: str = "credit_vc"
+    freq_ghz: float = 2.2
+    link_width_bytes: int = 128
     link_bw_flits_per_cycle: int = 1
     link_latency_cycles: int = 1
     num_vcs: int = 2
