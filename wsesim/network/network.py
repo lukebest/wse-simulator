@@ -151,6 +151,13 @@ class UnifiedNetwork:
                         self.stats.per_router_buffer_wait_cycles.get(router.node_id, 0) + 1
                     )
                     yield self.env.timeout(1)
+                while len(router.input_buffer.items) >= router.input_buffer.capacity:
+                    self.stats.buffer_wait_cycles += 1
+                    router.buffer_wait_cycles += 1
+                    self.stats.per_router_buffer_wait_cycles[router.node_id] = (
+                        self.stats.per_router_buffer_wait_cycles.get(router.node_id, 0) + 1
+                    )
+                    yield self.env.timeout(1)
                 yield router.enqueue(flit)
                 pipeline_before = router.pipeline_cycles
                 yield self.env.process(router.pipeline(1))
