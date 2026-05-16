@@ -260,14 +260,6 @@ def generate_deepseek_v4_pro_decode_ffn_workload(
         },
     )
 
-
-def generate_deepseek_v3_decode_ffn_workload(
-    profile: DeepSeekV4ProFFNProfile,
-) -> LLMWorkload:
-    """Backward-compatible alias to the V4-Pro workload generator."""
-    return generate_deepseek_v4_pro_decode_ffn_workload(profile)
-
-
 def _estimate_routed_expert_token_loads(
     num_experts: int,
     decode_tokens: int,

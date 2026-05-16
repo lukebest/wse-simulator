@@ -500,7 +500,3 @@ def _select_gateways(
 def _reticle_coord(reticle_id: int, reticles_x: int) -> tuple[int, int]:
     return reticle_id // reticles_x, reticle_id % reticles_x
 
-
-def evaluate_deepseek_v3_ffn(config: WSEConfig) -> SimResult:
-    """Backward-compatible alias to the V4-Pro evaluator."""
-    return evaluate_deepseek_v4_pro_ffn(config)
