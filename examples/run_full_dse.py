@@ -8,6 +8,12 @@ from pathlib import Path
 from wsesim.core.config import WSEConfig
 from wsesim.dse.engine import DSEEngine
 from wsesim.dse.evaluator_deepseek import evaluate_deepseek_v4_pro_ffn
+from wsesim.dse.pipeline_analysis import compute_pipeline_breakdown
+from wsesim.dse.plot import (
+    plot_bandwidth_utilization,
+    plot_latency_breakdown,
+    plot_pipeline_gantt,
+)
 from wsesim.dse.report import (
     export_pareto_csv,
     export_trials_csv,
@@ -34,6 +40,11 @@ def main() -> None:
     parser.add_argument("--trials", type=int, default=50, help="Number of DSE trials.")
     parser.add_argument("--workers", type=int, default=1, help="Number of evaluator workers.")
     parser.add_argument("--seed", type=int, default=1234, help="Random seed for search.")
+    parser.add_argument(
+        "--visualize",
+        action="store_true",
+        help="Generate pipeline visualization charts for top Pareto trials.",
+    )
     parser.add_argument(
         "--output-dir",
         type=Path,
@@ -84,6 +95,25 @@ def main() -> None:
     trials_csv = export_trials_csv(trials, output_dir / "full_dse_trials.csv")
     pareto_csv = export_pareto_csv(front, output_dir / "full_dse_pareto.csv")
     print("exported:", trials_json, trials_csv, pareto_csv)
+
+    if args.visualize and front:
+        top_front = sorted(front, key=lambda trial: trial.score, reverse=True)[:5]
+        breakdowns = []
+        for trial in top_front:
+            cfg = trial.config
+            label = (
+                f"{cfg.workload.partition_strategy}/s{cfg.workload.partition_shards}/b{cfg.workload.decode_tokens}/"
+                f"{cfg.network.noc.topology}:{cfg.network.now.topology}"
+            )
+            breakdowns.append(compute_pipeline_breakdown(cfg, config_label=label))
+        out_gantt = plot_pipeline_gantt(breakdowns, output_dir / "pareto_pipeline_gantt.png")
+        out_breakdown = plot_latency_breakdown(
+            breakdowns, output_dir / "pareto_pipeline_latency_breakdown.png"
+        )
+        out_bw = plot_bandwidth_utilization(
+            breakdowns, output_dir / "pareto_pipeline_bw_utilization.png"
+        )
+        print("visualized:", out_gantt, out_breakdown, out_bw)
 
 
 if __name__ == "__main__":
