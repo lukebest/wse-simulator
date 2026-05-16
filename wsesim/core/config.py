@@ -105,6 +105,7 @@ class WorkloadConfig:
     routing_skew_alpha: float = 1.2
     capacity_factor: float = 1.25
     partition_strategy: str = "expert"
+    partition_shards: int = 1
     collective_algorithm: str = "ring"
     mapping_strategy: str = "nearest_neighbor"
 
@@ -122,6 +123,8 @@ class DSEConfig:
             "link_wait_cycles": -0.05,
             "gateway_noc_hops": -0.001,
             "gateway_peak_load": -0.05,
+            "memory_stall_cycles": -0.5,
+            "io_injection_cycles": -0.2,
         }
     )
 

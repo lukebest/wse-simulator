@@ -40,4 +40,17 @@ workload:
   routing_skew_alpha: 1.2
   capacity_factor: 1.25
   partition_strategy: expert
+  partition_shards: 1
   mapping_strategy: expert_affinity
+dse:
+  objective: latency_min
+  max_trials: 50
+  score_weights:
+    total_latency_cycles: -1.0
+    memory_stall_cycles: -0.5
+    io_injection_cycles: -0.2
+    vc_wait_cycles: -0.1
+    buffer_wait_cycles: -0.1
+    link_wait_cycles: -0.05
+    gateway_noc_hops: -0.001
+    gateway_peak_load: -0.05

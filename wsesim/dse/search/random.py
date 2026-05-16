@@ -16,9 +16,22 @@ class RandomSearch(SearchStrategy):
 
     def suggest(self, history: list[tuple[WSEConfig, float]]) -> WSEConfig:
         cfg = deepcopy(self.base)
+        cfg.workload.decode_tokens = self._rng.choice([4, 16])
+        cfg.workload.partition_strategy = self._rng.choice(["expert", "col", "k_split"])
+        cfg.workload.partition_shards = self._rng.choice([1, 2, 4, 7])
+        if cfg.workload.partition_strategy == "expert":
+            cfg.workload.partition_shards = 1
+
+        cfg.network.noc.topology = self._rng.choice(["mesh2d", "torus2d", "flat_butterfly"])
+        cfg.network.noc.routing = self._rng.choice(["xy", "ugal", "table_based"])
+        cfg.network.noc.flow_control = self._rng.choice(["credit_vc", "wormhole"])
         cfg.network.noc.buffer_depth = self._rng.choice([4, 8, 16])
         cfg.network.noc.num_vcs = self._rng.choice([1, 2, 4])
         cfg.network.noc.link_bw_flits_per_cycle = self._rng.choice([1, 2, 4])
+
+        cfg.network.now.topology = self._rng.choice(["mesh2d", "flat_butterfly"])
+        cfg.network.now.routing = self._rng.choice(["xy", "ugal", "table_based"])
+        cfg.network.now.flow_control = self._rng.choice(["credit_vc", "wormhole"])
 
         max_gateways = max(1, min(cfg.wafer.cores_per_reticle, 8))
         gateway_candidates = sorted({1, 2, 4, max_gateways})
@@ -27,4 +40,11 @@ class RandomSearch(SearchStrategy):
         cfg.network.io_distribution_policy = self._rng.choice(
             ["round_robin", "nearest", "load_aware"]
         )
+
+        active_experts = min(
+            cfg.workload.top_k + cfg.workload.num_shared_experts,
+            cfg.workload.num_routed_experts + cfg.workload.num_shared_experts,
+        )
+        max_shards = max(1, cfg.wafer.total_cores // max(1, active_experts))
+        cfg.workload.partition_shards = min(cfg.workload.partition_shards, max_shards)
         return cfg

@@ -7,5 +7,6 @@ workload:
   decode_batch_size: 1
   decode_tokens: 32
   partition_strategy: expert
+  partition_shards: 1
   collective_algorithm: ring
   mapping_strategy: nearest_neighbor

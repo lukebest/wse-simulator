@@ -93,6 +93,11 @@ def test_dse_exports_json_and_csv(tmp_path) -> None:
     assert len(rows) == len(trials)
     assert "total_latency_cycles" in rows[0]
     assert "cube_steady_cycles" in rows[0]
+    assert "batch_size" in rows[0]
+    assert "partition_strategy" in rows[0]
+    assert "noc_topology" in rows[0]
+    assert "now_routing" in rows[0]
+    assert "allreduce_cycles" in rows[0]
     assert "gateway_noc_hops" in rows[0]
     assert "gateway_policy" in rows[0]
 
@@ -101,7 +106,7 @@ def test_dse_exports_json_and_csv(tmp_path) -> None:
     assert len(pareto_rows) == len(front)
 
 
-def test_random_search_explores_gateway_dimensions() -> None:
+def test_random_search_explores_dse_dimensions() -> None:
     base = WSEConfig()
     search = RandomSearch(base, seed=42)
     history: list[tuple[WSEConfig, float]] = []
@@ -109,11 +114,21 @@ def test_random_search_explores_gateway_dimensions() -> None:
     policies = set()
     io_policies = set()
     gateway_counts = set()
+    batch_sizes = set()
+    partition_strategies = set()
+    noc_topologies = set()
+    now_topologies = set()
     for _ in range(20):
         cfg = search.suggest(history)
         policies.add(cfg.network.gateway_policy)
         io_policies.add(cfg.network.io_distribution_policy)
         gateway_counts.add(cfg.network.gateways_per_reticle)
+        batch_sizes.add(cfg.workload.decode_tokens)
+        partition_strategies.add(cfg.workload.partition_strategy)
+        noc_topologies.add(cfg.network.noc.topology)
+        now_topologies.add(cfg.network.now.topology)
+        if cfg.workload.partition_strategy == "expert":
+            assert cfg.workload.partition_shards == 1
         history.append((cfg, 0.0))
 
     assert "nearest" in policies
@@ -121,4 +136,12 @@ def test_random_search_explores_gateway_dimensions() -> None:
     assert "round_robin" in io_policies
     assert "nearest" in io_policies
     assert "load_aware" in io_policies
+    assert batch_sizes == {4, 16}
+    assert "expert" in partition_strategies
+    assert "col" in partition_strategies
+    assert "k_split" in partition_strategies
+    assert "mesh2d" in noc_topologies
+    assert "flat_butterfly" in noc_topologies
+    assert "mesh2d" in now_topologies
+    assert "flat_butterfly" in now_topologies
     assert len(gateway_counts) >= 2

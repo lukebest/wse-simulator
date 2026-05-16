@@ -24,7 +24,12 @@ from wsesim.workload.generator import (
     generate_deepseek_v4_pro_decode_ffn_workload,
 )
 from wsesim.workload.mapper import ExpertAffinityMapping, ExpertLocalityMapping, NearestNeighborMapping
+from wsesim.workload.partition.base import PartitionStrategy, TileTask
+from wsesim.workload.partition.block import BlockPartition
+from wsesim.workload.partition.col import ColPartition
 from wsesim.workload.partition.expert import ExpertPartition
+from wsesim.workload.partition.k_split import KPartition
+from wsesim.workload.partition.row import RowPartition
 
 
 def evaluate_deepseek_v4_pro_ffn(config: WSEConfig) -> SimResult:
@@ -41,16 +46,29 @@ def evaluate_deepseek_v4_pro_ffn(config: WSEConfig) -> SimResult:
     )
     workload = generate_deepseek_v4_pro_decode_ffn_workload(profile)
 
-    partitioner = ExpertPartition()
-    tasks = {op.name: partitioner.partition(op, shards=1) for op in workload.ops}
+    partitioner = _resolve_partitioner(config.workload.partition_strategy)
+    partition_shards = _effective_partition_shards(workload, config)
+    tasks = {
+        op.name: partitioner.partition(
+            op,
+            shards=(
+                partition_shards
+                if op.op_type in {"expert_w1_proj", "expert_w3_proj", "expert_w2_proj", "elementwise_mul"}
+                else 1
+            ),
+        )
+        for op in workload.ops
+    }
 
     alive_cores = list(range(max(1, config.wafer.total_cores)))
     mapper = _resolve_mapper(config.workload.mapping_strategy)
     mapping = mapper.map(workload, tasks, alive_cores)
 
-    compute_cycles = _estimate_compute_cycles(workload, config)
+    op_lookup = {op.name: op for op in workload.ops}
+    compute_cycles = _estimate_compute_cycles(tasks, op_lookup, config)
     network_metrics = _estimate_network_metrics(workload, mapping, config)
-    memory_stall_cycles = _estimate_memory_stall_cycles(workload, config)
+    memory_stall_cycles = _estimate_memory_stall_cycles(workload, config, partition_shards)
+    allreduce_cycles = _estimate_allreduce_cycles(workload, config, partition_shards)
 
     result = SimResult(
         total_latency_cycles=(
@@ -58,10 +76,13 @@ def evaluate_deepseek_v4_pro_ffn(config: WSEConfig) -> SimResult:
             + network_metrics["network_cycles"]
             + network_metrics["io_injection_cycles"]
             + memory_stall_cycles
+            + allreduce_cycles
         ),
         compute_cycles=compute_cycles,
         network_cycles=network_metrics["network_cycles"],
+        io_injection_cycles=int(network_metrics["io_injection_cycles"]),
         memory_stall_cycles=memory_stall_cycles,
+        allreduce_cycles=allreduce_cycles,
         network_avg_latency=network_metrics["network_avg_latency"],
         network_max_latency=network_metrics["network_max_latency"],
         network_throughput=network_metrics["network_throughput"],
@@ -82,6 +103,9 @@ def evaluate_deepseek_v4_pro_ffn(config: WSEConfig) -> SimResult:
             "gateway_policy": config.network.gateway_policy,
             "io_distribution_policy": config.network.io_distribution_policy,
             "io_injection_cycles": int(network_metrics.get("io_injection_cycles", 0)),
+            "partition_strategy": config.workload.partition_strategy,
+            "partition_shards": partition_shards,
+            "allreduce_cycles": allreduce_cycles,
         },
     )
     return result
@@ -95,7 +119,32 @@ def _resolve_mapper(name: str):
     return NearestNeighborMapping()
 
 
-def _estimate_compute_cycles(workload, config: WSEConfig) -> int:
+def _resolve_partitioner(name: str) -> PartitionStrategy:
+    if name == "row":
+        return RowPartition()
+    if name == "col":
+        return ColPartition()
+    if name == "block":
+        return BlockPartition()
+    if name == "k_split":
+        return KPartition()
+    return ExpertPartition()
+
+
+def _effective_partition_shards(workload, config: WSEConfig) -> int:
+    if config.workload.partition_strategy == "expert":
+        return 1
+    requested = max(1, int(config.workload.partition_shards))
+    active_experts = int(workload.metadata.get("active_routed_experts", 0)) + int(
+        workload.metadata.get("num_shared_experts", 0)
+    )
+    max_by_cores = max(1, config.wafer.total_cores // max(1, active_experts))
+    return max(1, min(requested, max_by_cores))
+
+
+def _estimate_compute_cycles(
+    tasks_by_op: dict[str, list[TileTask]], op_lookup: dict[str, object], config: WSEConfig
+) -> int:
     total_cycles = 0
     if config.compute.pe_type == "cube":
         m_tile = max(1, config.compute.cube_m_tile)
@@ -104,23 +153,33 @@ def _estimate_compute_cycles(workload, config: WSEConfig) -> int:
         startup_cycles = max(0, config.compute.cube_startup_cycles)
         steady_cycles = max(1, config.compute.cube_steady_cycles)
 
-        for op in workload.ops:
+        for op_name, op_tasks in tasks_by_op.items():
+            op = op_lookup.get(op_name)
+            if op is None:
+                continue
             if op.op_type in {"expert_w1_proj", "expert_w3_proj", "expert_w2_proj", "router"}:
-                num_tiles = ceil(op.m / m_tile) * ceil(op.n / n_tile) * ceil(op.k / k_tile)
-                if num_tiles > 0:
-                    total_cycles += startup_cycles + max(0, num_tiles - 1) * steady_cycles
+                for task in op_tasks:
+                    num_tiles = ceil(task.m / m_tile) * ceil(task.n / n_tile) * ceil(task.k / k_tile)
+                    if num_tiles > 0:
+                        total_cycles += startup_cycles + max(0, num_tiles - 1) * steady_cycles
             elif op.op_type == "elementwise_mul":
-                total_cycles += op.m * op.n
+                for task in op_tasks:
+                    total_cycles += task.m * task.n
         return max(1, total_cycles)
 
     pe_width = max(1, config.compute.pe_width)
     throughput_per_cycle = pe_width if config.compute.pe_type == "vector" else pe_width * pe_width
     total_mac = 0
-    for op in workload.ops:
+    for op_name, op_tasks in tasks_by_op.items():
+        op = op_lookup.get(op_name)
+        if op is None:
+            continue
         if op.op_type in {"expert_w1_proj", "expert_w3_proj", "expert_w2_proj", "router"}:
-            total_mac += op.m * op.n * op.k
+            for task in op_tasks:
+                total_mac += task.m * task.n * task.k
         elif op.op_type == "elementwise_mul":
-            total_mac += op.m * op.n
+            for task in op_tasks:
+                total_mac += task.m * task.n
     return max(1, total_mac // throughput_per_cycle)
 
 
@@ -145,10 +204,11 @@ def _estimate_network_metrics(workload, mapping, config: WSEConfig) -> dict[str,
         op = op_lookup.get(op_name)
         if op is None or op.expert_kind != "routed" or op.op_type != "expert_w1_proj":
             continue
-        core = cores[0]
         bytes_for_expert = op.m * hidden * fp_bytes
-        dispatch_by_core[core] += bytes_for_expert
-        combine_by_core[core] += bytes_for_expert
+        bytes_per_core = max(1, int(bytes_for_expert / max(1, len(cores))))
+        for core in cores:
+            dispatch_by_core[core] += bytes_per_core
+            combine_by_core[core] += bytes_per_core
 
     # Shared expert traffic: coordinator to/from shared expert cores.
     for op_name, cores in mapping.assignments.items():
@@ -157,10 +217,11 @@ def _estimate_network_metrics(workload, mapping, config: WSEConfig) -> dict[str,
         op = op_lookup.get(op_name)
         if op is None or op.expert_kind != "shared" or op.op_type != "expert_w1_proj":
             continue
-        core = cores[0]
         bytes_for_shared = decode_tokens * hidden * fp_bytes
-        dispatch_by_core[core] += bytes_for_shared
-        combine_by_core[core] += bytes_for_shared
+        bytes_per_core = max(1, int(bytes_for_shared / max(1, len(cores))))
+        for core in cores:
+            dispatch_by_core[core] += bytes_per_core
+            combine_by_core[core] += bytes_per_core
 
     total_bytes = sum(dispatch_by_core.values()) + sum(combine_by_core.values())
     if total_bytes <= 0:
@@ -288,7 +349,7 @@ def _estimate_network_metrics(workload, mapping, config: WSEConfig) -> dict[str,
     }
 
 
-def _estimate_memory_stall_cycles(workload, config: WSEConfig) -> int:
+def _estimate_memory_stall_cycles(workload, config: WSEConfig, partition_shards: int = 1) -> int:
     hidden = int(workload.metadata["hidden_dim"])
     decode_tokens = int(workload.metadata["decode_tokens"])
     ffn_dim = int(workload.metadata["expert_ffn_dim"])
@@ -298,12 +359,44 @@ def _estimate_memory_stall_cycles(workload, config: WSEConfig) -> int:
     # Approximate read+write footprint for active expert FFN passes.
     # V4-Pro expert path uses W1/W3 (up-projections), elementwise fuse, then W2 down-proj.
     bytes_moved = active_routed * decode_tokens * (hidden + 2 * ffn_dim + hidden) * fp_bytes
+    bytes_moved = int(bytes_moved / max(1, partition_shards))
 
     cycles_per_ns = max(config.compute.pe_freq_ghz, 0.1)
     mem_bw_bytes_per_cycle = max(1.0, config.memory.per_core_bandwidth_gbps / cycles_per_ns)
     transfer_cycles = int(bytes_moved / mem_bw_bytes_per_cycle)
     startup_penalty = int(config.memory.per_core_latency_ns * cycles_per_ns)
     return max(1, transfer_cycles + startup_penalty)
+
+
+def _estimate_allreduce_cycles(workload, config: WSEConfig, partition_shards: int) -> int:
+    shards = max(1, partition_shards)
+    strategy = config.workload.partition_strategy
+    if shards <= 1 or strategy == "expert":
+        return 0
+
+    decode_tokens = int(workload.metadata["decode_tokens"])
+    hidden = int(workload.metadata["hidden_dim"])
+    ffn_dim = int(workload.metadata["expert_ffn_dim"])
+    active_experts = int(workload.metadata["active_routed_experts"]) + int(
+        workload.metadata["num_shared_experts"]
+    )
+    fp_bytes = 2
+
+    if strategy == "col":
+        payload_bytes = decode_tokens * hidden * fp_bytes * active_experts
+    elif strategy == "k_split":
+        payload_bytes = 2 * decode_tokens * ffn_dim * fp_bytes * active_experts
+    else:
+        return 0
+
+    noc_bytes_per_cycle = max(
+        1.0,
+        config.network.noc.link_width_bytes * config.network.noc.link_bw_flits_per_cycle,
+    )
+    ring_factor = 2.0 * (shards - 1) / shards
+    transfer_cycles = int(ring_factor * payload_bytes / noc_bytes_per_cycle)
+    latency_cycles = int(2 * (shards - 1) * max(1, config.network.noc.link_latency_cycles))
+    return max(0, transfer_cycles + latency_cycles)
 
 
 def _build_noc_network(env: simpy.Environment, config: WSEConfig) -> UnifiedNetwork:

@@ -11,7 +11,9 @@ class SimResult:
     total_latency_cycles: int = 0
     compute_cycles: int = 0
     network_cycles: int = 0
+    io_injection_cycles: int = 0
     memory_stall_cycles: int = 0
+    allreduce_cycles: int = 0
     network_avg_latency: float = 0.0
     network_max_latency: float = 0.0
     network_throughput: float = 0.0

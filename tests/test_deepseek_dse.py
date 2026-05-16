@@ -55,7 +55,7 @@ def test_deepseek_evaluator_responds_to_network_vc_scaling() -> None:
 def test_deepseek_evaluator_responds_to_link_bandwidth() -> None:
     base = WSEConfig()
     base.workload.model_name = "deepseek_v4_pro_ffn_decode"
-    base.workload.num_routed_experts = 96
+    base.workload.num_routed_experts = 8
     base.workload.num_shared_experts = 1
     base.workload.top_k = 6
     base.workload.decode_tokens = 24
@@ -137,3 +137,52 @@ def test_deepseek_evaluator_load_aware_gateway_balances_load() -> None:
     load_aware_result = evaluate_deepseek_v4_pro_ffn(load_aware)
 
     assert load_aware_result.gateway_peak_load <= nearest_result.gateway_peak_load
+
+
+def test_deepseek_partitioning_reduces_memory_stall_and_adds_allreduce() -> None:
+    base = WSEConfig()
+    base.workload.model_name = "deepseek_v4_pro_ffn_decode"
+    base.workload.num_routed_experts = 8
+    base.workload.num_shared_experts = 1
+    base.workload.top_k = 6
+    base.workload.decode_tokens = 16
+    base.workload.mapping_strategy = "expert_affinity"
+
+    expert_cfg = deepcopy(base)
+    expert_cfg.workload.partition_strategy = "expert"
+    expert_cfg.workload.partition_shards = 1
+
+    col_cfg = deepcopy(base)
+    col_cfg.workload.partition_strategy = "col"
+    col_cfg.workload.partition_shards = 4
+
+    k_cfg = deepcopy(base)
+    k_cfg.workload.partition_strategy = "k_split"
+    k_cfg.workload.partition_shards = 4
+
+    expert_result = evaluate_deepseek_v4_pro_ffn(expert_cfg)
+    col_result = evaluate_deepseek_v4_pro_ffn(col_cfg)
+    k_result = evaluate_deepseek_v4_pro_ffn(k_cfg)
+
+    assert col_result.memory_stall_cycles < expert_result.memory_stall_cycles
+    assert col_result.allreduce_cycles > 0
+    assert k_result.allreduce_cycles > 0
+    assert int(col_result.metadata["partition_shards"]) >= 1
+
+
+def test_deepseek_evaluator_responds_to_batch_size() -> None:
+    base = WSEConfig()
+    base.workload.model_name = "deepseek_v4_pro_ffn_decode"
+    base.workload.num_routed_experts = 96
+    base.workload.num_shared_experts = 1
+    base.workload.top_k = 6
+    base.workload.mapping_strategy = "expert_affinity"
+
+    small_batch = deepcopy(base)
+    large_batch = deepcopy(base)
+    small_batch.workload.decode_tokens = 4
+    large_batch.workload.decode_tokens = 16
+
+    small_result = evaluate_deepseek_v4_pro_ffn(small_batch)
+    large_result = evaluate_deepseek_v4_pro_ffn(large_batch)
+    assert large_result.total_latency_cycles > small_result.total_latency_cycles
