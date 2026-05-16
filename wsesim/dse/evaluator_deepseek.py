@@ -65,12 +65,16 @@ def evaluate_deepseek_v3_ffn(config: WSEConfig) -> SimResult:
         buffer_wait_cycles=network_metrics["buffer_wait_cycles"],
         link_wait_cycles=network_metrics["link_wait_cycles"],
         pipeline_cycles=network_metrics["pipeline_cycles"],
+        gateway_noc_hops=network_metrics["gateway_noc_hops"],
+        gateway_peak_load=network_metrics["gateway_peak_load"],
         metadata={
             "workload_model": workload.model_name,
             "active_routed_experts": int(workload.metadata["active_routed_experts"]),
             "mapped_cores": len(mapping.core_tasks),
             "mapping_strategy": config.workload.mapping_strategy,
             "gateway_noc_hops": int(network_metrics.get("gateway_noc_hops", 0)),
+            "gateway_peak_load": int(network_metrics.get("gateway_peak_load", 0)),
+            "gateway_policy": config.network.gateway_policy,
         },
     )
     return result
@@ -144,6 +148,8 @@ def _estimate_network_metrics(workload, mapping, config: WSEConfig) -> dict[str,
             "buffer_wait_cycles": 0,
             "link_wait_cycles": 0,
             "pipeline_cycles": 0,
+            "gateway_noc_hops": 0,
+            "gateway_peak_load": 0,
         }
 
     # Use a scaled traffic window for tractable inner-loop simulation.
@@ -171,6 +177,8 @@ def _estimate_network_metrics(workload, mapping, config: WSEConfig) -> dict[str,
             "buffer_wait_cycles": 0,
             "link_wait_cycles": 0,
             "pipeline_cycles": 0,
+            "gateway_noc_hops": 0,
+            "gateway_peak_load": 0,
         }
 
     simulated_cycles, simulated_stats = _run_hierarchical_network_simulation(traffic, config)
@@ -200,6 +208,7 @@ def _estimate_network_metrics(workload, mapping, config: WSEConfig) -> dict[str,
         "link_wait_cycles": int(link_wait_cycles),
         "pipeline_cycles": int(pipeline_cycles),
         "gateway_noc_hops": int(simulated_stats["gateway_noc_hops"]),
+        "gateway_peak_load": int(simulated_stats["gateway_peak_load"]),
     }
 
 
@@ -297,6 +306,7 @@ def _run_hierarchical_network_simulation(
         cores_per_reticle=cores_per_reticle,
         gateways_per_reticle=max(1, config.network.gateways_per_reticle),
     )
+    gateway_load: dict[tuple[int, int], int] = defaultdict(int)
     noc_networks = {
         reticle: _build_network_domain(
             env=env,
@@ -320,6 +330,7 @@ def _run_hierarchical_network_simulation(
                 reticles_x=max(1, config.wafer.reticles_x),
                 gateway_policy=config.network.gateway_policy,
                 gateways=gateways,
+                gateway_load=gateway_load,
                 noc_networks=noc_networks,
                 now_network=now_network,
             )
@@ -333,6 +344,7 @@ def _run_hierarchical_network_simulation(
         "link_wait_cycles": now_network.stats.link_wait_cycles,
         "pipeline_cycles": now_network.stats.pipeline_cycles,
         "gateway_noc_hops": 0,
+        "gateway_peak_load": 0,
     }
     for noc in noc_networks.values():
         stats["packets_sent"] += noc.stats.packets_sent
@@ -356,8 +368,10 @@ def _run_hierarchical_network_simulation(
             reticles_x=max(1, config.wafer.reticles_x),
             gateways=gateways,
             policy=config.network.gateway_policy,
+            gateway_load=gateway_load,
         )
         stats["gateway_noc_hops"] += abs(src_local - src_gw) + abs(dst_local - dst_gw)
+    stats["gateway_peak_load"] = max(gateway_load.values()) if gateway_load else 0
     return float(env.now), stats
 
 
@@ -371,6 +385,7 @@ def _send_hierarchical_packet(
     reticles_x: int,
     gateway_policy: str,
     gateways: list[int],
+    gateway_load: dict[tuple[int, int], int],
     noc_networks: dict[int, UnifiedNetwork],
     now_network: UnifiedNetwork,
 ):
@@ -386,6 +401,7 @@ def _send_hierarchical_packet(
         reticles_x=reticles_x,
         gateways=gateways,
         policy=gateway_policy,
+        gateway_load=gateway_load,
     )
 
     if src_reticle == dst_reticle:
@@ -398,6 +414,9 @@ def _send_hierarchical_packet(
         )
         yield env.process(noc_networks[src_reticle].send_packet(pkt))
         return
+
+    gateway_load[(src_reticle, src_gateway_local)] += 1
+    gateway_load[(dst_reticle, dst_gateway_local)] += 1
 
     if src_local != src_gateway_local:
         pkt_egress = Packet(
@@ -447,13 +466,10 @@ def _select_gateways(
     reticles_x: int,
     gateways: list[int],
     policy: str,
+    gateway_load: dict[tuple[int, int], int] | None = None,
 ) -> tuple[int, int]:
     if not gateways:
         return 0, 0
-
-    if policy != "nearest":
-        # Fallback deterministic policy for unsupported options.
-        return gateways[0], gateways[0]
 
     src_coord = _reticle_coord(src_reticle, reticles_x)
     dst_coord = _reticle_coord(dst_reticle, reticles_x)
@@ -461,11 +477,17 @@ def _select_gateways(
 
     best_pair = (gateways[0], gateways[0])
     best_cost = float("inf")
+    gateway_load = gateway_load or {}
     for src_gw in gateways:
         for dst_gw in gateways:
             # NoW distance is reticle-level (gateway choice does not change it), but
             # gateway choice changes intra-reticle NoC ingress/egress costs.
             cost = abs(src_local - src_gw) + now_distance + abs(dst_local - dst_gw)
+            if policy == "load_aware":
+                cost += 0.5 * (
+                    gateway_load.get((src_reticle, src_gw), 0)
+                    + gateway_load.get((dst_reticle, dst_gw), 0)
+                )
             if cost < best_cost:
                 best_cost = cost
                 best_pair = (src_gw, dst_gw)

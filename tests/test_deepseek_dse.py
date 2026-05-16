@@ -107,3 +107,24 @@ def test_deepseek_evaluator_responds_to_gateway_replication() -> None:
     assert int(multi_result.metadata["gateway_noc_hops"]) <= int(
         single_result.metadata["gateway_noc_hops"]
     )
+
+
+def test_deepseek_evaluator_load_aware_gateway_balances_load() -> None:
+    base = WSEConfig()
+    base.workload.model_name = "deepseek_v3_ffn_decode"
+    base.workload.num_routed_experts = 160
+    base.workload.num_shared_experts = 1
+    base.workload.top_k = 8
+    base.workload.decode_tokens = 32
+    base.workload.mapping_strategy = "expert_affinity"
+    base.network.gateways_per_reticle = 4
+
+    nearest = deepcopy(base)
+    load_aware = deepcopy(base)
+    nearest.network.gateway_policy = "nearest"
+    load_aware.network.gateway_policy = "load_aware"
+
+    nearest_result = evaluate_deepseek_v3_ffn(nearest)
+    load_aware_result = evaluate_deepseek_v3_ffn(load_aware)
+
+    assert load_aware_result.gateway_peak_load <= nearest_result.gateway_peak_load

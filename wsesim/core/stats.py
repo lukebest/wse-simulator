@@ -20,6 +20,8 @@ class SimResult:
     buffer_wait_cycles: int = 0
     link_wait_cycles: int = 0
     pipeline_cycles: int = 0
+    gateway_noc_hops: int = 0
+    gateway_peak_load: int = 0
     idle_ratio: float = 0.0
     per_core_utilization: dict[int, float] = field(default_factory=dict)
     metadata: dict[str, str | int | float] = field(default_factory=dict)

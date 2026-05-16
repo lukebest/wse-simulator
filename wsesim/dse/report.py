@@ -38,6 +38,8 @@ def pareto_front(
         "vc_wait_cycles",
         "buffer_wait_cycles",
         "link_wait_cycles",
+        "gateway_noc_hops",
+        "gateway_peak_load",
     ),
     maximize_metrics: tuple[str, ...] = ("network_throughput",),
 ) -> list[DSETrial]:
@@ -114,11 +116,15 @@ def export_trials_csv(trials: list[DSETrial], output_path: str | Path) -> Path:
         "buffer_wait_cycles",
         "link_wait_cycles",
         "pipeline_cycles",
+        "gateway_noc_hops",
+        "gateway_peak_load",
         "network_throughput",
         "network_saturation",
         "pe_width",
         "noc_num_vcs",
         "noc_buffer_depth",
+        "gateways_per_reticle",
+        "gateway_policy",
     ]
     with output.open("w", encoding="utf-8", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames)
@@ -133,11 +139,15 @@ def export_trials_csv(trials: list[DSETrial], output_path: str | Path) -> Path:
                     "buffer_wait_cycles": trial.result.buffer_wait_cycles,
                     "link_wait_cycles": trial.result.link_wait_cycles,
                     "pipeline_cycles": trial.result.pipeline_cycles,
+                    "gateway_noc_hops": trial.result.gateway_noc_hops,
+                    "gateway_peak_load": trial.result.gateway_peak_load,
                     "network_throughput": trial.result.network_throughput,
                     "network_saturation": trial.result.network_saturation,
                     "pe_width": trial.config.compute.pe_width,
                     "noc_num_vcs": trial.config.network.noc.num_vcs,
                     "noc_buffer_depth": trial.config.network.noc.buffer_depth,
+                    "gateways_per_reticle": trial.config.network.gateways_per_reticle,
+                    "gateway_policy": trial.config.network.gateway_policy,
                 }
             )
     return output

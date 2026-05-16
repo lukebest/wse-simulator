@@ -99,6 +99,8 @@ class DSEConfig:
             "vc_wait_cycles": -0.1,
             "buffer_wait_cycles": -0.1,
             "link_wait_cycles": -0.05,
+            "gateway_noc_hops": -0.001,
+            "gateway_peak_load": -0.05,
         }
     )
 

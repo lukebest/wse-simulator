@@ -29,6 +29,8 @@ def main() -> None:
     base.workload.routing_skew_alpha = 1.2
     base.workload.capacity_factor = 1.25
     base.workload.mapping_strategy = "expert_affinity"
+    base.network.gateways_per_reticle = 4
+    base.network.gateway_policy = "load_aware"
 
     engine = DSEEngine(
         base_config=base,
@@ -47,6 +49,8 @@ def main() -> None:
             f"vc_wait={trial.result.vc_wait_cycles} "
             f"buf_wait={trial.result.buffer_wait_cycles} "
             f"link_wait={trial.result.link_wait_cycles} "
+            f"gw_hops={trial.result.gateway_noc_hops} "
+            f"gw_peak={trial.result.gateway_peak_load} "
             f"thr={trial.result.network_throughput:.3f}"
         )
 

@@ -39,6 +39,7 @@ The evaluator uses hierarchical communication simulation: NoC within reticles
 and NoW across reticles.
 Gateway modeling is configurable via `network.gateways_per_reticle` and
 `network.gateway_policy`.
+Supported gateway policies include `nearest` and `load_aware`.
 
 ## DeepSeek-V3 FFN Mapping Example
 

@@ -93,6 +93,8 @@ def test_dse_exports_json_and_csv(tmp_path) -> None:
     assert len(rows) == len(trials)
     assert "total_latency_cycles" in rows[0]
     assert "pe_width" in rows[0]
+    assert "gateway_noc_hops" in rows[0]
+    assert "gateway_policy" in rows[0]
 
     with pareto_path.open("r", encoding="utf-8", newline="") as f:
         pareto_rows = list(csv.DictReader(f))
