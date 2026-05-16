@@ -35,6 +35,8 @@ This generates:
 
 `examples/run_dse.py` now evaluates configurations using a DeepSeek-V3-style
 decode FFN workload model (routed experts + shared experts + top-k routing).
+The evaluator uses hierarchical communication simulation: NoC within reticles
+and NoW across reticles.
 
 ## DeepSeek-V3 FFN Mapping Example
 

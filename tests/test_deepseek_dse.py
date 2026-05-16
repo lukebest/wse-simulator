@@ -64,3 +64,22 @@ def test_deepseek_evaluator_responds_to_link_bandwidth() -> None:
     low_result = evaluate_deepseek_v3_ffn(low_bw)
     high_result = evaluate_deepseek_v3_ffn(high_bw)
     assert high_result.network_cycles < low_result.network_cycles
+
+
+def test_deepseek_evaluator_responds_to_now_link_latency() -> None:
+    base = WSEConfig()
+    base.workload.model_name = "deepseek_v3_ffn_decode"
+    base.workload.num_routed_experts = 96
+    base.workload.num_shared_experts = 1
+    base.workload.top_k = 8
+    base.workload.decode_tokens = 24
+    base.workload.mapping_strategy = "expert_affinity"
+
+    fast_now = deepcopy(base)
+    slow_now = deepcopy(base)
+    fast_now.network.now.link_latency_cycles = 1
+    slow_now.network.now.link_latency_cycles = 8
+
+    fast_result = evaluate_deepseek_v3_ffn(fast_now)
+    slow_result = evaluate_deepseek_v3_ffn(slow_now)
+    assert slow_result.network_cycles > fast_result.network_cycles

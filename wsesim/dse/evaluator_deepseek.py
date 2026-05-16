@@ -147,52 +147,45 @@ def _estimate_network_metrics(workload, mapping, config: WSEConfig) -> dict[str,
 
     # Use a scaled traffic window for tractable inner-loop simulation.
     scale = min(1.0, 8.0 / max(1, decode_tokens * top_k))
-    env = simpy.Environment()
-    network = _build_noc_network(env, config)
-
-    packet_processes = []
+    traffic: list[tuple[int, int, int, str]] = []
     for core, bytes_count in dispatch_by_core.items():
         if core == coordinator:
             continue
         scaled_bytes = max(32, int(bytes_count * scale))
-        pkt = Packet(
-            src=coordinator,
-            dst=core,
-            size_bytes=scaled_bytes,
-            payload_type="dispatch",
-            creation_time=float(env.now),
-        )
-        packet_processes.append(env.process(network.send_packet(pkt)))
+        traffic.append((coordinator, core, scaled_bytes, "dispatch"))
     for core, bytes_count in combine_by_core.items():
         if core == coordinator:
             continue
         scaled_bytes = max(32, int(bytes_count * scale))
-        pkt = Packet(
-            src=core,
-            dst=coordinator,
-            size_bytes=scaled_bytes,
-            payload_type="combine",
-            creation_time=float(env.now),
-        )
-        packet_processes.append(env.process(network.send_packet(pkt)))
+        traffic.append((core, coordinator, scaled_bytes, "combine"))
 
-    if packet_processes:
-        env.run()
+    if not traffic:
+        return {
+            "network_cycles": 0,
+            "network_avg_latency": 0.0,
+            "network_max_latency": 0.0,
+            "network_throughput": 0.0,
+            "network_saturation": 0.0,
+            "vc_wait_cycles": 0,
+            "buffer_wait_cycles": 0,
+            "link_wait_cycles": 0,
+            "pipeline_cycles": 0,
+        }
 
-    simulated_cycles = max(1.0, float(env.now))
+    simulated_cycles, simulated_stats = _run_hierarchical_network_simulation(traffic, config)
     bw_factor = max(1, config.network.noc.link_bw_flits_per_cycle)
     # Extrapolate from traffic window back to full decode traffic.
     network_cycles = int((simulated_cycles / max(scale, 1e-6)) / bw_factor)
-    vc_wait_cycles = int((network.stats.vc_wait_cycles / max(scale, 1e-6)) / bw_factor)
-    buffer_wait_cycles = int((network.stats.buffer_wait_cycles / max(scale, 1e-6)) / bw_factor)
-    link_wait_cycles = int((network.stats.link_wait_cycles / max(scale, 1e-6)) / bw_factor)
-    pipeline_cycles = int(network.stats.pipeline_cycles / max(scale, 1e-6))
+    vc_wait_cycles = int((simulated_stats["vc_wait_cycles"] / max(scale, 1e-6)) / bw_factor)
+    buffer_wait_cycles = int((simulated_stats["buffer_wait_cycles"] / max(scale, 1e-6)) / bw_factor)
+    link_wait_cycles = int((simulated_stats["link_wait_cycles"] / max(scale, 1e-6)) / bw_factor)
+    pipeline_cycles = int(simulated_stats["pipeline_cycles"] / max(scale, 1e-6))
 
     network_throughput = total_bytes / max(1.0, float(network_cycles))
     network_saturation = min(
         1.0, (vc_wait_cycles + buffer_wait_cycles) / max(1.0, float(network_cycles))
     )
-    packet_count = max(1, network.stats.packets_sent)
+    packet_count = max(1, int(simulated_stats["packets_sent"]))
     avg_pkt_latency = network_cycles / packet_count
 
     return {
@@ -225,8 +218,26 @@ def _estimate_memory_stall_cycles(workload, config: WSEConfig) -> int:
 
 
 def _build_noc_network(env: simpy.Environment, config: WSEConfig) -> UnifiedNetwork:
-    num_nodes = max(4, config.wafer.total_cores)
-    topology_name = config.network.noc.topology
+    return _build_network_domain(
+        env=env,
+        num_nodes=max(4, config.wafer.total_cores),
+        domain_config=config.network.noc,
+        random_seed=config.dse.random_seed,
+    )
+
+
+def _build_now_network(env: simpy.Environment, config: WSEConfig) -> UnifiedNetwork:
+    return _build_network_domain(
+        env=env,
+        num_nodes=max(4, config.wafer.reticle_count),
+        domain_config=config.network.now,
+        random_seed=config.dse.random_seed + 17,
+    )
+
+
+def _build_network_domain(env: simpy.Environment, num_nodes: int, domain_config, random_seed: int) -> UnifiedNetwork:
+    num_nodes = max(4, num_nodes)
+    topology_name = domain_config.topology
     if topology_name in {"mesh2d", "torus2d"}:
         side = isqrt(num_nodes)
         if side * side != num_nodes:
@@ -238,15 +249,15 @@ def _build_noc_network(env: simpy.Environment, config: WSEConfig) -> UnifiedNetw
     else:
         topology = Mesh2D()
 
-    routing_name = config.network.noc.routing
+    routing_name = domain_config.routing
     if routing_name in {"xy", "dimension_order"}:
         routing = DimensionOrderRouting()
     elif routing_name == "ugal":
-        routing = UGALRouting(seed=config.dse.random_seed)
+        routing = UGALRouting(seed=random_seed)
     else:
         routing = DimensionOrderRouting()
 
-    flow_name = config.network.noc.flow_control
+    flow_name = domain_config.flow_control
     if flow_name == "wormhole":
         flow_control = WormholeFlowControl()
     else:
@@ -258,17 +269,122 @@ def _build_noc_network(env: simpy.Environment, config: WSEConfig) -> UnifiedNetw
         routing=routing,
         flow_control=flow_control,
         num_nodes=num_nodes,
-        link_bw_flits_per_cycle=config.network.noc.link_bw_flits_per_cycle,
-        link_latency_cycles=config.network.noc.link_latency_cycles,
-        num_vcs=config.network.noc.num_vcs,
-        buffer_depth=config.network.noc.buffer_depth,
-        router_pipeline_mode=config.network.noc.router_pipeline_mode,
-        rc_latency_cycles=config.network.noc.rc_latency_cycles,
-        va_latency_cycles=config.network.noc.va_latency_cycles,
-        sa_latency_cycles=config.network.noc.sa_latency_cycles,
-        st_latency_cycles=config.network.noc.st_latency_cycles,
-        crossbar_bw_flits_per_cycle=config.network.noc.crossbar_bw_flits_per_cycle,
+        link_bw_flits_per_cycle=domain_config.link_bw_flits_per_cycle,
+        link_latency_cycles=domain_config.link_latency_cycles,
+        num_vcs=domain_config.num_vcs,
+        buffer_depth=domain_config.buffer_depth,
+        router_pipeline_mode=domain_config.router_pipeline_mode,
+        rc_latency_cycles=domain_config.rc_latency_cycles,
+        va_latency_cycles=domain_config.va_latency_cycles,
+        sa_latency_cycles=domain_config.sa_latency_cycles,
+        st_latency_cycles=domain_config.st_latency_cycles,
+        crossbar_bw_flits_per_cycle=domain_config.crossbar_bw_flits_per_cycle,
     )
     if routing_name == "table_based":
         network.routing = TableBasedRouting(network.graph)
     return network
+
+
+def _run_hierarchical_network_simulation(
+    traffic: list[tuple[int, int, int, str]], config: WSEConfig
+) -> tuple[float, dict[str, int]]:
+    env = simpy.Environment()
+    cores_per_reticle = max(1, config.wafer.cores_per_reticle)
+    reticle_count = max(1, config.wafer.reticle_count)
+    noc_networks = {
+        reticle: _build_network_domain(
+            env=env,
+            num_nodes=cores_per_reticle,
+            domain_config=config.network.noc,
+            random_seed=config.dse.random_seed + reticle,
+        )
+        for reticle in range(reticle_count)
+    }
+    now_network = _build_now_network(env, config)
+
+    for src_core, dst_core, size_bytes, payload in traffic:
+        env.process(
+            _send_hierarchical_packet(
+                env=env,
+                src_core=src_core,
+                dst_core=dst_core,
+                size_bytes=size_bytes,
+                payload_type=payload,
+                cores_per_reticle=cores_per_reticle,
+                noc_networks=noc_networks,
+                now_network=now_network,
+            )
+        )
+    env.run()
+
+    stats = {
+        "packets_sent": now_network.stats.packets_sent,
+        "vc_wait_cycles": now_network.stats.vc_wait_cycles,
+        "buffer_wait_cycles": now_network.stats.buffer_wait_cycles,
+        "link_wait_cycles": now_network.stats.link_wait_cycles,
+        "pipeline_cycles": now_network.stats.pipeline_cycles,
+    }
+    for noc in noc_networks.values():
+        stats["packets_sent"] += noc.stats.packets_sent
+        stats["vc_wait_cycles"] += noc.stats.vc_wait_cycles
+        stats["buffer_wait_cycles"] += noc.stats.buffer_wait_cycles
+        stats["link_wait_cycles"] += noc.stats.link_wait_cycles
+        stats["pipeline_cycles"] += noc.stats.pipeline_cycles
+    return float(env.now), stats
+
+
+def _send_hierarchical_packet(
+    env: simpy.Environment,
+    src_core: int,
+    dst_core: int,
+    size_bytes: int,
+    payload_type: str,
+    cores_per_reticle: int,
+    noc_networks: dict[int, UnifiedNetwork],
+    now_network: UnifiedNetwork,
+):
+    src_reticle = src_core // cores_per_reticle
+    dst_reticle = dst_core // cores_per_reticle
+    src_local = src_core % cores_per_reticle
+    dst_local = dst_core % cores_per_reticle
+    gateway_local = 0
+
+    if src_reticle == dst_reticle:
+        pkt = Packet(
+            src=src_local,
+            dst=dst_local,
+            size_bytes=size_bytes,
+            payload_type=f"{payload_type}_noc_local",
+            creation_time=float(env.now),
+        )
+        yield env.process(noc_networks[src_reticle].send_packet(pkt))
+        return
+
+    if src_local != gateway_local:
+        pkt_egress = Packet(
+            src=src_local,
+            dst=gateway_local,
+            size_bytes=size_bytes,
+            payload_type=f"{payload_type}_noc_egress",
+            creation_time=float(env.now),
+        )
+        yield env.process(noc_networks[src_reticle].send_packet(pkt_egress))
+
+    pkt_now = Packet(
+        src=src_reticle,
+        dst=dst_reticle,
+        size_bytes=size_bytes,
+        payload_type=f"{payload_type}_now",
+        creation_time=float(env.now),
+    )
+    yield env.process(now_network.send_packet(pkt_now))
+
+    if dst_local != gateway_local:
+        pkt_ingress = Packet(
+            src=gateway_local,
+            dst=dst_local,
+            size_bytes=size_bytes,
+            payload_type=f"{payload_type}_noc_ingress",
+            creation_time=float(env.now),
+        )
+        yield env.process(noc_networks[dst_reticle].send_packet(pkt_ingress))
