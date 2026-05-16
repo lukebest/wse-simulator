@@ -56,6 +56,8 @@ class NetworkSetConfig:
     now: NetworkDomainConfig = field(
         default_factory=lambda: NetworkDomainConfig(link_latency_cycles=5)
     )
+    gateways_per_reticle: int = 1
+    gateway_policy: str = "nearest"
 
 
 @dataclass(slots=True)

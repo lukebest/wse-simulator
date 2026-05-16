@@ -37,6 +37,8 @@ This generates:
 decode FFN workload model (routed experts + shared experts + top-k routing).
 The evaluator uses hierarchical communication simulation: NoC within reticles
 and NoW across reticles.
+Gateway modeling is configurable via `network.gateways_per_reticle` and
+`network.gateway_policy`.
 
 ## DeepSeek-V3 FFN Mapping Example
 

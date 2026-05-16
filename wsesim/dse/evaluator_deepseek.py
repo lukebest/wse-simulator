@@ -291,6 +291,10 @@ def _run_hierarchical_network_simulation(
     env = simpy.Environment()
     cores_per_reticle = max(1, config.wafer.cores_per_reticle)
     reticle_count = max(1, config.wafer.reticle_count)
+    gateways = _reticle_gateways(
+        cores_per_reticle=cores_per_reticle,
+        gateways_per_reticle=max(1, config.network.gateways_per_reticle),
+    )
     noc_networks = {
         reticle: _build_network_domain(
             env=env,
@@ -311,6 +315,9 @@ def _run_hierarchical_network_simulation(
                 size_bytes=size_bytes,
                 payload_type=payload,
                 cores_per_reticle=cores_per_reticle,
+                reticles_x=max(1, config.wafer.reticles_x),
+                gateway_policy=config.network.gateway_policy,
+                gateways=gateways,
                 noc_networks=noc_networks,
                 now_network=now_network,
             )
@@ -340,6 +347,9 @@ def _send_hierarchical_packet(
     size_bytes: int,
     payload_type: str,
     cores_per_reticle: int,
+    reticles_x: int,
+    gateway_policy: str,
+    gateways: list[int],
     noc_networks: dict[int, UnifiedNetwork],
     now_network: UnifiedNetwork,
 ):
@@ -347,7 +357,15 @@ def _send_hierarchical_packet(
     dst_reticle = dst_core // cores_per_reticle
     src_local = src_core % cores_per_reticle
     dst_local = dst_core % cores_per_reticle
-    gateway_local = 0
+    src_gateway_local, dst_gateway_local = _select_gateways(
+        src_local=src_local,
+        dst_local=dst_local,
+        src_reticle=src_reticle,
+        dst_reticle=dst_reticle,
+        reticles_x=reticles_x,
+        gateways=gateways,
+        policy=gateway_policy,
+    )
 
     if src_reticle == dst_reticle:
         pkt = Packet(
@@ -360,10 +378,10 @@ def _send_hierarchical_packet(
         yield env.process(noc_networks[src_reticle].send_packet(pkt))
         return
 
-    if src_local != gateway_local:
+    if src_local != src_gateway_local:
         pkt_egress = Packet(
             src=src_local,
-            dst=gateway_local,
+            dst=src_gateway_local,
             size_bytes=size_bytes,
             payload_type=f"{payload_type}_noc_egress",
             creation_time=float(env.now),
@@ -379,12 +397,59 @@ def _send_hierarchical_packet(
     )
     yield env.process(now_network.send_packet(pkt_now))
 
-    if dst_local != gateway_local:
+    if dst_local != dst_gateway_local:
         pkt_ingress = Packet(
-            src=gateway_local,
+            src=dst_gateway_local,
             dst=dst_local,
             size_bytes=size_bytes,
             payload_type=f"{payload_type}_noc_ingress",
             creation_time=float(env.now),
         )
         yield env.process(noc_networks[dst_reticle].send_packet(pkt_ingress))
+
+
+def _reticle_gateways(cores_per_reticle: int, gateways_per_reticle: int) -> list[int]:
+    if gateways_per_reticle <= 1:
+        return [0]
+    stride = max(1, cores_per_reticle // gateways_per_reticle)
+    gateways = sorted({min(cores_per_reticle - 1, idx * stride) for idx in range(gateways_per_reticle)})
+    if 0 not in gateways:
+        gateways.insert(0, 0)
+    return gateways
+
+
+def _select_gateways(
+    src_local: int,
+    dst_local: int,
+    src_reticle: int,
+    dst_reticle: int,
+    reticles_x: int,
+    gateways: list[int],
+    policy: str,
+) -> tuple[int, int]:
+    if not gateways:
+        return 0, 0
+
+    if policy != "nearest":
+        # Fallback deterministic policy for unsupported options.
+        return gateways[0], gateways[0]
+
+    src_coord = _reticle_coord(src_reticle, reticles_x)
+    dst_coord = _reticle_coord(dst_reticle, reticles_x)
+    now_distance = abs(src_coord[0] - dst_coord[0]) + abs(src_coord[1] - dst_coord[1])
+
+    best_pair = (gateways[0], gateways[0])
+    best_cost = float("inf")
+    for src_gw in gateways:
+        for dst_gw in gateways:
+            # NoW distance is reticle-level (gateway choice does not change it), but
+            # gateway choice changes intra-reticle NoC ingress/egress costs.
+            cost = abs(src_local - src_gw) + now_distance + abs(dst_local - dst_gw)
+            if cost < best_cost:
+                best_cost = cost
+                best_pair = (src_gw, dst_gw)
+    return best_pair
+
+
+def _reticle_coord(reticle_id: int, reticles_x: int) -> tuple[int, int]:
+    return reticle_id // reticles_x, reticle_id % reticles_x

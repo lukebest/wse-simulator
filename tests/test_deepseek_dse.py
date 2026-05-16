@@ -83,3 +83,25 @@ def test_deepseek_evaluator_responds_to_now_link_latency() -> None:
     fast_result = evaluate_deepseek_v3_ffn(fast_now)
     slow_result = evaluate_deepseek_v3_ffn(slow_now)
     assert slow_result.network_cycles > fast_result.network_cycles
+
+
+def test_deepseek_evaluator_responds_to_gateway_replication() -> None:
+    base = WSEConfig()
+    base.workload.model_name = "deepseek_v3_ffn_decode"
+    base.workload.num_routed_experts = 128
+    base.workload.num_shared_experts = 1
+    base.workload.top_k = 8
+    base.workload.decode_tokens = 32
+    base.workload.mapping_strategy = "expert_affinity"
+    base.network.gateway_policy = "nearest"
+
+    single_gateway = deepcopy(base)
+    multi_gateway = deepcopy(base)
+    single_gateway.network.gateways_per_reticle = 1
+    multi_gateway.network.gateways_per_reticle = 4
+
+    single_result = evaluate_deepseek_v3_ffn(single_gateway)
+    multi_result = evaluate_deepseek_v3_ffn(multi_gateway)
+
+    # More gateways should not hurt hierarchical network traversal latency.
+    assert multi_result.network_cycles <= single_result.network_cycles
