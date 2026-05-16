@@ -24,4 +24,7 @@ class RandomSearch(SearchStrategy):
         gateway_candidates = sorted({1, 2, 4, max_gateways})
         cfg.network.gateways_per_reticle = self._rng.choice(gateway_candidates)
         cfg.network.gateway_policy = self._rng.choice(["nearest", "load_aware"])
+        cfg.network.io_distribution_policy = self._rng.choice(
+            ["round_robin", "nearest", "load_aware"]
+        )
         return cfg

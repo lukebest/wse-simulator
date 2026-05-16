@@ -53,7 +53,12 @@ def evaluate_deepseek_v4_pro_ffn(config: WSEConfig) -> SimResult:
     memory_stall_cycles = _estimate_memory_stall_cycles(workload, config)
 
     result = SimResult(
-        total_latency_cycles=compute_cycles + network_metrics["network_cycles"] + memory_stall_cycles,
+        total_latency_cycles=(
+            compute_cycles
+            + network_metrics["network_cycles"]
+            + network_metrics["io_injection_cycles"]
+            + memory_stall_cycles
+        ),
         compute_cycles=compute_cycles,
         network_cycles=network_metrics["network_cycles"],
         memory_stall_cycles=memory_stall_cycles,
@@ -75,6 +80,8 @@ def evaluate_deepseek_v4_pro_ffn(config: WSEConfig) -> SimResult:
             "gateway_noc_hops": int(network_metrics.get("gateway_noc_hops", 0)),
             "gateway_peak_load": int(network_metrics.get("gateway_peak_load", 0)),
             "gateway_policy": config.network.gateway_policy,
+            "io_distribution_policy": config.network.io_distribution_policy,
+            "io_injection_cycles": int(network_metrics.get("io_injection_cycles", 0)),
         },
     )
     return result
@@ -123,7 +130,11 @@ def _estimate_network_metrics(workload, mapping, config: WSEConfig) -> dict[str,
     top_k = int(workload.metadata["top_k"])
     fp_bytes = 2
 
-    coordinator = mapping.assignments.get("deepseek_v4_pro_token_dispatch", [0])[0]
+    cores_per_reticle = max(1, config.wafer.cores_per_reticle)
+    compute_nodes = _reticle_compute_nodes(config)
+    io_nodes = _reticle_io_nodes(config)
+    if not io_nodes:
+        io_nodes = [0]
     dispatch_by_core: dict[int, int] = defaultdict(int)
     combine_by_core: dict[int, int] = defaultdict(int)
 
@@ -155,6 +166,7 @@ def _estimate_network_metrics(workload, mapping, config: WSEConfig) -> dict[str,
     if total_bytes <= 0:
         return {
             "network_cycles": 0,
+            "io_injection_cycles": 0,
             "network_avg_latency": 0.0,
             "network_max_latency": 0.0,
             "network_throughput": 0.0,
@@ -169,21 +181,66 @@ def _estimate_network_metrics(workload, mapping, config: WSEConfig) -> dict[str,
 
     # Use a scaled traffic window for tractable inner-loop simulation.
     scale = min(1.0, 8.0 / max(1, decode_tokens * top_k))
-    traffic: list[tuple[int, int, int, str]] = []
+    traffic: list[dict[str, int | str | None]] = []
+    dispatch_io_load: dict[tuple[int, int], int] = defaultdict(int)
+    combine_io_load: dict[tuple[int, int], int] = defaultdict(int)
     for core, bytes_count in dispatch_by_core.items():
-        if core == coordinator:
-            continue
+        core_reticle = core // cores_per_reticle
+        core_local = core % cores_per_reticle
+        io_phys = _assign_io_node(
+            core_local=core_local,
+            io_nodes=io_nodes,
+            policy=config.network.io_distribution_policy,
+            io_load={io: dispatch_io_load[(core_reticle, io)] for io in io_nodes},
+            compute_nodes=compute_nodes,
+            reticle_cols=max(1, config.wafer.reticle_cols),
+        )
+        dispatch_io_load[(core_reticle, io_phys)] += bytes_count
         scaled_bytes = max(32, int(bytes_count * scale))
-        traffic.append((coordinator, core, scaled_bytes, "dispatch"))
+        traffic.append(
+            {
+                "src_core": None,
+                "dst_core": core,
+                "src_io_phys": io_phys,
+                "dst_io_phys": None,
+                "size_bytes": scaled_bytes,
+                "payload": "dispatch",
+            }
+        )
     for core, bytes_count in combine_by_core.items():
-        if core == coordinator:
-            continue
+        core_reticle = core // cores_per_reticle
+        core_local = core % cores_per_reticle
+        io_phys = _assign_io_node(
+            core_local=core_local,
+            io_nodes=io_nodes,
+            policy=config.network.io_distribution_policy,
+            io_load={io: combine_io_load[(core_reticle, io)] for io in io_nodes},
+            compute_nodes=compute_nodes,
+            reticle_cols=max(1, config.wafer.reticle_cols),
+        )
+        combine_io_load[(core_reticle, io_phys)] += bytes_count
         scaled_bytes = max(32, int(bytes_count * scale))
-        traffic.append((core, coordinator, scaled_bytes, "combine"))
+        traffic.append(
+            {
+                "src_core": core,
+                "dst_core": None,
+                "src_io_phys": None,
+                "dst_io_phys": io_phys,
+                "size_bytes": scaled_bytes,
+                "payload": "combine",
+            }
+        )
+
+    io_total_bytes: dict[tuple[int, int], int] = defaultdict(int)
+    for key, value in dispatch_io_load.items():
+        io_total_bytes[key] += value
+    for key, value in combine_io_load.items():
+        io_total_bytes[key] += value
 
     if not traffic:
         return {
             "network_cycles": 0,
+            "io_injection_cycles": 0,
             "network_avg_latency": 0.0,
             "network_max_latency": 0.0,
             "network_throughput": 0.0,
@@ -204,6 +261,9 @@ def _estimate_network_metrics(workload, mapping, config: WSEConfig) -> dict[str,
     buffer_wait_cycles = int((simulated_stats["buffer_wait_cycles"] / max(scale, 1e-6)) / bw_factor)
     link_wait_cycles = int((simulated_stats["link_wait_cycles"] / max(scale, 1e-6)) / bw_factor)
     pipeline_cycles = int(simulated_stats["pipeline_cycles"] / max(scale, 1e-6))
+    io_peak_bytes = max(io_total_bytes.values()) if io_total_bytes else 0
+    io_bw_bytes_per_cycle = max(1.0, config.wafer.io_bandwidth_gbps / max(config.network.noc.freq_ghz, 0.1))
+    io_injection_cycles = int(io_peak_bytes / io_bw_bytes_per_cycle)
 
     network_throughput = total_bytes / max(1.0, float(network_cycles))
     network_saturation = min(
@@ -214,6 +274,7 @@ def _estimate_network_metrics(workload, mapping, config: WSEConfig) -> dict[str,
 
     return {
         "network_cycles": int(network_cycles),
+        "io_injection_cycles": int(io_injection_cycles),
         "network_avg_latency": float(avg_pkt_latency),
         "network_max_latency": float(avg_pkt_latency * 1.5),
         "network_throughput": float(network_throughput),
@@ -328,13 +389,13 @@ def _build_network_domain(
 
 
 def _run_hierarchical_network_simulation(
-    traffic: list[tuple[int, int, int, str]], config: WSEConfig
+    traffic: list[dict[str, int | str | None]], config: WSEConfig
 ) -> tuple[float, dict[str, int]]:
     env = simpy.Environment()
     cores_per_reticle = max(1, config.wafer.cores_per_reticle)
     reticle_rows = max(1, config.wafer.reticle_rows)
     reticle_cols = max(1, config.wafer.reticle_cols)
-    active_nodes = _reticle_active_nodes(config)
+    compute_nodes = _reticle_compute_nodes(config)
     reticle_count = max(1, config.wafer.reticle_count)
     gateways = _reticle_gateways(
         cores_per_reticle=cores_per_reticle,
@@ -354,20 +415,22 @@ def _run_hierarchical_network_simulation(
     }
     now_network = _build_now_network(env, config)
 
-    for src_core, dst_core, size_bytes, payload in traffic:
+    for item in traffic:
         env.process(
             _send_hierarchical_packet(
                 env=env,
-                src_core=src_core,
-                dst_core=dst_core,
-                size_bytes=size_bytes,
-                payload_type=payload,
+                src_core=item["src_core"] if isinstance(item["src_core"], int) else None,
+                dst_core=item["dst_core"] if isinstance(item["dst_core"], int) else None,
+                src_io_phys=item["src_io_phys"] if isinstance(item["src_io_phys"], int) else None,
+                dst_io_phys=item["dst_io_phys"] if isinstance(item["dst_io_phys"], int) else None,
+                size_bytes=int(item["size_bytes"]),
+                payload_type=str(item["payload"]),
                 cores_per_reticle=cores_per_reticle,
                 reticles_x=max(1, config.wafer.reticles_x),
                 gateway_policy=config.network.gateway_policy,
                 gateways=gateways,
                 gateway_load=gateway_load,
-                active_nodes=active_nodes,
+                compute_nodes=compute_nodes,
                 reticle_cols=reticle_cols,
                 noc_networks=noc_networks,
                 now_network=now_network,
@@ -390,7 +453,30 @@ def _run_hierarchical_network_simulation(
         stats["buffer_wait_cycles"] += noc.stats.buffer_wait_cycles
         stats["link_wait_cycles"] += noc.stats.link_wait_cycles
         stats["pipeline_cycles"] += noc.stats.pipeline_cycles
-    for src_core, dst_core, _size_bytes, _payload in traffic:
+    for item in traffic:
+        src_core = item["src_core"] if isinstance(item["src_core"], int) else None
+        dst_core = item["dst_core"] if isinstance(item["dst_core"], int) else None
+        src_io_phys = item["src_io_phys"] if isinstance(item["src_io_phys"], int) else None
+        dst_io_phys = item["dst_io_phys"] if isinstance(item["dst_io_phys"], int) else None
+
+        if src_core is None and dst_core is not None and src_io_phys is not None:
+            dst_local = dst_core % cores_per_reticle
+            dst_phys = _logical_to_physical(dst_local, compute_nodes)
+            stats["gateway_noc_hops"] += _physical_noc_distance(
+                src_io_phys, dst_phys, reticle_cols=reticle_cols
+            )
+            continue
+
+        if src_core is not None and dst_core is None and dst_io_phys is not None:
+            src_local = src_core % cores_per_reticle
+            src_phys = _logical_to_physical(src_local, compute_nodes)
+            stats["gateway_noc_hops"] += _physical_noc_distance(
+                src_phys, dst_io_phys, reticle_cols=reticle_cols
+            )
+            continue
+
+        if src_core is None or dst_core is None:
+            continue
         src_reticle = src_core // cores_per_reticle
         dst_reticle = dst_core // cores_per_reticle
         src_local = src_core % cores_per_reticle
@@ -407,19 +493,19 @@ def _run_hierarchical_network_simulation(
             gateways=gateways,
             policy=config.network.gateway_policy,
             gateway_load=gateway_load,
-            active_nodes=active_nodes,
+            compute_nodes=compute_nodes,
             reticle_cols=reticle_cols,
         )
         stats["gateway_noc_hops"] += _logical_noc_distance(
             src_local,
             src_gw,
-            active_nodes=active_nodes,
+            active_nodes=compute_nodes,
             reticle_cols=reticle_cols,
         )
         stats["gateway_noc_hops"] += _logical_noc_distance(
             dst_local,
             dst_gw,
-            active_nodes=active_nodes,
+            active_nodes=compute_nodes,
             reticle_cols=reticle_cols,
         )
     stats["gateway_peak_load"] = max(gateway_load.values()) if gateway_load else 0
@@ -428,8 +514,10 @@ def _run_hierarchical_network_simulation(
 
 def _send_hierarchical_packet(
     env: simpy.Environment,
-    src_core: int,
-    dst_core: int,
+    src_core: int | None,
+    dst_core: int | None,
+    src_io_phys: int | None,
+    dst_io_phys: int | None,
     size_bytes: int,
     payload_type: str,
     cores_per_reticle: int,
@@ -437,11 +525,42 @@ def _send_hierarchical_packet(
     gateway_policy: str,
     gateways: list[int],
     gateway_load: dict[tuple[int, int], int],
-    active_nodes: list[int],
+    compute_nodes: list[int],
     reticle_cols: int,
     noc_networks: dict[int, UnifiedNetwork],
     now_network: UnifiedNetwork,
 ):
+    if src_core is None and dst_core is not None and src_io_phys is not None:
+        dst_reticle = dst_core // cores_per_reticle
+        dst_local = dst_core % cores_per_reticle
+        dst_phys = _logical_to_physical(dst_local, compute_nodes)
+        pkt = Packet(
+            src=src_io_phys,
+            dst=dst_phys,
+            size_bytes=size_bytes,
+            payload_type=f"{payload_type}_noc_inject",
+            creation_time=float(env.now),
+        )
+        yield env.process(noc_networks[dst_reticle].send_packet(pkt))
+        return
+
+    if src_core is not None and dst_core is None and dst_io_phys is not None:
+        src_reticle = src_core // cores_per_reticle
+        src_local = src_core % cores_per_reticle
+        src_phys = _logical_to_physical(src_local, compute_nodes)
+        pkt = Packet(
+            src=src_phys,
+            dst=dst_io_phys,
+            size_bytes=size_bytes,
+            payload_type=f"{payload_type}_noc_eject",
+            creation_time=float(env.now),
+        )
+        yield env.process(noc_networks[src_reticle].send_packet(pkt))
+        return
+
+    if src_core is None or dst_core is None:
+        return
+
     src_reticle = src_core // cores_per_reticle
     dst_reticle = dst_core // cores_per_reticle
     src_local = src_core % cores_per_reticle
@@ -455,13 +574,13 @@ def _send_hierarchical_packet(
         gateways=gateways,
         policy=gateway_policy,
         gateway_load=gateway_load,
-        active_nodes=active_nodes,
+        compute_nodes=compute_nodes,
         reticle_cols=reticle_cols,
     )
 
     if src_reticle == dst_reticle:
-        src_phys = _logical_to_physical(src_local, active_nodes)
-        dst_phys = _logical_to_physical(dst_local, active_nodes)
+        src_phys = _logical_to_physical(src_local, compute_nodes)
+        dst_phys = _logical_to_physical(dst_local, compute_nodes)
         pkt = Packet(
             src=src_phys,
             dst=dst_phys,
@@ -476,8 +595,8 @@ def _send_hierarchical_packet(
     gateway_load[(dst_reticle, dst_gateway_local)] += 1
 
     if src_local != src_gateway_local:
-        src_phys = _logical_to_physical(src_local, active_nodes)
-        src_gw_phys = _logical_to_physical(src_gateway_local, active_nodes)
+        src_phys = _logical_to_physical(src_local, compute_nodes)
+        src_gw_phys = _logical_to_physical(src_gateway_local, compute_nodes)
         pkt_egress = Packet(
             src=src_phys,
             dst=src_gw_phys,
@@ -497,8 +616,8 @@ def _send_hierarchical_packet(
     yield env.process(now_network.send_packet(pkt_now))
 
     if dst_local != dst_gateway_local:
-        dst_phys = _logical_to_physical(dst_local, active_nodes)
-        dst_gw_phys = _logical_to_physical(dst_gateway_local, active_nodes)
+        dst_phys = _logical_to_physical(dst_local, compute_nodes)
+        dst_gw_phys = _logical_to_physical(dst_gateway_local, compute_nodes)
         pkt_ingress = Packet(
             src=dst_gw_phys,
             dst=dst_phys,
@@ -528,7 +647,7 @@ def _select_gateways(
     gateways: list[int],
     policy: str,
     gateway_load: dict[tuple[int, int], int] | None = None,
-    active_nodes: list[int] | None = None,
+    compute_nodes: list[int] | None = None,
     reticle_cols: int = 1,
 ) -> tuple[int, int]:
     if not gateways:
@@ -546,10 +665,10 @@ def _select_gateways(
             # NoW distance is reticle-level (gateway choice does not change it), but
             # gateway choice changes intra-reticle NoC ingress/egress costs.
             src_to_gw = _logical_noc_distance(
-                src_local, src_gw, active_nodes=active_nodes, reticle_cols=reticle_cols
+                src_local, src_gw, active_nodes=compute_nodes, reticle_cols=reticle_cols
             )
             dst_to_gw = _logical_noc_distance(
-                dst_local, dst_gw, active_nodes=active_nodes, reticle_cols=reticle_cols
+                dst_local, dst_gw, active_nodes=compute_nodes, reticle_cols=reticle_cols
             )
             cost = src_to_gw + now_distance + dst_to_gw
             if policy == "load_aware":
@@ -572,6 +691,12 @@ def _reticle_dead_nodes(config: WSEConfig) -> set[int]:
     return {r * cols + c for r, c in config.wafer.reticle_dead_positions}
 
 
+def _reticle_io_nodes(config: WSEConfig) -> list[int]:
+    cols = max(1, config.wafer.reticle_cols)
+    io_nodes = [r * cols + c for r, c in config.wafer.reticle_io_positions]
+    return sorted(set(io_nodes))
+
+
 def _reticle_active_nodes(config: WSEConfig) -> list[int]:
     rows = max(1, config.wafer.reticle_rows)
     cols = max(1, config.wafer.reticle_cols)
@@ -580,11 +705,16 @@ def _reticle_active_nodes(config: WSEConfig) -> list[int]:
     return active
 
 
-def _logical_to_physical(local_idx: int, active_nodes: list[int]) -> int:
-    if not active_nodes:
+def _reticle_compute_nodes(config: WSEConfig) -> list[int]:
+    io_nodes = set(_reticle_io_nodes(config))
+    return [node for node in _reticle_active_nodes(config) if node not in io_nodes]
+
+
+def _logical_to_physical(local_idx: int, physical_nodes: list[int]) -> int:
+    if not physical_nodes:
         return 0
-    bounded = min(max(local_idx, 0), len(active_nodes) - 1)
-    return active_nodes[bounded]
+    bounded = min(max(local_idx, 0), len(physical_nodes) - 1)
+    return physical_nodes[bounded]
 
 
 def _logical_noc_distance(
@@ -600,4 +730,36 @@ def _logical_noc_distance(
     src_row, src_col = divmod(src_phys, max(1, reticle_cols))
     dst_row, dst_col = divmod(dst_phys, max(1, reticle_cols))
     return abs(src_row - dst_row) + abs(src_col - dst_col)
+
+
+def _physical_noc_distance(src_phys: int, dst_phys: int, reticle_cols: int) -> int:
+    src_row, src_col = divmod(src_phys, max(1, reticle_cols))
+    dst_row, dst_col = divmod(dst_phys, max(1, reticle_cols))
+    return abs(src_row - dst_row) + abs(src_col - dst_col)
+
+
+def _assign_io_node(
+    core_local: int,
+    io_nodes: list[int],
+    policy: str,
+    io_load: dict[int, int],
+    compute_nodes: list[int],
+    reticle_cols: int,
+) -> int:
+    if not io_nodes:
+        return 0
+    if policy == "round_robin":
+        return io_nodes[core_local % len(io_nodes)]
+
+    core_phys = _logical_to_physical(core_local, compute_nodes)
+    if policy == "nearest":
+        return min(
+            io_nodes,
+            key=lambda io: (_physical_noc_distance(core_phys, io, reticle_cols), io),
+        )
+
+    return min(
+        io_nodes,
+        key=lambda io: (io_load.get(io, 0), _physical_noc_distance(core_phys, io, reticle_cols), io),
+    )
 

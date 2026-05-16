@@ -11,7 +11,9 @@ class WaferConfig:
     reticles_y: int = 2
     reticle_rows: int = 6
     reticle_cols: int = 8
-    reticle_dead_positions: tuple[tuple[int, int], ...] = ((1, 0), (2, 0), (3, 0), (4, 0))
+    reticle_dead_positions: tuple[tuple[int, int], ...] = ((3, 0), (4, 0))
+    reticle_io_positions: tuple[tuple[int, int], ...] = ((1, 0), (2, 0))
+    io_bandwidth_gbps: float = 256.0
     defect_rate: float = 0.0
     defect_seed: int = 42
 
@@ -19,7 +21,8 @@ class WaferConfig:
     def cores_per_reticle(self) -> int:
         grid_nodes = max(1, self.reticle_rows) * max(1, self.reticle_cols)
         dead_nodes = len(self.reticle_dead_positions)
-        return max(1, grid_nodes - dead_nodes)
+        io_nodes = len(self.reticle_io_positions)
+        return max(1, grid_nodes - dead_nodes - io_nodes)
 
     @property
     def reticle_count(self) -> int:
@@ -73,6 +76,7 @@ class NetworkSetConfig:
     )
     gateways_per_reticle: int = 1
     gateway_policy: str = "nearest"
+    io_distribution_policy: str = "round_robin"
 
 
 @dataclass(slots=True)

@@ -107,13 +107,18 @@ def test_random_search_explores_gateway_dimensions() -> None:
     history: list[tuple[WSEConfig, float]] = []
 
     policies = set()
+    io_policies = set()
     gateway_counts = set()
     for _ in range(20):
         cfg = search.suggest(history)
         policies.add(cfg.network.gateway_policy)
+        io_policies.add(cfg.network.io_distribution_policy)
         gateway_counts.add(cfg.network.gateways_per_reticle)
         history.append((cfg, 0.0))
 
     assert "nearest" in policies
     assert "load_aware" in policies
+    assert "round_robin" in io_policies
+    assert "nearest" in io_policies
+    assert "load_aware" in io_policies
     assert len(gateway_counts) >= 2

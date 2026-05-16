@@ -28,6 +28,8 @@ def test_deepseek_evaluator_produces_nontrivial_metrics() -> None:
     assert result.vc_wait_cycles >= 0
     assert result.buffer_wait_cycles >= 0
     assert result.link_wait_cycles >= 0
+    assert int(result.metadata["io_injection_cycles"]) > 0
+    assert result.metadata["io_distribution_policy"] == cfg.network.io_distribution_policy
     assert result.metadata["workload_model"] == "deepseek_v4_pro_ffn_decode"
 
 
@@ -69,7 +71,7 @@ def test_deepseek_evaluator_responds_to_link_bandwidth() -> None:
     assert high_result.network_cycles < low_result.network_cycles
 
 
-def test_deepseek_evaluator_responds_to_now_link_latency() -> None:
+def test_deepseek_evaluator_responds_to_io_bandwidth() -> None:
     base = WSEConfig()
     base.workload.model_name = "deepseek_v4_pro_ffn_decode"
     base.workload.num_routed_experts = 96
@@ -77,15 +79,19 @@ def test_deepseek_evaluator_responds_to_now_link_latency() -> None:
     base.workload.top_k = 6
     base.workload.decode_tokens = 24
     base.workload.mapping_strategy = "expert_affinity"
+    base.network.io_distribution_policy = "round_robin"
 
-    fast_now = deepcopy(base)
-    slow_now = deepcopy(base)
-    fast_now.network.now.link_latency_cycles = 1
-    slow_now.network.now.link_latency_cycles = 8
+    high_bw = deepcopy(base)
+    low_bw = deepcopy(base)
+    high_bw.wafer.io_bandwidth_gbps = 256.0
+    low_bw.wafer.io_bandwidth_gbps = 16.0
 
-    fast_result = evaluate_deepseek_v4_pro_ffn(fast_now)
-    slow_result = evaluate_deepseek_v4_pro_ffn(slow_now)
-    assert slow_result.network_cycles > fast_result.network_cycles
+    high_bw_result = evaluate_deepseek_v4_pro_ffn(high_bw)
+    low_bw_result = evaluate_deepseek_v4_pro_ffn(low_bw)
+    assert low_bw_result.total_latency_cycles > high_bw_result.total_latency_cycles
+    assert int(low_bw_result.metadata["io_injection_cycles"]) > int(
+        high_bw_result.metadata["io_injection_cycles"]
+    )
 
 
 def test_deepseek_evaluator_responds_to_gateway_replication() -> None:
