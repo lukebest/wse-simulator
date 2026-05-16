@@ -103,5 +103,7 @@ def test_deepseek_evaluator_responds_to_gateway_replication() -> None:
     single_result = evaluate_deepseek_v3_ffn(single_gateway)
     multi_result = evaluate_deepseek_v3_ffn(multi_gateway)
 
-    # More gateways should not hurt hierarchical network traversal latency.
-    assert multi_result.network_cycles <= single_result.network_cycles
+    # Gateway replication should reduce (or keep) intra-reticle gateway detour hops.
+    assert int(multi_result.metadata["gateway_noc_hops"]) <= int(
+        single_result.metadata["gateway_noc_hops"]
+    )

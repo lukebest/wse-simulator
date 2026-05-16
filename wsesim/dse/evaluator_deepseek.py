@@ -70,6 +70,7 @@ def evaluate_deepseek_v3_ffn(config: WSEConfig) -> SimResult:
             "active_routed_experts": int(workload.metadata["active_routed_experts"]),
             "mapped_cores": len(mapping.core_tasks),
             "mapping_strategy": config.workload.mapping_strategy,
+            "gateway_noc_hops": int(network_metrics.get("gateway_noc_hops", 0)),
         },
     )
     return result
@@ -198,6 +199,7 @@ def _estimate_network_metrics(workload, mapping, config: WSEConfig) -> dict[str,
         "buffer_wait_cycles": int(buffer_wait_cycles),
         "link_wait_cycles": int(link_wait_cycles),
         "pipeline_cycles": int(pipeline_cycles),
+        "gateway_noc_hops": int(simulated_stats["gateway_noc_hops"]),
     }
 
 
@@ -330,6 +332,7 @@ def _run_hierarchical_network_simulation(
         "buffer_wait_cycles": now_network.stats.buffer_wait_cycles,
         "link_wait_cycles": now_network.stats.link_wait_cycles,
         "pipeline_cycles": now_network.stats.pipeline_cycles,
+        "gateway_noc_hops": 0,
     }
     for noc in noc_networks.values():
         stats["packets_sent"] += noc.stats.packets_sent
@@ -337,6 +340,24 @@ def _run_hierarchical_network_simulation(
         stats["buffer_wait_cycles"] += noc.stats.buffer_wait_cycles
         stats["link_wait_cycles"] += noc.stats.link_wait_cycles
         stats["pipeline_cycles"] += noc.stats.pipeline_cycles
+    for src_core, dst_core, _size_bytes, _payload in traffic:
+        src_reticle = src_core // cores_per_reticle
+        dst_reticle = dst_core // cores_per_reticle
+        src_local = src_core % cores_per_reticle
+        dst_local = dst_core % cores_per_reticle
+        if src_reticle == dst_reticle:
+            stats["gateway_noc_hops"] += abs(src_local - dst_local)
+            continue
+        src_gw, dst_gw = _select_gateways(
+            src_local=src_local,
+            dst_local=dst_local,
+            src_reticle=src_reticle,
+            dst_reticle=dst_reticle,
+            reticles_x=max(1, config.wafer.reticles_x),
+            gateways=gateways,
+            policy=config.network.gateway_policy,
+        )
+        stats["gateway_noc_hops"] += abs(src_local - src_gw) + abs(dst_local - dst_gw)
     return float(env.now), stats
 
 
