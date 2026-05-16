@@ -1,0 +1,810 @@
+[
+  {
+    "score": -629.2,
+    "config": {
+      "wafer": {
+        "reticles_x": 2,
+        "reticles_y": 2,
+        "cores_per_reticle": 16,
+        "defect_rate": 0.0,
+        "defect_seed": 42
+      },
+      "compute": {
+        "pe_type": "systolic",
+        "pe_width": 16,
+        "pe_freq_ghz": 1.0,
+        "l1_capacity_kb": 256,
+        "l1_read_bw_gbps": 1024.0,
+        "l1_write_bw_gbps": 1024.0,
+        "l1_latency_cycles": 2
+      },
+      "network": {
+        "noc": {
+          "topology": "mesh2d",
+          "routing": "xy",
+          "flow_control": "credit_vc",
+          "link_bw_flits_per_cycle": 1,
+          "link_latency_cycles": 1,
+          "num_vcs": 1,
+          "buffer_depth": 4,
+          "router_pipeline_mode": "4_stage",
+          "rc_latency_cycles": 1,
+          "va_latency_cycles": 1,
+          "sa_latency_cycles": 1,
+          "st_latency_cycles": 1,
+          "crossbar_bw_flits_per_cycle": 1
+        },
+        "now": {
+          "topology": "mesh2d",
+          "routing": "xy",
+          "flow_control": "credit_vc",
+          "link_bw_flits_per_cycle": 1,
+          "link_latency_cycles": 5,
+          "num_vcs": 2,
+          "buffer_depth": 8,
+          "router_pipeline_mode": "4_stage",
+          "rc_latency_cycles": 1,
+          "va_latency_cycles": 1,
+          "sa_latency_cycles": 1,
+          "st_latency_cycles": 1,
+          "crossbar_bw_flits_per_cycle": 1
+        }
+      },
+      "memory": {
+        "num_controllers": 4,
+        "total_capacity_gb": 64.0,
+        "peak_bandwidth_gbps": 900.0,
+        "base_latency_ns": 120.0,
+        "jitter_model": "none",
+        "jitter_value": 0.0
+      },
+      "workload": {
+        "model_name": "mixtral_8x7b",
+        "hidden_dim": 4096,
+        "expert_ffn_dim": 14336,
+        "num_experts": 8,
+        "top_k": 2,
+        "decode_batch_size": 1,
+        "decode_tokens": 32,
+        "partition_strategy": "expert",
+        "collective_algorithm": "ring",
+        "mapping_strategy": "nearest_neighbor"
+      },
+      "dse": {
+        "objective": "latency_min",
+        "max_trials": 50,
+        "random_seed": 1234,
+        "score_weights": {
+          "total_latency_cycles": -1.0,
+          "vc_wait_cycles": -0.1,
+          "buffer_wait_cycles": -0.1,
+          "link_wait_cycles": -0.05
+        }
+      }
+    },
+    "result": {
+      "total_latency_cycles": 625,
+      "compute_cycles": 0,
+      "network_cycles": 0,
+      "memory_stall_cycles": 0,
+      "network_avg_latency": 0.0,
+      "network_max_latency": 0.0,
+      "network_throughput": 0.25,
+      "network_saturation": 0.0,
+      "vc_wait_cycles": 20,
+      "buffer_wait_cycles": 16,
+      "link_wait_cycles": 12,
+      "pipeline_cycles": 0,
+      "idle_ratio": 0.0,
+      "per_core_utilization": {},
+      "metadata": {}
+    }
+  },
+  {
+    "score": -1258.4,
+    "config": {
+      "wafer": {
+        "reticles_x": 2,
+        "reticles_y": 2,
+        "cores_per_reticle": 16,
+        "defect_rate": 0.0,
+        "defect_seed": 42
+      },
+      "compute": {
+        "pe_type": "systolic",
+        "pe_width": 8,
+        "pe_freq_ghz": 1.0,
+        "l1_capacity_kb": 256,
+        "l1_read_bw_gbps": 1024.0,
+        "l1_write_bw_gbps": 1024.0,
+        "l1_latency_cycles": 2
+      },
+      "network": {
+        "noc": {
+          "topology": "mesh2d",
+          "routing": "xy",
+          "flow_control": "credit_vc",
+          "link_bw_flits_per_cycle": 1,
+          "link_latency_cycles": 1,
+          "num_vcs": 1,
+          "buffer_depth": 16,
+          "router_pipeline_mode": "4_stage",
+          "rc_latency_cycles": 1,
+          "va_latency_cycles": 1,
+          "sa_latency_cycles": 1,
+          "st_latency_cycles": 1,
+          "crossbar_bw_flits_per_cycle": 1
+        },
+        "now": {
+          "topology": "mesh2d",
+          "routing": "xy",
+          "flow_control": "credit_vc",
+          "link_bw_flits_per_cycle": 1,
+          "link_latency_cycles": 5,
+          "num_vcs": 2,
+          "buffer_depth": 8,
+          "router_pipeline_mode": "4_stage",
+          "rc_latency_cycles": 1,
+          "va_latency_cycles": 1,
+          "sa_latency_cycles": 1,
+          "st_latency_cycles": 1,
+          "crossbar_bw_flits_per_cycle": 1
+        }
+      },
+      "memory": {
+        "num_controllers": 4,
+        "total_capacity_gb": 64.0,
+        "peak_bandwidth_gbps": 900.0,
+        "base_latency_ns": 120.0,
+        "jitter_model": "none",
+        "jitter_value": 0.0
+      },
+      "workload": {
+        "model_name": "mixtral_8x7b",
+        "hidden_dim": 4096,
+        "expert_ffn_dim": 14336,
+        "num_experts": 8,
+        "top_k": 2,
+        "decode_batch_size": 1,
+        "decode_tokens": 32,
+        "partition_strategy": "expert",
+        "collective_algorithm": "ring",
+        "mapping_strategy": "nearest_neighbor"
+      },
+      "dse": {
+        "objective": "latency_min",
+        "max_trials": 50,
+        "random_seed": 1234,
+        "score_weights": {
+          "total_latency_cycles": -1.0,
+          "vc_wait_cycles": -0.1,
+          "buffer_wait_cycles": -0.1,
+          "link_wait_cycles": -0.05
+        }
+      }
+    },
+    "result": {
+      "total_latency_cycles": 1250,
+      "compute_cycles": 0,
+      "network_cycles": 0,
+      "memory_stall_cycles": 0,
+      "network_avg_latency": 0.0,
+      "network_max_latency": 0.0,
+      "network_throughput": 0.125,
+      "network_saturation": 0.0,
+      "vc_wait_cycles": 40,
+      "buffer_wait_cycles": 32,
+      "link_wait_cycles": 24,
+      "pipeline_cycles": 0,
+      "idle_ratio": 0.0,
+      "per_core_utilization": {},
+      "metadata": {}
+    }
+  },
+  {
+    "score": -314.1,
+    "config": {
+      "wafer": {
+        "reticles_x": 2,
+        "reticles_y": 2,
+        "cores_per_reticle": 16,
+        "defect_rate": 0.0,
+        "defect_seed": 42
+      },
+      "compute": {
+        "pe_type": "systolic",
+        "pe_width": 32,
+        "pe_freq_ghz": 1.0,
+        "l1_capacity_kb": 256,
+        "l1_read_bw_gbps": 1024.0,
+        "l1_write_bw_gbps": 1024.0,
+        "l1_latency_cycles": 2
+      },
+      "network": {
+        "noc": {
+          "topology": "mesh2d",
+          "routing": "xy",
+          "flow_control": "credit_vc",
+          "link_bw_flits_per_cycle": 1,
+          "link_latency_cycles": 1,
+          "num_vcs": 1,
+          "buffer_depth": 16,
+          "router_pipeline_mode": "4_stage",
+          "rc_latency_cycles": 1,
+          "va_latency_cycles": 1,
+          "sa_latency_cycles": 1,
+          "st_latency_cycles": 1,
+          "crossbar_bw_flits_per_cycle": 1
+        },
+        "now": {
+          "topology": "mesh2d",
+          "routing": "xy",
+          "flow_control": "credit_vc",
+          "link_bw_flits_per_cycle": 1,
+          "link_latency_cycles": 5,
+          "num_vcs": 2,
+          "buffer_depth": 8,
+          "router_pipeline_mode": "4_stage",
+          "rc_latency_cycles": 1,
+          "va_latency_cycles": 1,
+          "sa_latency_cycles": 1,
+          "st_latency_cycles": 1,
+          "crossbar_bw_flits_per_cycle": 1
+        }
+      },
+      "memory": {
+        "num_controllers": 4,
+        "total_capacity_gb": 64.0,
+        "peak_bandwidth_gbps": 900.0,
+        "base_latency_ns": 120.0,
+        "jitter_model": "none",
+        "jitter_value": 0.0
+      },
+      "workload": {
+        "model_name": "mixtral_8x7b",
+        "hidden_dim": 4096,
+        "expert_ffn_dim": 14336,
+        "num_experts": 8,
+        "top_k": 2,
+        "decode_batch_size": 1,
+        "decode_tokens": 32,
+        "partition_strategy": "expert",
+        "collective_algorithm": "ring",
+        "mapping_strategy": "nearest_neighbor"
+      },
+      "dse": {
+        "objective": "latency_min",
+        "max_trials": 50,
+        "random_seed": 1234,
+        "score_weights": {
+          "total_latency_cycles": -1.0,
+          "vc_wait_cycles": -0.1,
+          "buffer_wait_cycles": -0.1,
+          "link_wait_cycles": -0.05
+        }
+      }
+    },
+    "result": {
+      "total_latency_cycles": 312,
+      "compute_cycles": 0,
+      "network_cycles": 0,
+      "memory_stall_cycles": 0,
+      "network_avg_latency": 0.0,
+      "network_max_latency": 0.0,
+      "network_throughput": 0.5,
+      "network_saturation": 0.0,
+      "vc_wait_cycles": 10,
+      "buffer_wait_cycles": 8,
+      "link_wait_cycles": 6,
+      "pipeline_cycles": 0,
+      "idle_ratio": 0.0,
+      "per_core_utilization": {},
+      "metadata": {}
+    }
+  },
+  {
+    "score": -1258.4,
+    "config": {
+      "wafer": {
+        "reticles_x": 2,
+        "reticles_y": 2,
+        "cores_per_reticle": 16,
+        "defect_rate": 0.0,
+        "defect_seed": 42
+      },
+      "compute": {
+        "pe_type": "systolic",
+        "pe_width": 8,
+        "pe_freq_ghz": 1.0,
+        "l1_capacity_kb": 256,
+        "l1_read_bw_gbps": 1024.0,
+        "l1_write_bw_gbps": 1024.0,
+        "l1_latency_cycles": 2
+      },
+      "network": {
+        "noc": {
+          "topology": "mesh2d",
+          "routing": "xy",
+          "flow_control": "credit_vc",
+          "link_bw_flits_per_cycle": 1,
+          "link_latency_cycles": 1,
+          "num_vcs": 1,
+          "buffer_depth": 8,
+          "router_pipeline_mode": "4_stage",
+          "rc_latency_cycles": 1,
+          "va_latency_cycles": 1,
+          "sa_latency_cycles": 1,
+          "st_latency_cycles": 1,
+          "crossbar_bw_flits_per_cycle": 1
+        },
+        "now": {
+          "topology": "mesh2d",
+          "routing": "xy",
+          "flow_control": "credit_vc",
+          "link_bw_flits_per_cycle": 1,
+          "link_latency_cycles": 5,
+          "num_vcs": 2,
+          "buffer_depth": 8,
+          "router_pipeline_mode": "4_stage",
+          "rc_latency_cycles": 1,
+          "va_latency_cycles": 1,
+          "sa_latency_cycles": 1,
+          "st_latency_cycles": 1,
+          "crossbar_bw_flits_per_cycle": 1
+        }
+      },
+      "memory": {
+        "num_controllers": 4,
+        "total_capacity_gb": 64.0,
+        "peak_bandwidth_gbps": 900.0,
+        "base_latency_ns": 120.0,
+        "jitter_model": "none",
+        "jitter_value": 0.0
+      },
+      "workload": {
+        "model_name": "mixtral_8x7b",
+        "hidden_dim": 4096,
+        "expert_ffn_dim": 14336,
+        "num_experts": 8,
+        "top_k": 2,
+        "decode_batch_size": 1,
+        "decode_tokens": 32,
+        "partition_strategy": "expert",
+        "collective_algorithm": "ring",
+        "mapping_strategy": "nearest_neighbor"
+      },
+      "dse": {
+        "objective": "latency_min",
+        "max_trials": 50,
+        "random_seed": 1234,
+        "score_weights": {
+          "total_latency_cycles": -1.0,
+          "vc_wait_cycles": -0.1,
+          "buffer_wait_cycles": -0.1,
+          "link_wait_cycles": -0.05
+        }
+      }
+    },
+    "result": {
+      "total_latency_cycles": 1250,
+      "compute_cycles": 0,
+      "network_cycles": 0,
+      "memory_stall_cycles": 0,
+      "network_avg_latency": 0.0,
+      "network_max_latency": 0.0,
+      "network_throughput": 0.125,
+      "network_saturation": 0.0,
+      "vc_wait_cycles": 40,
+      "buffer_wait_cycles": 32,
+      "link_wait_cycles": 24,
+      "pipeline_cycles": 0,
+      "idle_ratio": 0.0,
+      "per_core_utilization": {},
+      "metadata": {}
+    }
+  },
+  {
+    "score": -1258.4,
+    "config": {
+      "wafer": {
+        "reticles_x": 2,
+        "reticles_y": 2,
+        "cores_per_reticle": 16,
+        "defect_rate": 0.0,
+        "defect_seed": 42
+      },
+      "compute": {
+        "pe_type": "systolic",
+        "pe_width": 8,
+        "pe_freq_ghz": 1.0,
+        "l1_capacity_kb": 256,
+        "l1_read_bw_gbps": 1024.0,
+        "l1_write_bw_gbps": 1024.0,
+        "l1_latency_cycles": 2
+      },
+      "network": {
+        "noc": {
+          "topology": "mesh2d",
+          "routing": "xy",
+          "flow_control": "credit_vc",
+          "link_bw_flits_per_cycle": 1,
+          "link_latency_cycles": 1,
+          "num_vcs": 1,
+          "buffer_depth": 4,
+          "router_pipeline_mode": "4_stage",
+          "rc_latency_cycles": 1,
+          "va_latency_cycles": 1,
+          "sa_latency_cycles": 1,
+          "st_latency_cycles": 1,
+          "crossbar_bw_flits_per_cycle": 1
+        },
+        "now": {
+          "topology": "mesh2d",
+          "routing": "xy",
+          "flow_control": "credit_vc",
+          "link_bw_flits_per_cycle": 1,
+          "link_latency_cycles": 5,
+          "num_vcs": 2,
+          "buffer_depth": 8,
+          "router_pipeline_mode": "4_stage",
+          "rc_latency_cycles": 1,
+          "va_latency_cycles": 1,
+          "sa_latency_cycles": 1,
+          "st_latency_cycles": 1,
+          "crossbar_bw_flits_per_cycle": 1
+        }
+      },
+      "memory": {
+        "num_controllers": 4,
+        "total_capacity_gb": 64.0,
+        "peak_bandwidth_gbps": 900.0,
+        "base_latency_ns": 120.0,
+        "jitter_model": "none",
+        "jitter_value": 0.0
+      },
+      "workload": {
+        "model_name": "mixtral_8x7b",
+        "hidden_dim": 4096,
+        "expert_ffn_dim": 14336,
+        "num_experts": 8,
+        "top_k": 2,
+        "decode_batch_size": 1,
+        "decode_tokens": 32,
+        "partition_strategy": "expert",
+        "collective_algorithm": "ring",
+        "mapping_strategy": "nearest_neighbor"
+      },
+      "dse": {
+        "objective": "latency_min",
+        "max_trials": 50,
+        "random_seed": 1234,
+        "score_weights": {
+          "total_latency_cycles": -1.0,
+          "vc_wait_cycles": -0.1,
+          "buffer_wait_cycles": -0.1,
+          "link_wait_cycles": -0.05
+        }
+      }
+    },
+    "result": {
+      "total_latency_cycles": 1250,
+      "compute_cycles": 0,
+      "network_cycles": 0,
+      "memory_stall_cycles": 0,
+      "network_avg_latency": 0.0,
+      "network_max_latency": 0.0,
+      "network_throughput": 0.125,
+      "network_saturation": 0.0,
+      "vc_wait_cycles": 40,
+      "buffer_wait_cycles": 32,
+      "link_wait_cycles": 24,
+      "pipeline_cycles": 0,
+      "idle_ratio": 0.0,
+      "per_core_utilization": {},
+      "metadata": {}
+    }
+  },
+  {
+    "score": -629.2,
+    "config": {
+      "wafer": {
+        "reticles_x": 2,
+        "reticles_y": 2,
+        "cores_per_reticle": 16,
+        "defect_rate": 0.0,
+        "defect_seed": 42
+      },
+      "compute": {
+        "pe_type": "systolic",
+        "pe_width": 16,
+        "pe_freq_ghz": 1.0,
+        "l1_capacity_kb": 256,
+        "l1_read_bw_gbps": 1024.0,
+        "l1_write_bw_gbps": 1024.0,
+        "l1_latency_cycles": 2
+      },
+      "network": {
+        "noc": {
+          "topology": "mesh2d",
+          "routing": "xy",
+          "flow_control": "credit_vc",
+          "link_bw_flits_per_cycle": 1,
+          "link_latency_cycles": 1,
+          "num_vcs": 4,
+          "buffer_depth": 16,
+          "router_pipeline_mode": "4_stage",
+          "rc_latency_cycles": 1,
+          "va_latency_cycles": 1,
+          "sa_latency_cycles": 1,
+          "st_latency_cycles": 1,
+          "crossbar_bw_flits_per_cycle": 1
+        },
+        "now": {
+          "topology": "mesh2d",
+          "routing": "xy",
+          "flow_control": "credit_vc",
+          "link_bw_flits_per_cycle": 1,
+          "link_latency_cycles": 5,
+          "num_vcs": 2,
+          "buffer_depth": 8,
+          "router_pipeline_mode": "4_stage",
+          "rc_latency_cycles": 1,
+          "va_latency_cycles": 1,
+          "sa_latency_cycles": 1,
+          "st_latency_cycles": 1,
+          "crossbar_bw_flits_per_cycle": 1
+        }
+      },
+      "memory": {
+        "num_controllers": 4,
+        "total_capacity_gb": 64.0,
+        "peak_bandwidth_gbps": 900.0,
+        "base_latency_ns": 120.0,
+        "jitter_model": "none",
+        "jitter_value": 0.0
+      },
+      "workload": {
+        "model_name": "mixtral_8x7b",
+        "hidden_dim": 4096,
+        "expert_ffn_dim": 14336,
+        "num_experts": 8,
+        "top_k": 2,
+        "decode_batch_size": 1,
+        "decode_tokens": 32,
+        "partition_strategy": "expert",
+        "collective_algorithm": "ring",
+        "mapping_strategy": "nearest_neighbor"
+      },
+      "dse": {
+        "objective": "latency_min",
+        "max_trials": 50,
+        "random_seed": 1234,
+        "score_weights": {
+          "total_latency_cycles": -1.0,
+          "vc_wait_cycles": -0.1,
+          "buffer_wait_cycles": -0.1,
+          "link_wait_cycles": -0.05
+        }
+      }
+    },
+    "result": {
+      "total_latency_cycles": 625,
+      "compute_cycles": 0,
+      "network_cycles": 0,
+      "memory_stall_cycles": 0,
+      "network_avg_latency": 0.0,
+      "network_max_latency": 0.0,
+      "network_throughput": 0.25,
+      "network_saturation": 0.0,
+      "vc_wait_cycles": 20,
+      "buffer_wait_cycles": 16,
+      "link_wait_cycles": 12,
+      "pipeline_cycles": 0,
+      "idle_ratio": 0.0,
+      "per_core_utilization": {},
+      "metadata": {}
+    }
+  },
+  {
+    "score": -629.2,
+    "config": {
+      "wafer": {
+        "reticles_x": 2,
+        "reticles_y": 2,
+        "cores_per_reticle": 16,
+        "defect_rate": 0.0,
+        "defect_seed": 42
+      },
+      "compute": {
+        "pe_type": "systolic",
+        "pe_width": 16,
+        "pe_freq_ghz": 1.0,
+        "l1_capacity_kb": 256,
+        "l1_read_bw_gbps": 1024.0,
+        "l1_write_bw_gbps": 1024.0,
+        "l1_latency_cycles": 2
+      },
+      "network": {
+        "noc": {
+          "topology": "mesh2d",
+          "routing": "xy",
+          "flow_control": "credit_vc",
+          "link_bw_flits_per_cycle": 1,
+          "link_latency_cycles": 1,
+          "num_vcs": 2,
+          "buffer_depth": 16,
+          "router_pipeline_mode": "4_stage",
+          "rc_latency_cycles": 1,
+          "va_latency_cycles": 1,
+          "sa_latency_cycles": 1,
+          "st_latency_cycles": 1,
+          "crossbar_bw_flits_per_cycle": 1
+        },
+        "now": {
+          "topology": "mesh2d",
+          "routing": "xy",
+          "flow_control": "credit_vc",
+          "link_bw_flits_per_cycle": 1,
+          "link_latency_cycles": 5,
+          "num_vcs": 2,
+          "buffer_depth": 8,
+          "router_pipeline_mode": "4_stage",
+          "rc_latency_cycles": 1,
+          "va_latency_cycles": 1,
+          "sa_latency_cycles": 1,
+          "st_latency_cycles": 1,
+          "crossbar_bw_flits_per_cycle": 1
+        }
+      },
+      "memory": {
+        "num_controllers": 4,
+        "total_capacity_gb": 64.0,
+        "peak_bandwidth_gbps": 900.0,
+        "base_latency_ns": 120.0,
+        "jitter_model": "none",
+        "jitter_value": 0.0
+      },
+      "workload": {
+        "model_name": "mixtral_8x7b",
+        "hidden_dim": 4096,
+        "expert_ffn_dim": 14336,
+        "num_experts": 8,
+        "top_k": 2,
+        "decode_batch_size": 1,
+        "decode_tokens": 32,
+        "partition_strategy": "expert",
+        "collective_algorithm": "ring",
+        "mapping_strategy": "nearest_neighbor"
+      },
+      "dse": {
+        "objective": "latency_min",
+        "max_trials": 50,
+        "random_seed": 1234,
+        "score_weights": {
+          "total_latency_cycles": -1.0,
+          "vc_wait_cycles": -0.1,
+          "buffer_wait_cycles": -0.1,
+          "link_wait_cycles": -0.05
+        }
+      }
+    },
+    "result": {
+      "total_latency_cycles": 625,
+      "compute_cycles": 0,
+      "network_cycles": 0,
+      "memory_stall_cycles": 0,
+      "network_avg_latency": 0.0,
+      "network_max_latency": 0.0,
+      "network_throughput": 0.25,
+      "network_saturation": 0.0,
+      "vc_wait_cycles": 20,
+      "buffer_wait_cycles": 16,
+      "link_wait_cycles": 12,
+      "pipeline_cycles": 0,
+      "idle_ratio": 0.0,
+      "per_core_utilization": {},
+      "metadata": {}
+    }
+  },
+  {
+    "score": -1258.4,
+    "config": {
+      "wafer": {
+        "reticles_x": 2,
+        "reticles_y": 2,
+        "cores_per_reticle": 16,
+        "defect_rate": 0.0,
+        "defect_seed": 42
+      },
+      "compute": {
+        "pe_type": "systolic",
+        "pe_width": 8,
+        "pe_freq_ghz": 1.0,
+        "l1_capacity_kb": 256,
+        "l1_read_bw_gbps": 1024.0,
+        "l1_write_bw_gbps": 1024.0,
+        "l1_latency_cycles": 2
+      },
+      "network": {
+        "noc": {
+          "topology": "mesh2d",
+          "routing": "xy",
+          "flow_control": "credit_vc",
+          "link_bw_flits_per_cycle": 1,
+          "link_latency_cycles": 1,
+          "num_vcs": 1,
+          "buffer_depth": 4,
+          "router_pipeline_mode": "4_stage",
+          "rc_latency_cycles": 1,
+          "va_latency_cycles": 1,
+          "sa_latency_cycles": 1,
+          "st_latency_cycles": 1,
+          "crossbar_bw_flits_per_cycle": 1
+        },
+        "now": {
+          "topology": "mesh2d",
+          "routing": "xy",
+          "flow_control": "credit_vc",
+          "link_bw_flits_per_cycle": 1,
+          "link_latency_cycles": 5,
+          "num_vcs": 2,
+          "buffer_depth": 8,
+          "router_pipeline_mode": "4_stage",
+          "rc_latency_cycles": 1,
+          "va_latency_cycles": 1,
+          "sa_latency_cycles": 1,
+          "st_latency_cycles": 1,
+          "crossbar_bw_flits_per_cycle": 1
+        }
+      },
+      "memory": {
+        "num_controllers": 4,
+        "total_capacity_gb": 64.0,
+        "peak_bandwidth_gbps": 900.0,
+        "base_latency_ns": 120.0,
+        "jitter_model": "none",
+        "jitter_value": 0.0
+      },
+      "workload": {
+        "model_name": "mixtral_8x7b",
+        "hidden_dim": 4096,
+        "expert_ffn_dim": 14336,
+        "num_experts": 8,
+        "top_k": 2,
+        "decode_batch_size": 1,
+        "decode_tokens": 32,
+        "partition_strategy": "expert",
+        "collective_algorithm": "ring",
+        "mapping_strategy": "nearest_neighbor"
+      },
+      "dse": {
+        "objective": "latency_min",
+        "max_trials": 50,
+        "random_seed": 1234,
+        "score_weights": {
+          "total_latency_cycles": -1.0,
+          "vc_wait_cycles": -0.1,
+          "buffer_wait_cycles": -0.1,
+          "link_wait_cycles": -0.05
+        }
+      }
+    },
+    "result": {
+      "total_latency_cycles": 1250,
+      "compute_cycles": 0,
+      "network_cycles": 0,
+      "memory_stall_cycles": 0,
+      "network_avg_latency": 0.0,
+      "network_max_latency": 0.0,
+      "network_throughput": 0.125,
+      "network_saturation": 0.0,
+      "vc_wait_cycles": 40,
+      "buffer_wait_cycles": 32,
+      "link_wait_cycles": 24,
+      "pipeline_cycles": 0,
+      "idle_ratio": 0.0,
+      "per_core_utilization": {},
+      "metadata": {}
+    }
+  }
+]
