@@ -16,7 +16,15 @@ class GEMMOp:
 
 
 @dataclass(slots=True)
+class TokenRoute:
+    token_id: int
+    selected_experts: list[int]
+    gate_scores: list[float] = field(default_factory=list)
+
+
+@dataclass(slots=True)
 class LLMWorkload:
     model_name: str
     ops: list[GEMMOp]
+    token_routes: list[TokenRoute] = field(default_factory=list)
     metadata: dict[str, int | float | str] = field(default_factory=dict)

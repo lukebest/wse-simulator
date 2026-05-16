@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from wsesim.workload.ops import GEMMOp, LLMWorkload
+import random
+
+from wsesim.workload.ops import GEMMOp, LLMWorkload, TokenRoute
 
 
 def generate_moe_decode_ffn_workload(
@@ -12,7 +14,16 @@ def generate_moe_decode_ffn_workload(
     num_experts: int,
     top_k: int,
     decode_tokens: int,
+    seed: int = 1234,
 ) -> LLMWorkload:
+    token_routes = _generate_token_routes(
+        decode_tokens=decode_tokens,
+        num_experts=num_experts,
+        top_k=top_k,
+        seed=seed,
+    )
+    expert_token_counts = _expert_token_counts(token_routes, num_experts)
+
     ops: list[GEMMOp] = []
     gate = GEMMOp(
         name="router_gate_proj",
@@ -35,9 +46,10 @@ def generate_moe_decode_ffn_workload(
     ops.append(dispatch)
 
     for expert_idx in range(num_experts):
+        expert_tokens = expert_token_counts[expert_idx]
         gate_proj = GEMMOp(
             name=f"expert_{expert_idx}_gate_proj",
-            m=decode_tokens,
+            m=expert_tokens,
             n=expert_ffn_dim,
             k=hidden_dim,
             depends_on=[dispatch.name],
@@ -45,7 +57,7 @@ def generate_moe_decode_ffn_workload(
         )
         down_proj = GEMMOp(
             name=f"expert_{expert_idx}_down_proj",
-            m=decode_tokens,
+            m=expert_tokens,
             n=hidden_dim,
             k=expert_ffn_dim,
             depends_on=[gate_proj.name],
@@ -66,11 +78,44 @@ def generate_moe_decode_ffn_workload(
     return LLMWorkload(
         model_name=model_name,
         ops=ops,
+        token_routes=token_routes,
         metadata={
             "hidden_dim": hidden_dim,
             "expert_ffn_dim": expert_ffn_dim,
             "num_experts": num_experts,
             "top_k": top_k,
             "decode_tokens": decode_tokens,
+            "seed": seed,
         },
     )
+
+
+def _generate_token_routes(
+    decode_tokens: int,
+    num_experts: int,
+    top_k: int,
+    seed: int,
+) -> list[TokenRoute]:
+    rng = random.Random(seed)
+    routes: list[TokenRoute] = []
+    for token_id in range(decode_tokens):
+        experts = rng.sample(range(num_experts), k=min(top_k, num_experts))
+        raw_scores = [rng.random() for _ in experts]
+        score_sum = sum(raw_scores) or 1.0
+        norm_scores = [score / score_sum for score in raw_scores]
+        routes.append(
+            TokenRoute(
+                token_id=token_id,
+                selected_experts=experts,
+                gate_scores=norm_scores,
+            )
+        )
+    return routes
+
+
+def _expert_token_counts(token_routes: list[TokenRoute], num_experts: int) -> list[int]:
+    counts = [0 for _ in range(num_experts)]
+    for route in token_routes:
+        for expert_id in route.selected_experts:
+            counts[expert_id] += 1
+    return counts
