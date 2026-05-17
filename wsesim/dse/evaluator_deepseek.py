@@ -585,8 +585,40 @@ def _simulate_allreduce_cycles(
     if not traffic:
         return 0
 
-    simulated_cycles, _ = _run_hierarchical_network_simulation(traffic, config)
+    simulated_cycles = _run_noc_allreduce_simulation(traffic, config)
     return max(0, int(simulated_cycles))
+
+
+def _run_noc_allreduce_simulation(
+    traffic: list[dict], config: WSEConfig,
+) -> int:
+    """Lightweight NoC-only SimPy simulation for intra-reticle allreduce."""
+    env = simpy.Environment()
+    noc = _build_noc_network(env, config)
+
+    for item in traffic:
+        src_phys = item["src_core"]
+        dst_phys = item["dst_core"]
+        if src_phys is None or dst_phys is None or src_phys == dst_phys:
+            continue
+        delay = int(item.get("delay_cycles", 0))
+
+        def _inject(e, net, s, d, sz, ptype, dl):
+            if dl > 0:
+                yield e.timeout(dl)
+            pkt = Packet(
+                src=s, dst=d, size_bytes=sz,
+                payload_type=ptype, creation_time=float(e.now),
+            )
+            yield e.process(net.send_packet(pkt))
+
+        env.process(
+            _inject(env, noc, src_phys, dst_phys,
+                    int(item["size_bytes"]), str(item["payload"]), delay)
+        )
+
+    env.run()
+    return int(env.now)
 
 
 def _build_noc_network(env: simpy.Environment, config: WSEConfig) -> UnifiedNetwork:
