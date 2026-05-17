@@ -73,15 +73,6 @@ def compute_pipeline_breakdown(config: WSEConfig, config_label: str | None = Non
     mem_bw_bytes_per_cycle = _memory_bw_bytes_per_cycle(config)
     io_bw_bytes_per_cycle = max(1.0, config.wafer.io_bandwidth_gbps / max(config.network.noc.freq_ghz, 0.1))
 
-    # Aggregate logical op volumes from generated graph.
-    routed_token_sum = sum(
-        op.m
-        for op in workload.ops
-        if op.expert_kind == "routed" and op.op_type in {"expert_w1_proj", "expert_w3_proj", "expert_w2_proj"}
-    )
-    shared_token_sum = decode_tokens * shared_experts
-    token_sum = routed_token_sum + shared_token_sum
-
     w1_weight_bytes = active_experts * hidden * ffn_dim * fp_bytes
     w3_weight_bytes = active_experts * hidden * ffn_dim * fp_bytes
     w2_weight_bytes = active_experts * hidden * ffn_dim * fp_bytes
@@ -100,27 +91,24 @@ def compute_pipeline_breakdown(config: WSEConfig, config_label: str | None = Non
     mem_w3_cycles = max(1, mem_w3_cycles)
     mem_w2_cycles = max(1, mem_w2_cycles)
 
-    compute_w1_cycles = _cube_gemm_cycles(
-        m_total=token_sum,
-        n=ffn_dim,
-        k=hidden,
+    compute_w1_cycles = _stage_max_gemm_cycles(
+        workload=workload,
+        op_type="expert_w1_proj",
         config=config,
         strategy=config.workload.partition_strategy,
         shards=shards,
     )
-    compute_w3_cycles = _cube_gemm_cycles(
-        m_total=token_sum,
-        n=ffn_dim,
-        k=hidden,
+    compute_w3_cycles = _stage_max_gemm_cycles(
+        workload=workload,
+        op_type="expert_w3_proj",
         config=config,
         strategy=config.workload.partition_strategy,
         shards=shards,
     )
-    compute_elem_cycles = _elementwise_cycles(token_sum, ffn_dim, config.workload.partition_strategy, shards)
-    compute_w2_cycles = _cube_gemm_cycles(
-        m_total=token_sum,
-        n=hidden,
-        k=ffn_dim,
+    compute_elem_cycles = _stage_max_elem_cycles(workload=workload, shards=shards)
+    compute_w2_cycles = _stage_max_gemm_cycles(
+        workload=workload,
+        op_type="expert_w2_proj",
         config=config,
         strategy=config.workload.partition_strategy,
         shards=shards,
@@ -182,17 +170,10 @@ def _memory_bw_bytes_per_cycle(config: WSEConfig) -> float:
     return max(1.0, config.memory.per_core_bandwidth_gbps / cycles_per_ns)
 
 
-def _cube_gemm_cycles(
-    m_total: int,
-    n: int,
-    k: int,
-    config: WSEConfig,
-    strategy: str,
-    shards: int,
-) -> int:
+def _cube_gemm_cycles(m: int, n: int, k: int, config: WSEConfig) -> int:
     if config.compute.pe_type != "cube":
         throughput = max(1, config.compute.pe_width * config.compute.pe_width)
-        return max(1, (m_total * n * k) // throughput)
+        return max(1, (m * n * k) // throughput)
 
     m_tile = max(1, config.compute.cube_m_tile)
     n_tile = max(1, config.compute.cube_n_tile)
@@ -200,25 +181,43 @@ def _cube_gemm_cycles(
     startup = max(0, config.compute.cube_startup_cycles)
     steady = max(1, config.compute.cube_steady_cycles)
 
-    effective_n = n
-    effective_k = k
-    if strategy == "col":
-        effective_n = ceil(n / max(1, shards))
-    elif strategy == "k_split":
-        effective_k = ceil(k / max(1, shards))
-
-    per_shard_tiles = ceil(m_total / m_tile) * ceil(effective_n / n_tile) * ceil(effective_k / k_tile)
+    per_shard_tiles = ceil(m / m_tile) * ceil(n / n_tile) * ceil(k / k_tile)
     if per_shard_tiles <= 0:
         return 0
     per_shard_cycles = startup + max(0, per_shard_tiles - 1) * steady
-    shard_count = 1 if strategy == "expert" else max(1, shards)
-    return per_shard_cycles * shard_count
+    return per_shard_cycles
 
 
-def _elementwise_cycles(m_total: int, n: int, strategy: str, shards: int) -> int:
-    if strategy == "expert":
-        return max(0, m_total * n)
-    return max(0, (m_total * n) // max(1, shards))
+def _stage_max_gemm_cycles(
+    workload,
+    op_type: str,
+    config: WSEConfig,
+    strategy: str,
+    shards: int,
+) -> int:
+    stage_max = 0
+    for op in workload.ops:
+        if op.op_type != op_type:
+            continue
+        n_eff = op.n
+        k_eff = op.k
+        if strategy == "col":
+            n_eff = ceil(op.n / max(1, shards))
+        elif strategy == "k_split":
+            k_eff = ceil(op.k / max(1, shards))
+        op_cycles = _cube_gemm_cycles(m=op.m, n=n_eff, k=k_eff, config=config)
+        stage_max = max(stage_max, op_cycles)
+    return stage_max
+
+
+def _stage_max_elem_cycles(workload, shards: int) -> int:
+    stage_max = 0
+    for op in workload.ops:
+        if op.op_type != "elementwise_mul":
+            continue
+        op_cycles = (op.m * op.n) // max(1, shards)
+        stage_max = max(stage_max, op_cycles)
+    return stage_max
 
 
 class _MappingProxy:

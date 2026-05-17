@@ -145,7 +145,16 @@ def _effective_partition_shards(workload, config: WSEConfig) -> int:
 def _estimate_compute_cycles(
     tasks_by_op: dict[str, list[TileTask]], op_lookup: dict[str, object], config: WSEConfig
 ) -> int:
-    total_cycles = 0
+    # Experts for the same FFN stage run in parallel on WSE cores.
+    # We therefore model each stage by critical-path latency (max over experts),
+    # not by summing all experts serially.
+    stage_cycles = {
+        "expert_w1_proj": 0,
+        "expert_w3_proj": 0,
+        "elementwise_mul": 0,
+        "expert_w2_proj": 0,
+    }
+
     if config.compute.pe_type == "cube":
         m_tile = max(1, config.compute.cube_m_tile)
         k_tile = max(1, config.compute.cube_k_tile)
@@ -157,30 +166,46 @@ def _estimate_compute_cycles(
             op = op_lookup.get(op_name)
             if op is None:
                 continue
-            if op.op_type in {"expert_w1_proj", "expert_w3_proj", "expert_w2_proj", "router"}:
+            op_type = getattr(op, "op_type", "")
+            if op_type == "router":
+                # Router gate projection is not modeled as WSE core compute.
+                continue
+            if op_type in {"expert_w1_proj", "expert_w3_proj", "expert_w2_proj"}:
+                op_cycles = 0
                 for task in op_tasks:
                     num_tiles = ceil(task.m / m_tile) * ceil(task.n / n_tile) * ceil(task.k / k_tile)
                     if num_tiles > 0:
-                        total_cycles += startup_cycles + max(0, num_tiles - 1) * steady_cycles
-            elif op.op_type == "elementwise_mul":
+                        # Partitioned shards for one expert are parallelized across cores.
+                        op_cycles = max(op_cycles, startup_cycles + max(0, num_tiles - 1) * steady_cycles)
+                stage_cycles[op_type] = max(stage_cycles[op_type], op_cycles)
+            elif op_type == "elementwise_mul":
+                op_cycles = 0
                 for task in op_tasks:
-                    total_cycles += task.m * task.n
-        return max(1, total_cycles)
+                    op_cycles = max(op_cycles, task.m * task.n)
+                stage_cycles["elementwise_mul"] = max(stage_cycles["elementwise_mul"], op_cycles)
+        total = sum(stage_cycles.values())
+        return max(1, total)
 
     pe_width = max(1, config.compute.pe_width)
     throughput_per_cycle = pe_width if config.compute.pe_type == "vector" else pe_width * pe_width
-    total_mac = 0
     for op_name, op_tasks in tasks_by_op.items():
         op = op_lookup.get(op_name)
         if op is None:
             continue
-        if op.op_type in {"expert_w1_proj", "expert_w3_proj", "expert_w2_proj", "router"}:
+        op_type = getattr(op, "op_type", "")
+        if op_type == "router":
+            continue
+        if op_type in {"expert_w1_proj", "expert_w3_proj", "expert_w2_proj"}:
+            op_cycles = 0
             for task in op_tasks:
-                total_mac += task.m * task.n * task.k
-        elif op.op_type == "elementwise_mul":
+                op_cycles = max(op_cycles, (task.m * task.n * task.k) // throughput_per_cycle)
+            stage_cycles[op_type] = max(stage_cycles[op_type], op_cycles)
+        elif op_type == "elementwise_mul":
+            op_cycles = 0
             for task in op_tasks:
-                total_mac += task.m * task.n
-    return max(1, total_mac // throughput_per_cycle)
+                op_cycles = max(op_cycles, (task.m * task.n) // throughput_per_cycle)
+            stage_cycles["elementwise_mul"] = max(stage_cycles["elementwise_mul"], op_cycles)
+    return max(1, sum(stage_cycles.values()))
 
 
 def _estimate_network_metrics(workload, mapping, config: WSEConfig) -> dict[str, float | int]:
