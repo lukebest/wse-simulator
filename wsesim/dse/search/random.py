@@ -17,10 +17,19 @@ class RandomSearch(SearchStrategy):
     def suggest(self, history: list[tuple[WSEConfig, float]]) -> WSEConfig:
         cfg = deepcopy(self.base)
         cfg.workload.decode_tokens = self._rng.choice([4, 16])
-        cfg.workload.partition_strategy = self._rng.choice(["expert", "col", "k_split"])
+        cfg.workload.partition_strategy = self._rng.choice([
+            "expert", "col", "k_split", "row", "block",
+            "hybrid_nk", "entwined_ring", "streaming",
+        ])
         cfg.workload.partition_shards = self._rng.choice([1, 2, 4, 7])
+        cfg.workload.tile_pipeline = self._rng.choice([True, False])
+
         if cfg.workload.partition_strategy == "expert":
             cfg.workload.partition_shards = 1
+        elif cfg.workload.partition_strategy == "row":
+            cfg.workload.partition_shards = 1
+        elif cfg.workload.partition_strategy == "block":
+            cfg.workload.partition_shards = self._rng.choice([1, 4])
 
         cfg.network.noc.topology = self._rng.choice(["mesh2d", "torus2d", "flat_butterfly"])
         cfg.network.noc.routing = self._rng.choice(["xy", "ugal", "table_based"])

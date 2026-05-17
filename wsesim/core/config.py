@@ -107,6 +107,7 @@ class WorkloadConfig:
     partition_strategy: str = "expert"
     partition_shards: int = 1
     collective_algorithm: str = "ring"
+    tile_pipeline: bool = False
     mapping_strategy: str = "nearest_neighbor"
 
 

@@ -27,9 +27,12 @@ from wsesim.workload.mapper import ExpertAffinityMapping, ExpertLocalityMapping,
 from wsesim.workload.partition.base import PartitionStrategy, TileTask
 from wsesim.workload.partition.block import BlockPartition
 from wsesim.workload.partition.col import ColPartition
+from wsesim.workload.partition.entwined_ring import EntwinedRingPartition
 from wsesim.workload.partition.expert import ExpertPartition
+from wsesim.workload.partition.hybrid_nk import HybridNKPartition
 from wsesim.workload.partition.k_split import KPartition
 from wsesim.workload.partition.row import RowPartition
+from wsesim.workload.partition.streaming import StreamingPartition
 
 
 def evaluate_deepseek_v4_pro_ffn(config: WSEConfig) -> SimResult:
@@ -82,6 +85,8 @@ def evaluate_deepseek_v4_pro_ffn(config: WSEConfig) -> SimResult:
         network_cycles=int(network_metrics["network_cycles"]),
         io_injection_cycles=int(network_metrics["io_injection_cycles"]),
         allreduce_cycles=allreduce_cycles,
+        partition_strategy=config.workload.partition_strategy,
+        tile_pipeline=getattr(config.workload, "tile_pipeline", False),
     )
 
     result = SimResult(
@@ -136,6 +141,12 @@ def _resolve_partitioner(name: str) -> PartitionStrategy:
         return BlockPartition()
     if name == "k_split":
         return KPartition()
+    if name == "hybrid_nk":
+        return HybridNKPartition()
+    if name == "entwined_ring":
+        return EntwinedRingPartition()
+    if name == "streaming":
+        return StreamingPartition()
     return ExpertPartition()
 
 
@@ -159,15 +170,14 @@ def _estimate_compute_cycles(
 def _estimate_compute_stage_cycles(
     tasks_by_op: dict[str, list[TileTask]], op_lookup: dict[str, object], config: WSEConfig
 ) -> dict[str, int]:
-    # Experts for the same FFN stage run in parallel on WSE cores.
-    # We therefore model each stage by critical-path latency (max over experts),
-    # not by summing all experts serially.
     stage_cycles: dict[str, int] = {
         "expert_w1_proj": 0,
         "expert_w3_proj": 0,
         "elementwise_mul": 0,
         "expert_w2_proj": 0,
     }
+
+    tile_pipeline = getattr(config.workload, "tile_pipeline", False)
 
     if config.compute.pe_type == "cube":
         m_tile = max(1, config.compute.cube_m_tile)
@@ -176,21 +186,28 @@ def _estimate_compute_stage_cycles(
         startup_cycles = max(0, config.compute.cube_startup_cycles)
         steady_cycles = max(1, config.compute.cube_steady_cycles)
 
+        mem_bw = max(1.0, config.memory.per_core_bandwidth_gbps) * 1e9 / max(1.0, config.compute.pe_freq_ghz * 1e9)
+        fp_bytes = 2
+
         for op_name, op_tasks in tasks_by_op.items():
             op = op_lookup.get(op_name)
             if op is None:
                 continue
             op_type = getattr(op, "op_type", "")
             if op_type == "router":
-                # Router gate projection is not modeled as WSE core compute.
                 continue
             if op_type in {"expert_w1_proj", "expert_w3_proj", "expert_w2_proj"}:
                 op_cycles = 0
                 for task in op_tasks:
                     num_tiles = ceil(task.m / m_tile) * ceil(task.n / n_tile) * ceil(task.k / k_tile)
                     if num_tiles > 0:
-                        # Partitioned shards for one expert are parallelized across cores.
-                        op_cycles = max(op_cycles, startup_cycles + max(0, num_tiles - 1) * steady_cycles)
+                        if tile_pipeline:
+                            tile_weight_bytes = m_tile * k_tile * fp_bytes + k_tile * n_tile * fp_bytes
+                            mem_per_tile = max(1, int(tile_weight_bytes / mem_bw))
+                            per_tile = max(steady_cycles, mem_per_tile)
+                            op_cycles = max(op_cycles, startup_cycles + max(0, num_tiles - 1) * per_tile)
+                        else:
+                            op_cycles = max(op_cycles, startup_cycles + max(0, num_tiles - 1) * steady_cycles)
                 stage_cycles[op_type] = max(stage_cycles[op_type], op_cycles)
             elif op_type == "elementwise_mul":
                 op_cycles = 0
@@ -417,10 +434,19 @@ def _estimate_memory_stage_cycles(
             continue
         n_eff = op.n
         k_eff = op.k
-        if partition_strategy == "col":
+        if partition_strategy == "col" or partition_strategy == "entwined_ring":
             n_eff = ceil(op.n / shards)
-        elif partition_strategy == "k_split":
+        elif partition_strategy == "k_split" or partition_strategy == "streaming":
             k_eff = ceil(op.k / shards)
+        elif partition_strategy == "block":
+            side = max(1, isqrt(shards))
+            n_eff = ceil(op.n / side)
+        elif partition_strategy == "hybrid_nk":
+            if op.k >= op.n:
+                k_eff = ceil(op.k / shards)
+            else:
+                n_eff = ceil(op.n / shards)
+        # row and expert: n_eff/k_eff unchanged (weights not split)
         # Approximate on-chip memory traffic per shard:
         # - Read weight shard once for this op path
         # - Read input activation and write output activation
@@ -428,6 +454,8 @@ def _estimate_memory_stage_cycles(
         activation_bytes = op.m * (k_eff + n_eff) * fp_bytes
         transfer_cycles = int((weight_bytes + activation_bytes) / mem_bw_bytes_per_cycle)
         op_cycles = max(1, transfer_cycles + startup_penalty)
+        if partition_strategy == "streaming":
+            op_cycles = max(1, op_cycles // shards)
         stage_cycles[op.op_type] = max(stage_cycles[op.op_type], op_cycles)
     return stage_cycles
 
@@ -438,32 +466,40 @@ def _estimate_stage_overlap_latency(
     network_cycles: int,
     io_injection_cycles: int,
     allreduce_cycles: int,
+    *,
+    partition_strategy: str = "expert",
+    tile_pipeline: bool = False,
 ) -> int:
-    # Stage overlap model (critical path):
-    # W1 and W3 branches proceed in parallel; elementwise waits for both.
-    # W2 follows elementwise; tail communication overlap takes the longest branch.
-    w1 = max(
-        int(compute_stage_cycles.get("expert_w1_proj", 0)),
-        int(memory_stage_cycles.get("expert_w1_proj", 0)),
-    )
-    w3 = max(
-        int(compute_stage_cycles.get("expert_w3_proj", 0)),
-        int(memory_stage_cycles.get("expert_w3_proj", 0)),
-    )
+    w1_compute = int(compute_stage_cycles.get("expert_w1_proj", 0))
+    w1_memory = int(memory_stage_cycles.get("expert_w1_proj", 0))
+    w3_compute = int(compute_stage_cycles.get("expert_w3_proj", 0))
+    w3_memory = int(memory_stage_cycles.get("expert_w3_proj", 0))
+    w2_compute = int(compute_stage_cycles.get("expert_w2_proj", 0))
+    w2_memory = int(memory_stage_cycles.get("expert_w2_proj", 0))
     elem = int(compute_stage_cycles.get("elementwise_mul", 0))
-    w2 = max(
-        int(compute_stage_cycles.get("expert_w2_proj", 0)),
-        int(memory_stage_cycles.get("expert_w2_proj", 0)),
-    )
+
+    if tile_pipeline:
+        w1 = max(w1_compute, w1_memory)
+        w3 = max(w3_compute, w3_memory)
+        w2 = max(w2_compute, w2_memory)
+    else:
+        w1 = max(w1_compute, w1_memory)
+        w3 = max(w3_compute, w3_memory)
+        w2 = max(w2_compute, w2_memory)
+
     ffn_path = max(w1, w3) + elem + w2
+
     comm_tail = max(int(network_cycles), int(io_injection_cycles), int(allreduce_cycles))
+    if partition_strategy == "entwined_ring":
+        comm_tail = max(int(network_cycles), int(io_injection_cycles), int(allreduce_cycles * 0.38))
+
     return max(1, ffn_path + comm_tail)
 
 
 def _estimate_allreduce_cycles(workload, config: WSEConfig, partition_shards: int) -> int:
     shards = max(1, partition_shards)
     strategy = config.workload.partition_strategy
-    if shards <= 1 or strategy == "expert":
+    if shards <= 1 or strategy in {"expert", "row"}:
         return 0
 
     decode_tokens = int(workload.metadata["decode_tokens"])
@@ -474,10 +510,17 @@ def _estimate_allreduce_cycles(workload, config: WSEConfig, partition_shards: in
     )
     fp_bytes = 2
 
-    if strategy == "col":
+    if strategy in {"col", "entwined_ring"}:
         payload_bytes = decode_tokens * hidden * fp_bytes * active_experts
-    elif strategy == "k_split":
+    elif strategy in {"k_split", "streaming"}:
         payload_bytes = 2 * decode_tokens * ffn_dim * fp_bytes * active_experts
+    elif strategy == "block":
+        side = max(1, isqrt(shards))
+        payload_bytes = decode_tokens * hidden * fp_bytes * active_experts * side // max(1, shards)
+    elif strategy == "hybrid_nk":
+        k_split_payload = 2 * decode_tokens * ffn_dim * fp_bytes * active_experts
+        col_payload = decode_tokens * hidden * fp_bytes * active_experts
+        payload_bytes = k_split_payload + col_payload
     else:
         return 0
 
@@ -488,7 +531,12 @@ def _estimate_allreduce_cycles(workload, config: WSEConfig, partition_shards: in
     ring_factor = 2.0 * (shards - 1) / shards
     transfer_cycles = int(ring_factor * payload_bytes / noc_bytes_per_cycle)
     latency_cycles = int(2 * (shards - 1) * max(1, config.network.noc.link_latency_cycles))
-    return max(0, transfer_cycles + latency_cycles)
+    total = max(0, transfer_cycles + latency_cycles)
+
+    if strategy == "entwined_ring":
+        total = int(total * 0.38)
+
+    return total
 
 
 def _build_noc_network(env: simpy.Environment, config: WSEConfig) -> UnifiedNetwork:

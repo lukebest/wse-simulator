@@ -118,7 +118,8 @@ def test_random_search_explores_dse_dimensions() -> None:
     partition_strategies = set()
     noc_topologies = set()
     now_topologies = set()
-    for _ in range(20):
+    tile_pipelines = set()
+    for _ in range(80):
         cfg = search.suggest(history)
         policies.add(cfg.network.gateway_policy)
         io_policies.add(cfg.network.io_distribution_policy)
@@ -127,8 +128,13 @@ def test_random_search_explores_dse_dimensions() -> None:
         partition_strategies.add(cfg.workload.partition_strategy)
         noc_topologies.add(cfg.network.noc.topology)
         now_topologies.add(cfg.network.now.topology)
+        tile_pipelines.add(cfg.workload.tile_pipeline)
         if cfg.workload.partition_strategy == "expert":
             assert cfg.workload.partition_shards == 1
+        if cfg.workload.partition_strategy == "row":
+            assert cfg.workload.partition_shards == 1
+        if cfg.workload.partition_strategy == "block":
+            assert cfg.workload.partition_shards in {1, 4}
         history.append((cfg, 0.0))
 
     assert "nearest" in policies
@@ -140,8 +146,15 @@ def test_random_search_explores_dse_dimensions() -> None:
     assert "expert" in partition_strategies
     assert "col" in partition_strategies
     assert "k_split" in partition_strategies
+    assert "row" in partition_strategies
+    assert "block" in partition_strategies
+    assert "hybrid_nk" in partition_strategies
+    assert "entwined_ring" in partition_strategies
+    assert "streaming" in partition_strategies
     assert "mesh2d" in noc_topologies
     assert "flat_butterfly" in noc_topologies
     assert "mesh2d" in now_topologies
     assert "flat_butterfly" in now_topologies
     assert len(gateway_counts) >= 2
+    assert True in tile_pipelines
+    assert False in tile_pipelines

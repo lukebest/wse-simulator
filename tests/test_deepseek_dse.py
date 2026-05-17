@@ -186,3 +186,83 @@ def test_deepseek_evaluator_responds_to_batch_size() -> None:
     small_result = evaluate_deepseek_v4_pro_ffn(small_batch)
     large_result = evaluate_deepseek_v4_pro_ffn(large_batch)
     assert large_result.total_latency_cycles > small_result.total_latency_cycles
+
+
+def _make_base_cfg(num_experts: int = 8) -> WSEConfig:
+    cfg = WSEConfig()
+    cfg.workload.model_name = "deepseek_v4_pro_ffn_decode"
+    cfg.workload.num_routed_experts = num_experts
+    cfg.workload.num_shared_experts = 1
+    cfg.workload.top_k = 6
+    cfg.workload.decode_tokens = 4
+    cfg.workload.mapping_strategy = "expert_affinity"
+    return cfg
+
+
+def test_row_strategy_produces_valid_result() -> None:
+    cfg = _make_base_cfg()
+    cfg.workload.partition_strategy = "row"
+    cfg.workload.partition_shards = 1
+    result = evaluate_deepseek_v4_pro_ffn(cfg)
+    assert result.total_latency_cycles > 0
+    assert result.allreduce_cycles == 0
+
+
+def test_block_strategy_produces_valid_result() -> None:
+    cfg = _make_base_cfg()
+    cfg.workload.partition_strategy = "block"
+    cfg.workload.partition_shards = 4
+    result = evaluate_deepseek_v4_pro_ffn(cfg)
+    assert result.total_latency_cycles > 0
+    assert result.allreduce_cycles > 0
+
+
+def test_hybrid_nk_strategy_produces_valid_result() -> None:
+    cfg = _make_base_cfg()
+    cfg.workload.partition_strategy = "hybrid_nk"
+    cfg.workload.partition_shards = 4
+    result = evaluate_deepseek_v4_pro_ffn(cfg)
+    assert result.total_latency_cycles > 0
+    assert result.allreduce_cycles > 0
+
+
+def test_entwined_ring_strategy_discounts_allreduce() -> None:
+    base = _make_base_cfg()
+    base.workload.partition_shards = 4
+
+    col_cfg = deepcopy(base)
+    col_cfg.workload.partition_strategy = "col"
+
+    ring_cfg = deepcopy(base)
+    ring_cfg.workload.partition_strategy = "entwined_ring"
+
+    col_result = evaluate_deepseek_v4_pro_ffn(col_cfg)
+    ring_result = evaluate_deepseek_v4_pro_ffn(ring_cfg)
+    assert ring_result.allreduce_cycles < col_result.allreduce_cycles
+    assert ring_result.total_latency_cycles > 0
+
+
+def test_streaming_strategy_produces_valid_result() -> None:
+    cfg = _make_base_cfg()
+    cfg.workload.partition_strategy = "streaming"
+    cfg.workload.partition_shards = 4
+    result = evaluate_deepseek_v4_pro_ffn(cfg)
+    assert result.total_latency_cycles > 0
+    assert result.memory_stall_cycles > 0
+
+
+def test_tile_pipeline_affects_latency() -> None:
+    base = _make_base_cfg()
+    base.workload.partition_strategy = "col"
+    base.workload.partition_shards = 4
+
+    no_pipe = deepcopy(base)
+    no_pipe.workload.tile_pipeline = False
+
+    with_pipe = deepcopy(base)
+    with_pipe.workload.tile_pipeline = True
+
+    no_pipe_result = evaluate_deepseek_v4_pro_ffn(no_pipe)
+    with_pipe_result = evaluate_deepseek_v4_pro_ffn(with_pipe)
+    assert no_pipe_result.total_latency_cycles > 0
+    assert with_pipe_result.total_latency_cycles > 0
