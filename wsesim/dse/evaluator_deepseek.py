@@ -65,19 +65,27 @@ def evaluate_deepseek_v4_pro_ffn(config: WSEConfig) -> SimResult:
     mapping = mapper.map(workload, tasks, alive_cores)
 
     op_lookup = {op.name: op for op in workload.ops}
-    compute_cycles = _estimate_compute_cycles(tasks, op_lookup, config)
+    compute_stage_cycles = _estimate_compute_stage_cycles(tasks, op_lookup, config)
+    compute_cycles = max(1, sum(compute_stage_cycles.values()))
     network_metrics = _estimate_network_metrics(workload, mapping, config)
-    memory_stall_cycles = _estimate_memory_stall_cycles(workload, config, partition_shards)
+    memory_stage_cycles = _estimate_memory_stage_cycles(
+        workload=workload,
+        config=config,
+        partition_shards=partition_shards,
+        partition_strategy=config.workload.partition_strategy,
+    )
+    memory_stall_cycles = max(1, sum(memory_stage_cycles.values()))
     allreduce_cycles = _estimate_allreduce_cycles(workload, config, partition_shards)
+    overlapped_latency_cycles = _estimate_stage_overlap_latency(
+        compute_stage_cycles=compute_stage_cycles,
+        memory_stage_cycles=memory_stage_cycles,
+        network_cycles=int(network_metrics["network_cycles"]),
+        io_injection_cycles=int(network_metrics["io_injection_cycles"]),
+        allreduce_cycles=allreduce_cycles,
+    )
 
     result = SimResult(
-        total_latency_cycles=(
-            compute_cycles
-            + network_metrics["network_cycles"]
-            + network_metrics["io_injection_cycles"]
-            + memory_stall_cycles
-            + allreduce_cycles
-        ),
+        total_latency_cycles=overlapped_latency_cycles,
         compute_cycles=compute_cycles,
         network_cycles=network_metrics["network_cycles"],
         io_injection_cycles=int(network_metrics["io_injection_cycles"]),
@@ -145,10 +153,16 @@ def _effective_partition_shards(workload, config: WSEConfig) -> int:
 def _estimate_compute_cycles(
     tasks_by_op: dict[str, list[TileTask]], op_lookup: dict[str, object], config: WSEConfig
 ) -> int:
+    return max(1, sum(_estimate_compute_stage_cycles(tasks_by_op, op_lookup, config).values()))
+
+
+def _estimate_compute_stage_cycles(
+    tasks_by_op: dict[str, list[TileTask]], op_lookup: dict[str, object], config: WSEConfig
+) -> dict[str, int]:
     # Experts for the same FFN stage run in parallel on WSE cores.
     # We therefore model each stage by critical-path latency (max over experts),
     # not by summing all experts serially.
-    stage_cycles = {
+    stage_cycles: dict[str, int] = {
         "expert_w1_proj": 0,
         "expert_w3_proj": 0,
         "elementwise_mul": 0,
@@ -183,8 +197,7 @@ def _estimate_compute_cycles(
                 for task in op_tasks:
                     op_cycles = max(op_cycles, task.m * task.n)
                 stage_cycles["elementwise_mul"] = max(stage_cycles["elementwise_mul"], op_cycles)
-        total = sum(stage_cycles.values())
-        return max(1, total)
+        return stage_cycles
 
     pe_width = max(1, config.compute.pe_width)
     throughput_per_cycle = pe_width if config.compute.pe_type == "vector" else pe_width * pe_width
@@ -205,7 +218,7 @@ def _estimate_compute_cycles(
             for task in op_tasks:
                 op_cycles = max(op_cycles, (task.m * task.n) // throughput_per_cycle)
             stage_cycles["elementwise_mul"] = max(stage_cycles["elementwise_mul"], op_cycles)
-    return max(1, sum(stage_cycles.values()))
+    return stage_cycles
 
 
 def _estimate_network_metrics(workload, mapping, config: WSEConfig) -> dict[str, float | int]:
@@ -374,23 +387,77 @@ def _estimate_network_metrics(workload, mapping, config: WSEConfig) -> dict[str,
     }
 
 
-def _estimate_memory_stall_cycles(workload, config: WSEConfig, partition_shards: int = 1) -> int:
-    hidden = int(workload.metadata["hidden_dim"])
-    decode_tokens = int(workload.metadata["decode_tokens"])
-    ffn_dim = int(workload.metadata["expert_ffn_dim"])
-    active_routed = int(workload.metadata["active_routed_experts"])
+def _estimate_memory_stall_cycles(
+    workload, config: WSEConfig, partition_shards: int = 1, partition_strategy: str = "expert"
+) -> int:
+    stages = _estimate_memory_stage_cycles(
+        workload=workload,
+        config=config,
+        partition_shards=partition_shards,
+        partition_strategy=partition_strategy,
+    )
+    return max(1, sum(stages.values()))
+
+
+def _estimate_memory_stage_cycles(
+    workload,
+    config: WSEConfig,
+    partition_shards: int = 1,
+    partition_strategy: str = "expert",
+) -> dict[str, int]:
     fp_bytes = 2
-
-    # Approximate read+write footprint for active expert FFN passes.
-    # V4-Pro expert path uses W1/W3 (up-projections), elementwise fuse, then W2 down-proj.
-    bytes_moved = active_routed * decode_tokens * (hidden + 2 * ffn_dim + hidden) * fp_bytes
-    bytes_moved = int(bytes_moved / max(1, partition_shards))
-
+    shards = max(1, partition_shards)
     cycles_per_ns = max(config.compute.pe_freq_ghz, 0.1)
     mem_bw_bytes_per_cycle = max(1.0, config.memory.per_core_bandwidth_gbps / cycles_per_ns)
-    transfer_cycles = int(bytes_moved / mem_bw_bytes_per_cycle)
     startup_penalty = int(config.memory.per_core_latency_ns * cycles_per_ns)
-    return max(1, transfer_cycles + startup_penalty)
+    stage_cycles = {"expert_w1_proj": 0, "expert_w3_proj": 0, "expert_w2_proj": 0}
+
+    for op in workload.ops:
+        if op.op_type not in stage_cycles:
+            continue
+        n_eff = op.n
+        k_eff = op.k
+        if partition_strategy == "col":
+            n_eff = ceil(op.n / shards)
+        elif partition_strategy == "k_split":
+            k_eff = ceil(op.k / shards)
+        # Approximate on-chip memory traffic per shard:
+        # - Read weight shard once for this op path
+        # - Read input activation and write output activation
+        weight_bytes = k_eff * n_eff * fp_bytes
+        activation_bytes = op.m * (k_eff + n_eff) * fp_bytes
+        transfer_cycles = int((weight_bytes + activation_bytes) / mem_bw_bytes_per_cycle)
+        op_cycles = max(1, transfer_cycles + startup_penalty)
+        stage_cycles[op.op_type] = max(stage_cycles[op.op_type], op_cycles)
+    return stage_cycles
+
+
+def _estimate_stage_overlap_latency(
+    compute_stage_cycles: dict[str, int],
+    memory_stage_cycles: dict[str, int],
+    network_cycles: int,
+    io_injection_cycles: int,
+    allreduce_cycles: int,
+) -> int:
+    # Stage overlap model (critical path):
+    # W1 and W3 branches proceed in parallel; elementwise waits for both.
+    # W2 follows elementwise; tail communication overlap takes the longest branch.
+    w1 = max(
+        int(compute_stage_cycles.get("expert_w1_proj", 0)),
+        int(memory_stage_cycles.get("expert_w1_proj", 0)),
+    )
+    w3 = max(
+        int(compute_stage_cycles.get("expert_w3_proj", 0)),
+        int(memory_stage_cycles.get("expert_w3_proj", 0)),
+    )
+    elem = int(compute_stage_cycles.get("elementwise_mul", 0))
+    w2 = max(
+        int(compute_stage_cycles.get("expert_w2_proj", 0)),
+        int(memory_stage_cycles.get("expert_w2_proj", 0)),
+    )
+    ffn_path = max(w1, w3) + elem + w2
+    comm_tail = max(int(network_cycles), int(io_injection_cycles), int(allreduce_cycles))
+    return max(1, ffn_path + comm_tail)
 
 
 def _estimate_allreduce_cycles(workload, config: WSEConfig, partition_shards: int) -> int:

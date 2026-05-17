@@ -1,6 +1,6 @@
 [
   {
-    "score": -723380.816,
+    "score": -1235036.8159999999,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -128,11 +128,11 @@
       }
     },
     "result": {
-      "total_latency_cycles": 697907,
+      "total_latency_cycles": 707667,
       "compute_cycles": 657474,
       "network_cycles": 5571,
       "io_injection_cycles": 3942,
-      "memory_stall_cycles": 30920,
+      "memory_stall_cycles": 1034712,
       "allreduce_cycles": 0,
       "network_avg_latency": 116.0625,
       "network_max_latency": 174.09375,
@@ -163,7 +163,7 @@
     }
   },
   {
-    "score": -713172.0939999999,
+    "score": -1226293.0939999998,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -291,11 +291,11 @@
       }
     },
     "result": {
-      "total_latency_cycles": 695552,
+      "total_latency_cycles": 706777,
       "compute_cycles": 657474,
       "network_cycles": 2477,
       "io_injection_cycles": 4681,
-      "memory_stall_cycles": 30920,
+      "memory_stall_cycles": 1034712,
       "allreduce_cycles": 0,
       "network_avg_latency": 51.604166666666664,
       "network_max_latency": 77.40625,
@@ -326,7 +326,7 @@
     }
   },
   {
-    "score": -723052.216,
+    "score": -1234708.216,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -454,11 +454,11 @@
       }
     },
     "result": {
-      "total_latency_cycles": 700158,
+      "total_latency_cycles": 709918,
       "compute_cycles": 657474,
       "network_cycles": 7822,
       "io_injection_cycles": 3942,
-      "memory_stall_cycles": 30920,
+      "memory_stall_cycles": 1034712,
       "allreduce_cycles": 0,
       "network_avg_latency": 162.95833333333334,
       "network_max_latency": 244.4375,
@@ -489,7 +489,7 @@
     }
   },
   {
-    "score": -3428554.556,
+    "score": -2343390.5560000003,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -617,11 +617,11 @@
       }
     },
     "result": {
-      "total_latency_cycles": 3158528,
+      "total_latency_cycles": 1798988,
       "compute_cycles": 2629698,
       "network_cycles": 29472,
       "io_injection_cycles": 7638,
-      "memory_stall_cycles": 491720,
+      "memory_stall_cycles": 1040472,
       "allreduce_cycles": 0,
       "network_avg_latency": 153.5,
       "network_max_latency": 230.25,
@@ -652,7 +652,7 @@
     }
   },
   {
-    "score": -3450616.556,
+    "score": -2365452.5560000003,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -780,11 +780,11 @@
       }
     },
     "result": {
-      "total_latency_cycles": 3162656,
+      "total_latency_cycles": 1803116,
       "compute_cycles": 2629698,
       "network_cycles": 33600,
       "io_injection_cycles": 7638,
-      "memory_stall_cycles": 491720,
+      "memory_stall_cycles": 1040472,
       "allreduce_cycles": 0,
       "network_avg_latency": 175.0,
       "network_max_latency": 262.5,
@@ -815,7 +815,7 @@
     }
   },
   {
-    "score": -3510381.448,
+    "score": -2423492.4480000003,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -943,11 +943,11 @@
       }
     },
     "result": {
-      "total_latency_cycles": 3184979,
+      "total_latency_cycles": 1823714,
       "compute_cycles": 2629698,
       "network_cycles": 54198,
       "io_injection_cycles": 9363,
-      "memory_stall_cycles": 491720,
+      "memory_stall_cycles": 1040472,
       "allreduce_cycles": 0,
       "network_avg_latency": 282.28125,
       "network_max_latency": 423.421875,
@@ -978,7 +978,7 @@
     }
   },
   {
-    "score": -3429609.748,
+    "score": -2342720.748,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -1106,11 +1106,11 @@
       }
     },
     "result": {
-      "total_latency_cycles": 3161354,
+      "total_latency_cycles": 1800089,
       "compute_cycles": 2629698,
       "network_cycles": 30573,
       "io_injection_cycles": 9363,
-      "memory_stall_cycles": 491720,
+      "memory_stall_cycles": 1040472,
       "allreduce_cycles": 0,
       "network_avg_latency": 159.234375,
       "network_max_latency": 238.8515625,
@@ -1141,7 +1141,7 @@
     }
   },
   {
-    "score": -152984.91199999998,
+    "score": -208930.41199999998,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -1269,11 +1269,11 @@
       }
     },
     "result": {
-      "total_latency_cycles": 144498,
+      "total_latency_cycles": 128208,
       "compute_cycles": 105154,
       "network_cycles": 14838,
       "io_injection_cycles": 3449,
-      "memory_stall_cycles": 4588,
+      "memory_stall_cycles": 149059,
       "allreduce_cycles": 16469,
       "network_avg_latency": 309.125,
       "network_max_latency": 463.6875,
@@ -1304,7 +1304,7 @@
     }
   },
   {
-    "score": -3402403.556,
+    "score": -2317239.5560000003,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -1432,11 +1432,11 @@
       }
     },
     "result": {
-      "total_latency_cycles": 3143792,
+      "total_latency_cycles": 1784252,
       "compute_cycles": 2629698,
       "network_cycles": 14736,
       "io_injection_cycles": 7638,
-      "memory_stall_cycles": 491720,
+      "memory_stall_cycles": 1040472,
       "allreduce_cycles": 0,
       "network_avg_latency": 76.75,
       "network_max_latency": 115.125,
@@ -1467,7 +1467,7 @@
     }
   },
   {
-    "score": -196635.512,
+    "score": -320851.512,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -1595,11 +1595,11 @@
       }
     },
     "result": {
-      "total_latency_cycles": 190846,
+      "total_latency_cycles": 189126,
       "compute_cycles": 173634,
       "network_cycles": 2277,
       "io_injection_cycles": 3449,
-      "memory_stall_cycles": 7880,
+      "memory_stall_cycles": 259752,
       "allreduce_cycles": 3606,
       "network_avg_latency": 47.4375,
       "network_max_latency": 71.15625,
@@ -1630,7 +1630,7 @@
     }
   },
   {
-    "score": -4430789.847999999,
+    "score": -3343900.848,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -1758,11 +1758,11 @@
       }
     },
     "result": {
-      "total_latency_cycles": 3451481,
+      "total_latency_cycles": 2090216,
       "compute_cycles": 2629698,
       "network_cycles": 320700,
       "io_injection_cycles": 9363,
-      "memory_stall_cycles": 491720,
+      "memory_stall_cycles": 1040472,
       "allreduce_cycles": 0,
       "network_avg_latency": 1670.3125,
       "network_max_latency": 2505.46875,
@@ -1793,7 +1793,7 @@
     }
   },
   {
-    "score": -3388665.656,
+    "score": -2307257.656,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -1921,11 +1921,11 @@
       }
     },
     "result": {
-      "total_latency_cycles": 3132938,
+      "total_latency_cycles": 1777154,
       "compute_cycles": 2629698,
       "network_cycles": 3882,
       "io_injection_cycles": 7638,
-      "memory_stall_cycles": 491720,
+      "memory_stall_cycles": 1040472,
       "allreduce_cycles": 0,
       "network_avg_latency": 20.21875,
       "network_max_latency": 30.328125,
@@ -1956,7 +1956,7 @@
     }
   },
   {
-    "score": -3401935.34,
+    "score": -2317017.34,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -2084,11 +2084,11 @@
       }
     },
     "result": {
-      "total_latency_cycles": 3139652,
+      "total_latency_cycles": 1780358,
       "compute_cycles": 2629698,
       "network_cycles": 10842,
       "io_injection_cycles": 7392,
-      "memory_stall_cycles": 491720,
+      "memory_stall_cycles": 1040472,
       "allreduce_cycles": 0,
       "network_avg_latency": 56.46875,
       "network_max_latency": 84.703125,
@@ -2119,7 +2119,7 @@
     }
   },
   {
-    "score": -805058.0939999999,
+    "score": -1315975.0939999998,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -2247,11 +2247,11 @@
       }
     },
     "result": {
-      "total_latency_cycles": 738348,
+      "total_latency_cycles": 747369,
       "compute_cycles": 657474,
       "network_cycles": 45273,
       "io_injection_cycles": 4681,
-      "memory_stall_cycles": 30920,
+      "memory_stall_cycles": 1034712,
       "allreduce_cycles": 0,
       "network_avg_latency": 943.1875,
       "network_max_latency": 1414.78125,
@@ -2282,7 +2282,7 @@
     }
   },
   {
-    "score": -3433030.556,
+    "score": -2347866.5560000003,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -2410,11 +2410,11 @@
       }
     },
     "result": {
-      "total_latency_cycles": 3143888,
+      "total_latency_cycles": 1784348,
       "compute_cycles": 2629698,
       "network_cycles": 14832,
       "io_injection_cycles": 7638,
-      "memory_stall_cycles": 491720,
+      "memory_stall_cycles": 1040472,
       "allreduce_cycles": 0,
       "network_avg_latency": 77.25,
       "network_max_latency": 115.875,
@@ -2445,7 +2445,7 @@
     }
   },
   {
-    "score": -3530479.04,
+    "score": -2445561.04,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -2573,11 +2573,11 @@
       }
     },
     "result": {
-      "total_latency_cycles": 3173294,
+      "total_latency_cycles": 1814000,
       "compute_cycles": 2629698,
       "network_cycles": 44484,
       "io_injection_cycles": 7392,
-      "memory_stall_cycles": 491720,
+      "memory_stall_cycles": 1040472,
       "allreduce_cycles": 0,
       "network_avg_latency": 231.6875,
       "network_max_latency": 347.53125,
@@ -2608,7 +2608,7 @@
     }
   },
   {
-    "score": -723052.216,
+    "score": -1234708.216,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -2736,11 +2736,11 @@
       }
     },
     "result": {
-      "total_latency_cycles": 700158,
+      "total_latency_cycles": 709918,
       "compute_cycles": 657474,
       "network_cycles": 7822,
       "io_injection_cycles": 3942,
-      "memory_stall_cycles": 30920,
+      "memory_stall_cycles": 1034712,
       "allreduce_cycles": 0,
       "network_avg_latency": 162.95833333333334,
       "network_max_latency": 244.4375,
@@ -2771,7 +2771,7 @@
     }
   },
   {
-    "score": -3680557.048,
+    "score": -2593668.048,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -2899,11 +2899,11 @@
       }
     },
     "result": {
-      "total_latency_cycles": 3262187,
+      "total_latency_cycles": 1900922,
       "compute_cycles": 2629698,
       "network_cycles": 131406,
       "io_injection_cycles": 9363,
-      "memory_stall_cycles": 491720,
+      "memory_stall_cycles": 1040472,
       "allreduce_cycles": 0,
       "network_avg_latency": 684.40625,
       "network_max_latency": 1026.609375,
@@ -2934,7 +2934,7 @@
     }
   },
   {
-    "score": -3446580.44,
+    "score": -2361662.44,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -3062,11 +3062,11 @@
       }
     },
     "result": {
-      "total_latency_cycles": 3140777,
+      "total_latency_cycles": 1781483,
       "compute_cycles": 2629698,
       "network_cycles": 11967,
       "io_injection_cycles": 7392,
-      "memory_stall_cycles": 491720,
+      "memory_stall_cycles": 1040472,
       "allreduce_cycles": 0,
       "network_avg_latency": 62.328125,
       "network_max_latency": 93.4921875,
@@ -3097,7 +3097,7 @@
     }
   },
   {
-    "score": -712370.894,
+    "score": -1225349.894,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -3225,11 +3225,11 @@
       }
     },
     "result": {
-      "total_latency_cycles": 695694,
+      "total_latency_cycles": 706777,
       "compute_cycles": 657474,
       "network_cycles": 2619,
       "io_injection_cycles": 4681,
-      "memory_stall_cycles": 30920,
+      "memory_stall_cycles": 1034712,
       "allreduce_cycles": 0,
       "network_avg_latency": 54.5625,
       "network_max_latency": 81.84375,
@@ -3260,7 +3260,7 @@
     }
   },
   {
-    "score": -3413333.456,
+    "score": -2328169.4560000002,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -3388,11 +3388,11 @@
       }
     },
     "result": {
-      "total_latency_cycles": 3141887,
+      "total_latency_cycles": 1782347,
       "compute_cycles": 2629698,
       "network_cycles": 12831,
       "io_injection_cycles": 7638,
-      "memory_stall_cycles": 491720,
+      "memory_stall_cycles": 1040472,
       "allreduce_cycles": 0,
       "network_avg_latency": 66.828125,
       "network_max_latency": 100.2421875,
@@ -3423,7 +3423,7 @@
     }
   },
   {
-    "score": -713726.394,
+    "score": -1226272.394,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -3551,11 +3551,11 @@
       }
     },
     "result": {
-      "total_latency_cycles": 696127,
+      "total_latency_cycles": 706777,
       "compute_cycles": 657474,
       "network_cycles": 3052,
       "io_injection_cycles": 4681,
-      "memory_stall_cycles": 30920,
+      "memory_stall_cycles": 1034712,
       "allreduce_cycles": 0,
       "network_avg_latency": 63.583333333333336,
       "network_max_latency": 95.375,
@@ -3586,7 +3586,7 @@
     }
   },
   {
-    "score": -776578.4160000001,
+    "score": -1288234.416,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -3714,11 +3714,11 @@
       }
     },
     "result": {
-      "total_latency_cycles": 746915,
+      "total_latency_cycles": 756675,
       "compute_cycles": 657474,
       "network_cycles": 54579,
       "io_injection_cycles": 3942,
-      "memory_stall_cycles": 30920,
+      "memory_stall_cycles": 1034712,
       "allreduce_cycles": 0,
       "network_avg_latency": 1137.0625,
       "network_max_latency": 1705.59375,
@@ -3749,7 +3749,7 @@
     }
   },
   {
-    "score": -3789017.848,
+    "score": -2702128.848,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -3877,11 +3877,11 @@
       }
     },
     "result": {
-      "total_latency_cycles": 3306617,
+      "total_latency_cycles": 1945352,
       "compute_cycles": 2629698,
       "network_cycles": 175836,
       "io_injection_cycles": 9363,
-      "memory_stall_cycles": 491720,
+      "memory_stall_cycles": 1040472,
       "allreduce_cycles": 0,
       "network_avg_latency": 915.8125,
       "network_max_latency": 1373.71875,
@@ -3912,7 +3912,7 @@
     }
   },
   {
-    "score": -746912.6120000001,
+    "score": -1259061.612,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -4040,11 +4040,11 @@
       }
     },
     "result": {
-      "total_latency_cycles": 708625,
+      "total_latency_cycles": 718878,
       "compute_cycles": 657474,
       "network_cycles": 16782,
       "io_injection_cycles": 3449,
-      "memory_stall_cycles": 30920,
+      "memory_stall_cycles": 1034712,
       "allreduce_cycles": 0,
       "network_avg_latency": 349.625,
       "network_max_latency": 524.4375,
@@ -4075,7 +4075,7 @@
     }
   },
   {
-    "score": -725182.116,
+    "score": -1236838.116,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -4203,11 +4203,11 @@
       }
     },
     "result": {
-      "total_latency_cycles": 705632,
+      "total_latency_cycles": 715392,
       "compute_cycles": 657474,
       "network_cycles": 13296,
       "io_injection_cycles": 3942,
-      "memory_stall_cycles": 30920,
+      "memory_stall_cycles": 1034712,
       "allreduce_cycles": 0,
       "network_avg_latency": 277.0,
       "network_max_latency": 415.5,
@@ -4238,7 +4238,7 @@
     }
   },
   {
-    "score": -3484585.048,
+    "score": -2397696.048,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -4366,11 +4366,11 @@
       }
     },
     "result": {
-      "total_latency_cycles": 3152297,
+      "total_latency_cycles": 1791032,
       "compute_cycles": 2629698,
       "network_cycles": 21516,
       "io_injection_cycles": 9363,
-      "memory_stall_cycles": 491720,
+      "memory_stall_cycles": 1040472,
       "allreduce_cycles": 0,
       "network_avg_latency": 112.0625,
       "network_max_latency": 168.09375,
@@ -4401,7 +4401,7 @@
     }
   },
   {
-    "score": -733450.694,
+    "score": -1244367.694,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -4529,11 +4529,11 @@
       }
     },
     "result": {
-      "total_latency_cycles": 712161,
+      "total_latency_cycles": 721182,
       "compute_cycles": 657474,
       "network_cycles": 19086,
       "io_injection_cycles": 4681,
-      "memory_stall_cycles": 30920,
+      "memory_stall_cycles": 1034712,
       "allreduce_cycles": 0,
       "network_avg_latency": 397.625,
       "network_max_latency": 596.4375,
@@ -4564,7 +4564,7 @@
     }
   },
   {
-    "score": -206408.294,
+    "score": -326599.294,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -4692,11 +4692,11 @@
       }
     },
     "result": {
-      "total_latency_cycles": 198471,
+      "total_latency_cycles": 192726,
       "compute_cycles": 173634,
       "network_cycles": 5070,
       "io_injection_cycles": 4681,
-      "memory_stall_cycles": 7880,
+      "memory_stall_cycles": 259752,
       "allreduce_cycles": 7206,
       "network_avg_latency": 105.625,
       "network_max_latency": 158.4375,
@@ -4727,7 +4727,7 @@
     }
   },
   {
-    "score": -160803.81199999998,
+    "score": -217052.31199999998,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -4855,11 +4855,11 @@
       }
     },
     "result": {
-      "total_latency_cycles": 144195,
+      "total_latency_cycles": 128208,
       "compute_cycles": 105154,
       "network_cycles": 14535,
       "io_injection_cycles": 3449,
-      "memory_stall_cycles": 4588,
+      "memory_stall_cycles": 149059,
       "allreduce_cycles": 16469,
       "network_avg_latency": 302.8125,
       "network_max_latency": 454.21875,
@@ -4890,7 +4890,7 @@
     }
   },
   {
-    "score": -3657948.956,
+    "score": -2572784.956,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -5018,11 +5018,11 @@
       }
     },
     "result": {
-      "total_latency_cycles": 3193448,
+      "total_latency_cycles": 1833908,
       "compute_cycles": 2629698,
       "network_cycles": 64392,
       "io_injection_cycles": 7638,
-      "memory_stall_cycles": 491720,
+      "memory_stall_cycles": 1040472,
       "allreduce_cycles": 0,
       "network_avg_latency": 335.375,
       "network_max_latency": 503.0625,
@@ -5053,7 +5053,7 @@
     }
   },
   {
-    "score": -241367.194,
+    "score": -358318.19399999996,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -5181,11 +5181,11 @@
       }
     },
     "result": {
-      "total_latency_cycles": 222511,
+      "total_latency_cycles": 213430,
       "compute_cycles": 164418,
       "network_cycles": 37126,
       "io_injection_cycles": 4681,
-      "memory_stall_cycles": 7880,
+      "memory_stall_cycles": 259944,
       "allreduce_cycles": 8406,
       "network_avg_latency": 773.4583333333334,
       "network_max_latency": 1160.1875,
@@ -5216,7 +5216,7 @@
     }
   },
   {
-    "score": -3981948.956,
+    "score": -2896784.956,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -5344,11 +5344,11 @@
       }
     },
     "result": {
-      "total_latency_cycles": 3557264,
+      "total_latency_cycles": 2197724,
       "compute_cycles": 2629698,
       "network_cycles": 428208,
       "io_injection_cycles": 7638,
-      "memory_stall_cycles": 491720,
+      "memory_stall_cycles": 1040472,
       "allreduce_cycles": 0,
       "network_avg_latency": 2230.25,
       "network_max_latency": 3345.375,
@@ -5379,7 +5379,7 @@
     }
   },
   {
-    "score": -130158.61200000001,
+    "score": -196816.112,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -5507,11 +5507,11 @@
       }
     },
     "result": {
-      "total_latency_cycles": 126494,
+      "total_latency_cycles": 120916,
       "compute_cycles": 105154,
       "network_cycles": 9177,
       "io_injection_cycles": 3449,
-      "memory_stall_cycles": 4588,
+      "memory_stall_cycles": 149059,
       "allreduce_cycles": 4126,
       "network_avg_latency": 191.1875,
       "network_max_latency": 286.78125,
@@ -5542,7 +5542,7 @@
     }
   },
   {
-    "score": -3416542.34,
+    "score": -2331624.34,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -5670,11 +5670,11 @@
       }
     },
     "result": {
-      "total_latency_cycles": 3146216,
+      "total_latency_cycles": 1786922,
       "compute_cycles": 2629698,
       "network_cycles": 17406,
       "io_injection_cycles": 7392,
-      "memory_stall_cycles": 491720,
+      "memory_stall_cycles": 1040472,
       "allreduce_cycles": 0,
       "network_avg_latency": 90.65625,
       "network_max_latency": 135.984375,
@@ -5705,7 +5705,7 @@
     }
   },
   {
-    "score": -3416726.548,
+    "score": -2329837.548,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -5833,11 +5833,11 @@
       }
     },
     "result": {
-      "total_latency_cycles": 3141554,
+      "total_latency_cycles": 1780289,
       "compute_cycles": 2629698,
       "network_cycles": 10773,
       "io_injection_cycles": 9363,
-      "memory_stall_cycles": 491720,
+      "memory_stall_cycles": 1040472,
       "allreduce_cycles": 0,
       "network_avg_latency": 56.109375,
       "network_max_latency": 84.1640625,
@@ -5868,7 +5868,7 @@
     }
   },
   {
-    "score": -3448778.756,
+    "score": -2363614.756,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -5996,11 +5996,11 @@
       }
     },
     "result": {
-      "total_latency_cycles": 3144944,
+      "total_latency_cycles": 1785404,
       "compute_cycles": 2629698,
       "network_cycles": 15888,
       "io_injection_cycles": 7638,
-      "memory_stall_cycles": 491720,
+      "memory_stall_cycles": 1040472,
       "allreduce_cycles": 0,
       "network_avg_latency": 82.75,
       "network_max_latency": 124.125,
@@ -6031,7 +6031,7 @@
     }
   },
   {
-    "score": -3396236.756,
+    "score": -2315056.756,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -6159,11 +6159,11 @@
       }
     },
     "result": {
-      "total_latency_cycles": 3132710,
+      "total_latency_cycles": 1777154,
       "compute_cycles": 2629698,
       "network_cycles": 3654,
       "io_injection_cycles": 7638,
-      "memory_stall_cycles": 491720,
+      "memory_stall_cycles": 1040472,
       "allreduce_cycles": 0,
       "network_avg_latency": 19.03125,
       "network_max_latency": 28.546875,
@@ -6194,7 +6194,7 @@
     }
   },
   {
-    "score": -3442120.04,
+    "score": -2357202.0399999996,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -6322,11 +6322,11 @@
       }
     },
     "result": {
-      "total_latency_cycles": 3142712,
+      "total_latency_cycles": 1783418,
       "compute_cycles": 2629698,
       "network_cycles": 13902,
       "io_injection_cycles": 7392,
-      "memory_stall_cycles": 491720,
+      "memory_stall_cycles": 1040472,
       "allreduce_cycles": 0,
       "network_avg_latency": 72.40625,
       "network_max_latency": 108.609375,
@@ -6357,7 +6357,7 @@
     }
   },
   {
-    "score": -3398158.348,
+    "score": -2311269.3479999998,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -6485,11 +6485,11 @@
       }
     },
     "result": {
-      "total_latency_cycles": 3141566,
+      "total_latency_cycles": 1780301,
       "compute_cycles": 2629698,
       "network_cycles": 10785,
       "io_injection_cycles": 9363,
-      "memory_stall_cycles": 491720,
+      "memory_stall_cycles": 1040472,
       "allreduce_cycles": 0,
       "network_avg_latency": 56.171875,
       "network_max_latency": 84.2578125,
@@ -6520,7 +6520,7 @@
     }
   },
   {
-    "score": -127189.616,
+    "score": -190662.616,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -6648,11 +6648,11 @@
       }
     },
     "result": {
-      "total_latency_cycles": 119699,
+      "total_latency_cycles": 110819,
       "compute_cycles": 95262,
       "network_cycles": 6295,
       "io_injection_cycles": 3942,
-      "memory_stall_cycles": 4588,
+      "memory_stall_cycles": 149294,
       "allreduce_cycles": 9612,
       "network_avg_latency": 131.14583333333334,
       "network_max_latency": 196.71875,
@@ -6683,7 +6683,7 @@
     }
   },
   {
-    "score": -397716.494,
+    "score": -640391.494,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -6811,11 +6811,11 @@
       }
     },
     "result": {
-      "total_latency_cycles": 375357,
+      "total_latency_cycles": 366712,
       "compute_cycles": 328770,
       "network_cycles": 15144,
       "io_injection_cycles": 4681,
-      "memory_stall_cycles": 15560,
+      "memory_stall_cycles": 518200,
       "allreduce_cycles": 11202,
       "network_avg_latency": 315.5,
       "network_max_latency": 473.25,
@@ -6846,7 +6846,7 @@
     }
   },
   {
-    "score": -374833.39400000003,
+    "score": -627140.394,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -6974,11 +6974,11 @@
       }
     },
     "result": {
-      "total_latency_cycles": 361342,
+      "total_latency_cycles": 362393,
       "compute_cycles": 334914,
       "network_cycles": 3785,
       "io_injection_cycles": 4681,
-      "memory_stall_cycles": 15560,
+      "memory_stall_cycles": 518072,
       "allreduce_cycles": 2402,
       "network_avg_latency": 78.85416666666667,
       "network_max_latency": 118.28125,
@@ -7009,7 +7009,7 @@
     }
   },
   {
-    "score": -3427721.2399999998,
+    "score": -2342803.2399999998,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -7137,11 +7137,11 @@
       }
     },
     "result": {
-      "total_latency_cycles": 3150494,
+      "total_latency_cycles": 1791200,
       "compute_cycles": 2629698,
       "network_cycles": 21684,
       "io_injection_cycles": 7392,
-      "memory_stall_cycles": 491720,
+      "memory_stall_cycles": 1040472,
       "allreduce_cycles": 0,
       "network_avg_latency": 112.9375,
       "network_max_latency": 169.40625,
@@ -7172,7 +7172,7 @@
     }
   },
   {
-    "score": -3600199.04,
+    "score": -2515281.04,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -7300,11 +7300,11 @@
       }
     },
     "result": {
-      "total_latency_cycles": 3205952,
+      "total_latency_cycles": 1846658,
       "compute_cycles": 2629698,
       "network_cycles": 77142,
       "io_injection_cycles": 7392,
-      "memory_stall_cycles": 491720,
+      "memory_stall_cycles": 1040472,
       "allreduce_cycles": 0,
       "network_avg_latency": 401.78125,
       "network_max_latency": 602.671875,
@@ -7335,7 +7335,7 @@
     }
   },
   {
-    "score": -3657948.956,
+    "score": -2572784.956,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -7463,11 +7463,11 @@
       }
     },
     "result": {
-      "total_latency_cycles": 3193448,
+      "total_latency_cycles": 1833908,
       "compute_cycles": 2629698,
       "network_cycles": 64392,
       "io_injection_cycles": 7638,
-      "memory_stall_cycles": 491720,
+      "memory_stall_cycles": 1040472,
       "allreduce_cycles": 0,
       "network_avg_latency": 335.375,
       "network_max_latency": 503.0625,
@@ -7498,7 +7498,7 @@
     }
   },
   {
-    "score": -236496.61599999998,
+    "score": -354186.61600000004,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -7626,11 +7626,11 @@
       }
     },
     "result": {
-      "total_latency_cycles": 213386,
+      "total_latency_cycles": 205044,
       "compute_cycles": 164418,
       "network_cycles": 28740,
       "io_injection_cycles": 3942,
-      "memory_stall_cycles": 7880,
+      "memory_stall_cycles": 259944,
       "allreduce_cycles": 8406,
       "network_avg_latency": 598.75,
       "network_max_latency": 898.125,
@@ -7661,7 +7661,7 @@
     }
   },
   {
-    "score": -126243.616,
+    "score": -193387.116,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -7789,11 +7789,11 @@
       }
     },
     "result": {
-      "total_latency_cycles": 120957,
+      "total_latency_cycles": 115865,
       "compute_cycles": 105154,
       "network_cycles": 3147,
       "io_injection_cycles": 3942,
-      "memory_stall_cycles": 4588,
+      "memory_stall_cycles": 149059,
       "allreduce_cycles": 4126,
       "network_avg_latency": 65.5625,
       "network_max_latency": 98.34375,
@@ -7824,7 +7824,7 @@
     }
   },
   {
-    "score": -3388665.656,
+    "score": -2307257.656,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -7952,11 +7952,11 @@
       }
     },
     "result": {
-      "total_latency_cycles": 3132938,
+      "total_latency_cycles": 1777154,
       "compute_cycles": 2629698,
       "network_cycles": 3882,
       "io_injection_cycles": 7638,
-      "memory_stall_cycles": 491720,
+      "memory_stall_cycles": 1040472,
       "allreduce_cycles": 0,
       "network_avg_latency": 20.21875,
       "network_max_latency": 30.328125,
@@ -7987,7 +7987,7 @@
     }
   },
   {
-    "score": -3446580.44,
+    "score": -2361662.44,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -8115,11 +8115,11 @@
       }
     },
     "result": {
-      "total_latency_cycles": 3140777,
+      "total_latency_cycles": 1781483,
       "compute_cycles": 2629698,
       "network_cycles": 11967,
       "io_injection_cycles": 7392,
-      "memory_stall_cycles": 491720,
+      "memory_stall_cycles": 1040472,
       "allreduce_cycles": 0,
       "network_avg_latency": 62.328125,
       "network_max_latency": 93.4921875,
@@ -8150,7 +8150,7 @@
     }
   },
   {
-    "score": -3490550.2399999998,
+    "score": -2405632.2399999998,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -8278,11 +8278,11 @@
       }
     },
     "result": {
-      "total_latency_cycles": 3169058,
+      "total_latency_cycles": 1809764,
       "compute_cycles": 2629698,
       "network_cycles": 40248,
       "io_injection_cycles": 7392,
-      "memory_stall_cycles": 491720,
+      "memory_stall_cycles": 1040472,
       "allreduce_cycles": 0,
       "network_avg_latency": 209.625,
       "network_max_latency": 314.4375,
@@ -8313,7 +8313,7 @@
     }
   },
   {
-    "score": -139474.216,
+    "score": -201942.716,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -8441,11 +8441,11 @@
       }
     },
     "result": {
-      "total_latency_cycles": 129746,
+      "total_latency_cycles": 119979,
       "compute_cycles": 105154,
       "network_cycles": 7822,
       "io_injection_cycles": 3942,
-      "memory_stall_cycles": 4588,
+      "memory_stall_cycles": 149059,
       "allreduce_cycles": 8240,
       "network_avg_latency": 162.95833333333334,
       "network_max_latency": 244.4375,
@@ -8476,7 +8476,7 @@
     }
   },
   {
-    "score": -123968.212,
+    "score": -189417.212,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -8604,11 +8604,11 @@
       }
     },
     "result": {
-      "total_latency_cycles": 113099,
+      "total_latency_cycles": 106195,
       "compute_cycles": 95262,
       "network_cycles": 4988,
       "io_injection_cycles": 3449,
-      "memory_stall_cycles": 4588,
+      "memory_stall_cycles": 149294,
       "allreduce_cycles": 4812,
       "network_avg_latency": 103.91666666666667,
       "network_max_latency": 155.875,
@@ -8639,7 +8639,7 @@
     }
   },
   {
-    "score": -149872.394,
+    "score": -211183.894,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -8767,11 +8767,11 @@
       }
     },
     "result": {
-      "total_latency_cycles": 141749,
+      "total_latency_cycles": 130825,
       "compute_cycles": 105154,
       "network_cycles": 19086,
       "io_injection_cycles": 4681,
-      "memory_stall_cycles": 4588,
+      "memory_stall_cycles": 149059,
       "allreduce_cycles": 8240,
       "network_avg_latency": 397.625,
       "network_max_latency": 596.4375,
@@ -8802,7 +8802,7 @@
     }
   },
   {
-    "score": -738178.0160000001,
+    "score": -1249834.0159999998,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -8930,11 +8930,11 @@
       }
     },
     "result": {
-      "total_latency_cycles": 703479,
+      "total_latency_cycles": 713239,
       "compute_cycles": 657474,
       "network_cycles": 11143,
       "io_injection_cycles": 3942,
-      "memory_stall_cycles": 30920,
+      "memory_stall_cycles": 1034712,
       "allreduce_cycles": 0,
       "network_avg_latency": 232.14583333333334,
       "network_max_latency": 348.21875,
@@ -8965,7 +8965,7 @@
     }
   },
   {
-    "score": -3531416.156,
+    "score": -2446252.156,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -9093,11 +9093,11 @@
       }
     },
     "result": {
-      "total_latency_cycles": 3202538,
+      "total_latency_cycles": 1842998,
       "compute_cycles": 2629698,
       "network_cycles": 73482,
       "io_injection_cycles": 7638,
-      "memory_stall_cycles": 491720,
+      "memory_stall_cycles": 1040472,
       "allreduce_cycles": 0,
       "network_avg_latency": 382.71875,
       "network_max_latency": 574.078125,
@@ -9128,7 +9128,7 @@
     }
   },
   {
-    "score": -805058.0939999999,
+    "score": -1315975.0939999998,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -9256,11 +9256,11 @@
       }
     },
     "result": {
-      "total_latency_cycles": 738348,
+      "total_latency_cycles": 747369,
       "compute_cycles": 657474,
       "network_cycles": 45273,
       "io_injection_cycles": 4681,
-      "memory_stall_cycles": 30920,
+      "memory_stall_cycles": 1034712,
       "allreduce_cycles": 0,
       "network_avg_latency": 943.1875,
       "network_max_latency": 1414.78125,
@@ -9291,7 +9291,7 @@
     }
   },
   {
-    "score": -729991.716,
+    "score": -1241647.716,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -9419,11 +9419,11 @@
       }
     },
     "result": {
-      "total_latency_cycles": 704927,
+      "total_latency_cycles": 714687,
       "compute_cycles": 657474,
       "network_cycles": 12591,
       "io_injection_cycles": 3942,
-      "memory_stall_cycles": 30920,
+      "memory_stall_cycles": 1034712,
       "allreduce_cycles": 0,
       "network_avg_latency": 262.3125,
       "network_max_latency": 393.46875,
@@ -9454,7 +9454,7 @@
     }
   },
   {
-    "score": -3490423.04,
+    "score": -2405505.04,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -9582,11 +9582,11 @@
       }
     },
     "result": {
-      "total_latency_cycles": 3169046,
+      "total_latency_cycles": 1809752,
       "compute_cycles": 2629698,
       "network_cycles": 40236,
       "io_injection_cycles": 7392,
-      "memory_stall_cycles": 491720,
+      "memory_stall_cycles": 1040472,
       "allreduce_cycles": 0,
       "network_avg_latency": 209.5625,
       "network_max_latency": 314.34375,
@@ -9617,7 +9617,7 @@
     }
   },
   {
-    "score": -713726.394,
+    "score": -1226272.394,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -9745,11 +9745,11 @@
       }
     },
     "result": {
-      "total_latency_cycles": 696127,
+      "total_latency_cycles": 706777,
       "compute_cycles": 657474,
       "network_cycles": 3052,
       "io_injection_cycles": 4681,
-      "memory_stall_cycles": 30920,
+      "memory_stall_cycles": 1034712,
       "allreduce_cycles": 0,
       "network_avg_latency": 63.583333333333336,
       "network_max_latency": 95.375,
@@ -9780,7 +9780,7 @@
     }
   },
   {
-    "score": -734843.9160000001,
+    "score": -1246499.916,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -9908,11 +9908,11 @@
       }
     },
     "result": {
-      "total_latency_cycles": 705071,
+      "total_latency_cycles": 714831,
       "compute_cycles": 657474,
       "network_cycles": 12735,
       "io_injection_cycles": 3942,
-      "memory_stall_cycles": 30920,
+      "memory_stall_cycles": 1034712,
       "allreduce_cycles": 0,
       "network_avg_latency": 265.3125,
       "network_max_latency": 397.96875,
@@ -9943,7 +9943,7 @@
     }
   },
   {
-    "score": -3490584.14,
+    "score": -2405666.14,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -10071,11 +10071,11 @@
       }
     },
     "result": {
-      "total_latency_cycles": 3161819,
+      "total_latency_cycles": 1802525,
       "compute_cycles": 2629698,
       "network_cycles": 33009,
       "io_injection_cycles": 7392,
-      "memory_stall_cycles": 491720,
+      "memory_stall_cycles": 1040472,
       "allreduce_cycles": 0,
       "network_avg_latency": 171.921875,
       "network_max_latency": 257.8828125,
@@ -10106,7 +10106,7 @@
     }
   },
   {
-    "score": -3751003.556,
+    "score": -2665839.556,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -10234,11 +10234,11 @@
       }
     },
     "result": {
-      "total_latency_cycles": 3189458,
+      "total_latency_cycles": 1829918,
       "compute_cycles": 2629698,
       "network_cycles": 60402,
       "io_injection_cycles": 7638,
-      "memory_stall_cycles": 491720,
+      "memory_stall_cycles": 1040472,
       "allreduce_cycles": 0,
       "network_avg_latency": 314.59375,
       "network_max_latency": 471.890625,
@@ -10269,7 +10269,7 @@
     }
   },
   {
-    "score": -372633.61199999996,
+    "score": -622140.612,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -10397,11 +10397,11 @@
       }
     },
     "result": {
-      "total_latency_cycles": 359744,
+      "total_latency_cycles": 357931,
       "compute_cycles": 328770,
       "network_cycles": 6363,
       "io_injection_cycles": 3449,
-      "memory_stall_cycles": 15560,
+      "memory_stall_cycles": 518200,
       "allreduce_cycles": 5602,
       "network_avg_latency": 132.5625,
       "network_max_latency": 198.84375,
@@ -10432,7 +10432,7 @@
     }
   },
   {
-    "score": -3488174.2399999998,
+    "score": -2403256.2399999998,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -10560,11 +10560,11 @@
       }
     },
     "result": {
-      "total_latency_cycles": 3167381,
+      "total_latency_cycles": 1808087,
       "compute_cycles": 2629698,
       "network_cycles": 38571,
       "io_injection_cycles": 7392,
-      "memory_stall_cycles": 491720,
+      "memory_stall_cycles": 1040472,
       "allreduce_cycles": 0,
       "network_avg_latency": 200.890625,
       "network_max_latency": 301.3359375,
@@ -10595,7 +10595,7 @@
     }
   },
   {
-    "score": -3583766.248,
+    "score": -2496877.248,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -10723,11 +10723,11 @@
       }
     },
     "result": {
-      "total_latency_cycles": 3218699,
+      "total_latency_cycles": 1857434,
       "compute_cycles": 2629698,
       "network_cycles": 87918,
       "io_injection_cycles": 9363,
-      "memory_stall_cycles": 491720,
+      "memory_stall_cycles": 1040472,
       "allreduce_cycles": 0,
       "network_avg_latency": 457.90625,
       "network_max_latency": 686.859375,
@@ -10758,7 +10758,7 @@
     }
   },
   {
-    "score": -3479293.04,
+    "score": -2394375.04,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -10886,11 +10886,11 @@
       }
     },
     "result": {
-      "total_latency_cycles": 3172178,
+      "total_latency_cycles": 1812884,
       "compute_cycles": 2629698,
       "network_cycles": 43368,
       "io_injection_cycles": 7392,
-      "memory_stall_cycles": 491720,
+      "memory_stall_cycles": 1040472,
       "allreduce_cycles": 0,
       "network_avg_latency": 225.875,
       "network_max_latency": 338.8125,
@@ -10921,7 +10921,7 @@
     }
   },
   {
-    "score": -121133.394,
+    "score": -186377.39400000003,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -11049,11 +11049,11 @@
       }
     },
     "result": {
-      "total_latency_cycles": 113128,
+      "total_latency_cycles": 106019,
       "compute_cycles": 95262,
       "network_cycles": 3785,
       "io_injection_cycles": 4681,
-      "memory_stall_cycles": 4588,
+      "memory_stall_cycles": 149294,
       "allreduce_cycles": 4812,
       "network_avg_latency": 78.85416666666667,
       "network_max_latency": 118.28125,
@@ -11084,7 +11084,7 @@
     }
   },
   {
-    "score": -727448.416,
+    "score": -1239104.4159999997,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -11212,11 +11212,11 @@
       }
     },
     "result": {
-      "total_latency_cycles": 700328,
+      "total_latency_cycles": 710088,
       "compute_cycles": 657474,
       "network_cycles": 7992,
       "io_injection_cycles": 3942,
-      "memory_stall_cycles": 30920,
+      "memory_stall_cycles": 1034712,
       "allreduce_cycles": 0,
       "network_avg_latency": 166.5,
       "network_max_latency": 249.75,
@@ -11247,7 +11247,7 @@
     }
   },
   {
-    "score": -159509.01599999997,
+    "score": -217058.51599999997,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -11375,11 +11375,11 @@
       }
     },
     "result": {
-      "total_latency_cycles": 142894,
+      "total_latency_cycles": 128208,
       "compute_cycles": 105154,
       "network_cycles": 12741,
       "io_injection_cycles": 3942,
-      "memory_stall_cycles": 4588,
+      "memory_stall_cycles": 149059,
       "allreduce_cycles": 16469,
       "network_avg_latency": 265.4375,
       "network_max_latency": 398.15625,
@@ -11410,7 +11410,7 @@
     }
   },
   {
-    "score": -3418113.7399999998,
+    "score": -2333195.7399999998,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -11538,11 +11538,11 @@
       }
     },
     "result": {
-      "total_latency_cycles": 3145727,
+      "total_latency_cycles": 1786433,
       "compute_cycles": 2629698,
       "network_cycles": 16917,
       "io_injection_cycles": 7392,
-      "memory_stall_cycles": 491720,
+      "memory_stall_cycles": 1040472,
       "allreduce_cycles": 0,
       "network_avg_latency": 88.109375,
       "network_max_latency": 132.1640625,
@@ -11573,7 +11573,7 @@
     }
   },
   {
-    "score": -3606507.448,
+    "score": -2519618.4480000003,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -11701,11 +11701,11 @@
       }
     },
     "result": {
-      "total_latency_cycles": 3251225,
+      "total_latency_cycles": 1889960,
       "compute_cycles": 2629698,
       "network_cycles": 120444,
       "io_injection_cycles": 9363,
-      "memory_stall_cycles": 491720,
+      "memory_stall_cycles": 1040472,
       "allreduce_cycles": 0,
       "network_avg_latency": 627.3125,
       "network_max_latency": 940.96875,
@@ -11736,7 +11736,7 @@
     }
   },
   {
-    "score": -3400084.04,
+    "score": -2315166.04,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -11864,11 +11864,11 @@
       }
     },
     "result": {
-      "total_latency_cycles": 3143426,
+      "total_latency_cycles": 1784132,
       "compute_cycles": 2629698,
       "network_cycles": 14616,
       "io_injection_cycles": 7392,
-      "memory_stall_cycles": 491720,
+      "memory_stall_cycles": 1040472,
       "allreduce_cycles": 0,
       "network_avg_latency": 76.125,
       "network_max_latency": 114.1875,
@@ -11899,7 +11899,7 @@
     }
   },
   {
-    "score": -3458577.3559999997,
+    "score": -2373413.356,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -12027,11 +12027,11 @@
       }
     },
     "result": {
-      "total_latency_cycles": 3157940,
+      "total_latency_cycles": 1798400,
       "compute_cycles": 2629698,
       "network_cycles": 28884,
       "io_injection_cycles": 7638,
-      "memory_stall_cycles": 491720,
+      "memory_stall_cycles": 1040472,
       "allreduce_cycles": 0,
       "network_avg_latency": 150.4375,
       "network_max_latency": 225.65625,
@@ -12062,7 +12062,7 @@
     }
   },
   {
-    "score": -3429251.848,
+    "score": -2342362.8479999998,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -12190,11 +12190,11 @@
       }
     },
     "result": {
-      "total_latency_cycles": 3153281,
+      "total_latency_cycles": 1792016,
       "compute_cycles": 2629698,
       "network_cycles": 22500,
       "io_injection_cycles": 9363,
-      "memory_stall_cycles": 491720,
+      "memory_stall_cycles": 1040472,
       "allreduce_cycles": 0,
       "network_avg_latency": 117.1875,
       "network_max_latency": 175.78125,
@@ -12225,7 +12225,7 @@
     }
   },
   {
-    "score": -3489616.556,
+    "score": -2404452.5560000003,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -12353,11 +12353,11 @@
       }
     },
     "result": {
-      "total_latency_cycles": 3158720,
+      "total_latency_cycles": 1799180,
       "compute_cycles": 2629698,
       "network_cycles": 29664,
       "io_injection_cycles": 7638,
-      "memory_stall_cycles": 491720,
+      "memory_stall_cycles": 1040472,
       "allreduce_cycles": 0,
       "network_avg_latency": 154.5,
       "network_max_latency": 231.75,
@@ -12388,7 +12388,7 @@
     }
   },
   {
-    "score": -3514856.2399999998,
+    "score": -2429938.2399999998,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -12516,11 +12516,11 @@
       }
     },
     "result": {
-      "total_latency_cycles": 3195590,
+      "total_latency_cycles": 1836296,
       "compute_cycles": 2629698,
       "network_cycles": 66780,
       "io_injection_cycles": 7392,
-      "memory_stall_cycles": 491720,
+      "memory_stall_cycles": 1040472,
       "allreduce_cycles": 0,
       "network_avg_latency": 347.8125,
       "network_max_latency": 521.71875,
@@ -12551,7 +12551,7 @@
     }
   },
   {
-    "score": -3596561.84,
+    "score": -2511643.84,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -12679,11 +12679,11 @@
       }
     },
     "result": {
-      "total_latency_cycles": 3222302,
+      "total_latency_cycles": 1863008,
       "compute_cycles": 2629698,
       "network_cycles": 93492,
       "io_injection_cycles": 7392,
-      "memory_stall_cycles": 491720,
+      "memory_stall_cycles": 1040472,
       "allreduce_cycles": 0,
       "network_avg_latency": 486.9375,
       "network_max_latency": 730.40625,
@@ -12714,7 +12714,7 @@
     }
   },
   {
-    "score": -114700.894,
+    "score": -182203.89400000003,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -12842,11 +12842,11 @@
       }
     },
     "result": {
-      "total_latency_cycles": 110869,
+      "total_latency_cycles": 106019,
       "compute_cycles": 95262,
       "network_cycles": 1526,
       "io_injection_cycles": 4681,
-      "memory_stall_cycles": 4588,
+      "memory_stall_cycles": 149294,
       "allreduce_cycles": 4812,
       "network_avg_latency": 31.791666666666668,
       "network_max_latency": 47.6875,
@@ -12877,7 +12877,7 @@
     }
   },
   {
-    "score": -307690.09400000004,
+    "score": -418545.09400000004,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -13005,11 +13005,11 @@
       }
     },
     "result": {
-      "total_latency_cycles": 274854,
+      "total_latency_cycles": 259773,
       "compute_cycles": 173634,
       "network_cycles": 74253,
       "io_injection_cycles": 4681,
-      "memory_stall_cycles": 7880,
+      "memory_stall_cycles": 259752,
       "allreduce_cycles": 14406,
       "network_avg_latency": 1546.9375,
       "network_max_latency": 2320.40625,
@@ -13040,7 +13040,7 @@
     }
   },
   {
-    "score": -713077.712,
+    "score": -1225226.712,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -13168,11 +13168,11 @@
       }
     },
     "result": {
-      "total_latency_cycles": 695552,
+      "total_latency_cycles": 705805,
       "compute_cycles": 657474,
       "network_cycles": 3709,
       "io_injection_cycles": 3449,
-      "memory_stall_cycles": 30920,
+      "memory_stall_cycles": 1034712,
       "allreduce_cycles": 0,
       "network_avg_latency": 77.27083333333333,
       "network_max_latency": 115.90625,
@@ -13203,7 +13203,7 @@
     }
   },
   {
-    "score": -715148.216,
+    "score": -1227563.216,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -13331,11 +13331,11 @@
       }
     },
     "result": {
-      "total_latency_cycles": 695519,
+      "total_latency_cycles": 706038,
       "compute_cycles": 657474,
       "network_cycles": 3183,
       "io_injection_cycles": 3942,
-      "memory_stall_cycles": 30920,
+      "memory_stall_cycles": 1034712,
       "allreduce_cycles": 0,
       "network_avg_latency": 66.3125,
       "network_max_latency": 99.46875,
@@ -13366,7 +13366,7 @@
     }
   },
   {
-    "score": -718163.4120000001,
+    "score": -1230312.4120000002,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -13494,11 +13494,11 @@
       }
     },
     "result": {
-      "total_latency_cycles": 699262,
+      "total_latency_cycles": 709515,
       "compute_cycles": 657474,
       "network_cycles": 7419,
       "io_injection_cycles": 3449,
-      "memory_stall_cycles": 30920,
+      "memory_stall_cycles": 1034712,
       "allreduce_cycles": 0,
       "network_avg_latency": 154.5625,
       "network_max_latency": 231.84375,
@@ -13529,7 +13529,7 @@
     }
   },
   {
-    "score": -3396977.756,
+    "score": -2312230.756,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -13657,11 +13657,11 @@
       }
     },
     "result": {
-      "total_latency_cycles": 3136277,
+      "total_latency_cycles": 1777154,
       "compute_cycles": 2629698,
       "network_cycles": 7221,
       "io_injection_cycles": 7638,
-      "memory_stall_cycles": 491720,
+      "memory_stall_cycles": 1040472,
       "allreduce_cycles": 0,
       "network_avg_latency": 37.609375,
       "network_max_latency": 56.4140625,
@@ -13692,7 +13692,7 @@
     }
   },
   {
-    "score": -736427.216,
+    "score": -1248083.216,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -13820,11 +13820,11 @@
       }
     },
     "result": {
-      "total_latency_cycles": 718872,
+      "total_latency_cycles": 728632,
       "compute_cycles": 657474,
       "network_cycles": 26536,
       "io_injection_cycles": 3942,
-      "memory_stall_cycles": 30920,
+      "memory_stall_cycles": 1034712,
       "allreduce_cycles": 0,
       "network_avg_latency": 552.8333333333334,
       "network_max_latency": 829.25,
@@ -13855,7 +13855,7 @@
     }
   },
   {
-    "score": -3388665.656,
+    "score": -2307257.656,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -13983,11 +13983,11 @@
       }
     },
     "result": {
-      "total_latency_cycles": 3132938,
+      "total_latency_cycles": 1777154,
       "compute_cycles": 2629698,
       "network_cycles": 3882,
       "io_injection_cycles": 7638,
-      "memory_stall_cycles": 491720,
+      "memory_stall_cycles": 1040472,
       "allreduce_cycles": 0,
       "network_avg_latency": 20.21875,
       "network_max_latency": 30.328125,
@@ -14018,7 +14018,7 @@
     }
   },
   {
-    "score": -237862.512,
+    "score": -356045.512,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -14146,11 +14146,11 @@
       }
     },
     "result": {
-      "total_latency_cycles": 210070,
+      "total_latency_cycles": 202221,
       "compute_cycles": 164418,
       "network_cycles": 25917,
       "io_injection_cycles": 3449,
-      "memory_stall_cycles": 7880,
+      "memory_stall_cycles": 259944,
       "allreduce_cycles": 8406,
       "network_avg_latency": 539.9375,
       "network_max_latency": 809.90625,
@@ -14181,7 +14181,7 @@
     }
   },
   {
-    "score": -3396177.056,
+    "score": -2311436.0560000003,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -14309,11 +14309,11 @@
       }
     },
     "result": {
-      "total_latency_cycles": 3136271,
+      "total_latency_cycles": 1777154,
       "compute_cycles": 2629698,
       "network_cycles": 7215,
       "io_injection_cycles": 7638,
-      "memory_stall_cycles": 491720,
+      "memory_stall_cycles": 1040472,
       "allreduce_cycles": 0,
       "network_avg_latency": 37.578125,
       "network_max_latency": 56.3671875,
@@ -14344,7 +14344,7 @@
     }
   },
   {
-    "score": -3416211.448,
+    "score": -2329322.4480000003,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -14472,11 +14472,11 @@
       }
     },
     "result": {
-      "total_latency_cycles": 3145637,
+      "total_latency_cycles": 1784372,
       "compute_cycles": 2629698,
       "network_cycles": 14856,
       "io_injection_cycles": 9363,
-      "memory_stall_cycles": 491720,
+      "memory_stall_cycles": 1040472,
       "allreduce_cycles": 0,
       "network_avg_latency": 77.375,
       "network_max_latency": 116.0625,
@@ -14507,7 +14507,7 @@
     }
   },
   {
-    "score": -197760.294,
+    "score": -318911.294,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -14635,11 +14635,11 @@
       }
     },
     "result": {
-      "total_latency_cycles": 191521,
+      "total_latency_cycles": 186640,
       "compute_cycles": 164418,
       "network_cycles": 10336,
       "io_injection_cycles": 4681,
-      "memory_stall_cycles": 7880,
+      "memory_stall_cycles": 259944,
       "allreduce_cycles": 4206,
       "network_avg_latency": 215.33333333333334,
       "network_max_latency": 323.0,
@@ -14670,7 +14670,7 @@
     }
   },
   {
-    "score": -3415909.556,
+    "score": -2330745.5560000003,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -14798,11 +14798,11 @@
       }
     },
     "result": {
-      "total_latency_cycles": 3143486,
+      "total_latency_cycles": 1783946,
       "compute_cycles": 2629698,
       "network_cycles": 14430,
       "io_injection_cycles": 7638,
-      "memory_stall_cycles": 491720,
+      "memory_stall_cycles": 1040472,
       "allreduce_cycles": 0,
       "network_avg_latency": 75.15625,
       "network_max_latency": 112.734375,
@@ -14833,7 +14833,7 @@
     }
   },
   {
-    "score": -3488174.2399999998,
+    "score": -2403256.2399999998,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -14961,11 +14961,11 @@
       }
     },
     "result": {
-      "total_latency_cycles": 3167381,
+      "total_latency_cycles": 1808087,
       "compute_cycles": 2629698,
       "network_cycles": 38571,
       "io_injection_cycles": 7392,
-      "memory_stall_cycles": 491720,
+      "memory_stall_cycles": 1040472,
       "allreduce_cycles": 0,
       "network_avg_latency": 200.890625,
       "network_max_latency": 301.3359375,
@@ -14996,7 +14996,7 @@
     }
   },
   {
-    "score": -162483.91599999997,
+    "score": -222639.91599999997,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -15124,11 +15124,11 @@
       }
     },
     "result": {
-      "total_latency_cycles": 157231,
+      "total_latency_cycles": 145034,
       "compute_cycles": 95262,
       "network_cycles": 43827,
       "io_injection_cycles": 3942,
-      "memory_stall_cycles": 4588,
+      "memory_stall_cycles": 149294,
       "allreduce_cycles": 9612,
       "network_avg_latency": 913.0625,
       "network_max_latency": 1369.59375,
@@ -15159,7 +15159,7 @@
     }
   },
   {
-    "score": -3445946.8479999998,
+    "score": -2359057.8479999998,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -15287,11 +15287,11 @@
       }
     },
     "result": {
-      "total_latency_cycles": 3146411,
+      "total_latency_cycles": 1785146,
       "compute_cycles": 2629698,
       "network_cycles": 15630,
       "io_injection_cycles": 9363,
-      "memory_stall_cycles": 491720,
+      "memory_stall_cycles": 1040472,
       "allreduce_cycles": 0,
       "network_avg_latency": 81.40625,
       "network_max_latency": 122.109375,
@@ -15322,7 +15322,7 @@
     }
   },
   {
-    "score": -3489616.556,
+    "score": -2404452.5560000003,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -15450,11 +15450,11 @@
       }
     },
     "result": {
-      "total_latency_cycles": 3158720,
+      "total_latency_cycles": 1799180,
       "compute_cycles": 2629698,
       "network_cycles": 29664,
       "io_injection_cycles": 7638,
-      "memory_stall_cycles": 491720,
+      "memory_stall_cycles": 1040472,
       "allreduce_cycles": 0,
       "network_avg_latency": 154.5,
       "network_max_latency": 231.75,
@@ -15485,7 +15485,7 @@
     }
   },
   {
-    "score": -713487.794,
+    "score": -1227102.794,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -15613,11 +15613,11 @@
       }
     },
     "result": {
-      "total_latency_cycles": 695058,
+      "total_latency_cycles": 706777,
       "compute_cycles": 657474,
       "network_cycles": 1983,
       "io_injection_cycles": 4681,
-      "memory_stall_cycles": 30920,
+      "memory_stall_cycles": 1034712,
       "allreduce_cycles": 0,
       "network_avg_latency": 41.3125,
       "network_max_latency": 61.96875,
@@ -15648,7 +15648,7 @@
     }
   },
   {
-    "score": -428701.094,
+    "score": -671376.0939999999,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -15776,11 +15776,11 @@
       }
     },
     "result": {
-      "total_latency_cycles": 415200,
+      "total_latency_cycles": 406555,
       "compute_cycles": 328770,
       "network_cycles": 54987,
       "io_injection_cycles": 4681,
-      "memory_stall_cycles": 15560,
+      "memory_stall_cycles": 518200,
       "allreduce_cycles": 11202,
       "network_avg_latency": 1145.5625,
       "network_max_latency": 1718.34375,
@@ -15811,7 +15811,7 @@
     }
   },
   {
-    "score": -3479989.048,
+    "score": -2393100.048,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -15939,11 +15939,11 @@
       }
     },
     "result": {
-      "total_latency_cycles": 3175781,
+      "total_latency_cycles": 1814516,
       "compute_cycles": 2629698,
       "network_cycles": 45000,
       "io_injection_cycles": 9363,
-      "memory_stall_cycles": 491720,
+      "memory_stall_cycles": 1040472,
       "allreduce_cycles": 0,
       "network_avg_latency": 234.375,
       "network_max_latency": 351.5625,
@@ -15974,7 +15974,7 @@
     }
   },
   {
-    "score": -3402520.648,
+    "score": -2315631.648,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -16102,11 +16102,11 @@
       }
     },
     "result": {
-      "total_latency_cycles": 3146057,
+      "total_latency_cycles": 1784792,
       "compute_cycles": 2629698,
       "network_cycles": 15276,
       "io_injection_cycles": 9363,
-      "memory_stall_cycles": 491720,
+      "memory_stall_cycles": 1040472,
       "allreduce_cycles": 0,
       "network_avg_latency": 79.5625,
       "network_max_latency": 119.34375,
@@ -16137,7 +16137,7 @@
     }
   },
   {
-    "score": -3425328.956,
+    "score": -2340164.956,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -16265,11 +16265,11 @@
       }
     },
     "result": {
-      "total_latency_cycles": 3144584,
+      "total_latency_cycles": 1785044,
       "compute_cycles": 2629698,
       "network_cycles": 15528,
       "io_injection_cycles": 7638,
-      "memory_stall_cycles": 491720,
+      "memory_stall_cycles": 1040472,
       "allreduce_cycles": 0,
       "network_avg_latency": 80.875,
       "network_max_latency": 121.3125,
@@ -16300,7 +16300,7 @@
     }
   },
   {
-    "score": -711598.894,
+    "score": -1225670.894,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -16428,11 +16428,11 @@
       }
     },
     "result": {
-      "total_latency_cycles": 694601,
+      "total_latency_cycles": 706777,
       "compute_cycles": 657474,
       "network_cycles": 1526,
       "io_injection_cycles": 4681,
-      "memory_stall_cycles": 30920,
+      "memory_stall_cycles": 1034712,
       "allreduce_cycles": 0,
       "network_avg_latency": 31.791666666666668,
       "network_max_latency": 47.6875,
@@ -16463,7 +16463,7 @@
     }
   },
   {
-    "score": -3537721.04,
+    "score": -2452803.04,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -16591,11 +16591,11 @@
       }
     },
     "result": {
-      "total_latency_cycles": 3198434,
+      "total_latency_cycles": 1839140,
       "compute_cycles": 2629698,
       "network_cycles": 69624,
       "io_injection_cycles": 7392,
-      "memory_stall_cycles": 491720,
+      "memory_stall_cycles": 1040472,
       "allreduce_cycles": 0,
       "network_avg_latency": 362.625,
       "network_max_latency": 543.9375,
@@ -16626,7 +16626,7 @@
     }
   },
   {
-    "score": -199095.91599999997,
+    "score": -320985.91599999997,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -16754,11 +16754,11 @@
       }
     },
     "result": {
-      "total_latency_cycles": 193714,
+      "total_latency_cycles": 189572,
       "compute_cycles": 164418,
       "network_cycles": 13268,
       "io_injection_cycles": 3942,
-      "memory_stall_cycles": 7880,
+      "memory_stall_cycles": 259944,
       "allreduce_cycles": 4206,
       "network_avg_latency": 276.4166666666667,
       "network_max_latency": 414.625,
@@ -16789,7 +16789,7 @@
     }
   },
   {
-    "score": -3409134.74,
+    "score": -2324657.7399999998,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -16917,11 +16917,11 @@
       }
     },
     "result": {
-      "total_latency_cycles": 3135761,
+      "total_latency_cycles": 1776908,
       "compute_cycles": 2629698,
       "network_cycles": 6951,
       "io_injection_cycles": 7392,
-      "memory_stall_cycles": 491720,
+      "memory_stall_cycles": 1040472,
       "allreduce_cycles": 0,
       "network_avg_latency": 36.203125,
       "network_max_latency": 54.3046875,
@@ -16952,7 +16952,7 @@
     }
   },
   {
-    "score": -133348.494,
+    "score": -197565.494,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -17080,11 +17080,11 @@
       }
     },
     "result": {
-      "total_latency_cycles": 129959,
+      "total_latency_cycles": 121823,
       "compute_cycles": 95262,
       "network_cycles": 20616,
       "io_injection_cycles": 4681,
-      "memory_stall_cycles": 4588,
+      "memory_stall_cycles": 149294,
       "allreduce_cycles": 4812,
       "network_avg_latency": 429.5,
       "network_max_latency": 644.25,
@@ -17115,7 +17115,7 @@
     }
   },
   {
-    "score": -3807910.64,
+    "score": -2722992.64,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -17243,11 +17243,11 @@
       }
     },
     "result": {
-      "total_latency_cycles": 3226718,
+      "total_latency_cycles": 1867424,
       "compute_cycles": 2629698,
       "network_cycles": 97908,
       "io_injection_cycles": 7392,
-      "memory_stall_cycles": 491720,
+      "memory_stall_cycles": 1040472,
       "allreduce_cycles": 0,
       "network_avg_latency": 509.9375,
       "network_max_latency": 764.90625,
@@ -17278,7 +17278,7 @@
     }
   },
   {
-    "score": -150384.194,
+    "score": -209795.694,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -17406,11 +17406,11 @@
       }
     },
     "result": {
-      "total_latency_cycles": 141032,
+      "total_latency_cycles": 128208,
       "compute_cycles": 105154,
       "network_cycles": 10140,
       "io_injection_cycles": 4681,
-      "memory_stall_cycles": 4588,
+      "memory_stall_cycles": 149059,
       "allreduce_cycles": 16469,
       "network_avg_latency": 211.25,
       "network_max_latency": 316.875,
@@ -17441,7 +17441,7 @@
     }
   },
   {
-    "score": -3489616.556,
+    "score": -2404452.5560000003,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -17569,11 +17569,11 @@
       }
     },
     "result": {
-      "total_latency_cycles": 3158720,
+      "total_latency_cycles": 1799180,
       "compute_cycles": 2629698,
       "network_cycles": 29664,
       "io_injection_cycles": 7638,
-      "memory_stall_cycles": 491720,
+      "memory_stall_cycles": 1040472,
       "allreduce_cycles": 0,
       "network_avg_latency": 154.5,
       "network_max_latency": 231.75,
@@ -17604,7 +17604,7 @@
     }
   },
   {
-    "score": -3402520.648,
+    "score": -2315631.648,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -17732,11 +17732,11 @@
       }
     },
     "result": {
-      "total_latency_cycles": 3146057,
+      "total_latency_cycles": 1784792,
       "compute_cycles": 2629698,
       "network_cycles": 15276,
       "io_injection_cycles": 9363,
-      "memory_stall_cycles": 491720,
+      "memory_stall_cycles": 1040472,
       "allreduce_cycles": 0,
       "network_avg_latency": 79.5625,
       "network_max_latency": 119.34375,
@@ -17767,7 +17767,7 @@
     }
   },
   {
-    "score": -127996.912,
+    "score": -192649.91199999998,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -17895,11 +17895,11 @@
       }
     },
     "result": {
-      "total_latency_cycles": 118519,
+      "total_latency_cycles": 110819,
       "compute_cycles": 95262,
       "network_cycles": 5608,
       "io_injection_cycles": 3449,
-      "memory_stall_cycles": 4588,
+      "memory_stall_cycles": 149294,
       "allreduce_cycles": 9612,
       "network_avg_latency": 116.83333333333333,
       "network_max_latency": 175.25,
@@ -17930,7 +17930,7 @@
     }
   },
   {
-    "score": -3695756.156,
+    "score": -2610592.156,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -18058,11 +18058,11 @@
       }
     },
     "result": {
-      "total_latency_cycles": 3212588,
+      "total_latency_cycles": 1853048,
       "compute_cycles": 2629698,
       "network_cycles": 83532,
       "io_injection_cycles": 7638,
-      "memory_stall_cycles": 491720,
+      "memory_stall_cycles": 1040472,
       "allreduce_cycles": 0,
       "network_avg_latency": 435.0625,
       "network_max_latency": 652.59375,
@@ -18093,7 +18093,7 @@
     }
   },
   {
-    "score": -143870.416,
+    "score": -206168.916,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -18221,11 +18221,11 @@
       }
     },
     "result": {
-      "total_latency_cycles": 129916,
+      "total_latency_cycles": 119979,
       "compute_cycles": 105154,
       "network_cycles": 7992,
       "io_injection_cycles": 3942,
-      "memory_stall_cycles": 4588,
+      "memory_stall_cycles": 149059,
       "allreduce_cycles": 8240,
       "network_avg_latency": 166.5,
       "network_max_latency": 249.75,
@@ -18256,7 +18256,7 @@
     }
   },
   {
-    "score": -3751004.756,
+    "score": -2665840.756,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -18384,11 +18384,11 @@
       }
     },
     "result": {
-      "total_latency_cycles": 3189458,
+      "total_latency_cycles": 1829918,
       "compute_cycles": 2629698,
       "network_cycles": 60402,
       "io_injection_cycles": 7638,
-      "memory_stall_cycles": 491720,
+      "memory_stall_cycles": 1040472,
       "allreduce_cycles": 0,
       "network_avg_latency": 314.59375,
       "network_max_latency": 471.890625,
@@ -18419,7 +18419,7 @@
     }
   },
   {
-    "score": -198742.794,
+    "score": -322543.794,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -18547,11 +18547,11 @@
       }
     },
     "result": {
-      "total_latency_cycles": 192336,
+      "total_latency_cycles": 190201,
       "compute_cycles": 173634,
       "network_cycles": 2535,
       "io_injection_cycles": 4681,
-      "memory_stall_cycles": 7880,
+      "memory_stall_cycles": 259752,
       "allreduce_cycles": 3606,
       "network_avg_latency": 52.8125,
       "network_max_latency": 79.21875,
@@ -18582,7 +18582,7 @@
     }
   },
   {
-    "score": -3550420.648,
+    "score": -2463531.648,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -18710,11 +18710,11 @@
       }
     },
     "result": {
-      "total_latency_cycles": 3170939,
+      "total_latency_cycles": 1809674,
       "compute_cycles": 2629698,
       "network_cycles": 40158,
       "io_injection_cycles": 9363,
-      "memory_stall_cycles": 491720,
+      "memory_stall_cycles": 1040472,
       "allreduce_cycles": 0,
       "network_avg_latency": 209.15625,
       "network_max_latency": 313.734375,
@@ -18745,7 +18745,7 @@
     }
   },
   {
-    "score": -3396977.756,
+    "score": -2312230.756,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -18873,11 +18873,11 @@
       }
     },
     "result": {
-      "total_latency_cycles": 3136277,
+      "total_latency_cycles": 1777154,
       "compute_cycles": 2629698,
       "network_cycles": 7221,
       "io_injection_cycles": 7638,
-      "memory_stall_cycles": 491720,
+      "memory_stall_cycles": 1040472,
       "allreduce_cycles": 0,
       "network_avg_latency": 37.609375,
       "network_max_latency": 56.4140625,
@@ -18908,7 +18908,7 @@
     }
   },
   {
-    "score": -735024.294,
+    "score": -1245941.294,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -19036,11 +19036,11 @@
       }
     },
     "result": {
-      "total_latency_cycles": 711638,
+      "total_latency_cycles": 720659,
       "compute_cycles": 657474,
       "network_cycles": 18563,
       "io_injection_cycles": 4681,
-      "memory_stall_cycles": 30920,
+      "memory_stall_cycles": 1034712,
       "allreduce_cycles": 0,
       "network_avg_latency": 386.7291666666667,
       "network_max_latency": 580.09375,
@@ -19071,7 +19071,7 @@
     }
   },
   {
-    "score": -198589.81199999998,
+    "score": -321901.812,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -19199,11 +19199,11 @@
       }
     },
     "result": {
-      "total_latency_cycles": 191750,
+      "total_latency_cycles": 189126,
       "compute_cycles": 173634,
       "network_cycles": 3181,
       "io_injection_cycles": 3449,
-      "memory_stall_cycles": 7880,
+      "memory_stall_cycles": 259752,
       "allreduce_cycles": 3606,
       "network_avg_latency": 66.27083333333333,
       "network_max_latency": 99.40625,
@@ -19234,7 +19234,7 @@
     }
   },
   {
-    "score": -3416726.548,
+    "score": -2329837.548,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -19362,11 +19362,11 @@
       }
     },
     "result": {
-      "total_latency_cycles": 3141554,
+      "total_latency_cycles": 1780289,
       "compute_cycles": 2629698,
       "network_cycles": 10773,
       "io_injection_cycles": 9363,
-      "memory_stall_cycles": 491720,
+      "memory_stall_cycles": 1040472,
       "allreduce_cycles": 0,
       "network_avg_latency": 56.109375,
       "network_max_latency": 84.1640625,
@@ -19397,7 +19397,7 @@
     }
   },
   {
-    "score": -3417747.3559999997,
+    "score": -2332583.356,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -19525,11 +19525,11 @@
       }
     },
     "result": {
-      "total_latency_cycles": 3149354,
+      "total_latency_cycles": 1789814,
       "compute_cycles": 2629698,
       "network_cycles": 20298,
       "io_injection_cycles": 7638,
-      "memory_stall_cycles": 491720,
+      "memory_stall_cycles": 1040472,
       "allreduce_cycles": 0,
       "network_avg_latency": 105.71875,
       "network_max_latency": 158.578125,
@@ -19560,7 +19560,7 @@
     }
   },
   {
-    "score": -717722.4120000001,
+    "score": -1229871.4120000002,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -19688,11 +19688,11 @@
       }
     },
     "result": {
-      "total_latency_cycles": 696038,
+      "total_latency_cycles": 706291,
       "compute_cycles": 657474,
       "network_cycles": 4195,
       "io_injection_cycles": 3449,
-      "memory_stall_cycles": 30920,
+      "memory_stall_cycles": 1034712,
       "allreduce_cycles": 0,
       "network_avg_latency": 87.39583333333333,
       "network_max_latency": 131.09375,
@@ -19723,7 +19723,7 @@
     }
   },
   {
-    "score": -3417510.956,
+    "score": -2332346.956,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -19851,11 +19851,11 @@
       }
     },
     "result": {
-      "total_latency_cycles": 3143498,
+      "total_latency_cycles": 1783958,
       "compute_cycles": 2629698,
       "network_cycles": 14442,
       "io_injection_cycles": 7638,
-      "memory_stall_cycles": 491720,
+      "memory_stall_cycles": 1040472,
       "allreduce_cycles": 0,
       "network_avg_latency": 75.21875,
       "network_max_latency": 112.828125,
@@ -19886,7 +19886,7 @@
     }
   },
   {
-    "score": -3517011.44,
+    "score": -2432093.44,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -20014,11 +20014,11 @@
       }
     },
     "result": {
-      "total_latency_cycles": 3152744,
+      "total_latency_cycles": 1793450,
       "compute_cycles": 2629698,
       "network_cycles": 23934,
       "io_injection_cycles": 7392,
-      "memory_stall_cycles": 491720,
+      "memory_stall_cycles": 1040472,
       "allreduce_cycles": 0,
       "network_avg_latency": 124.65625,
       "network_max_latency": 186.984375,
@@ -20049,7 +20049,7 @@
     }
   },
   {
-    "score": -3596561.84,
+    "score": -2511643.84,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -20177,11 +20177,11 @@
       }
     },
     "result": {
-      "total_latency_cycles": 3222302,
+      "total_latency_cycles": 1863008,
       "compute_cycles": 2629698,
       "network_cycles": 93492,
       "io_injection_cycles": 7392,
-      "memory_stall_cycles": 491720,
+      "memory_stall_cycles": 1040472,
       "allreduce_cycles": 0,
       "network_avg_latency": 486.9375,
       "network_max_latency": 730.40625,
@@ -20212,7 +20212,7 @@
     }
   },
   {
-    "score": -3412191.748,
+    "score": -2326856.748,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -20340,11 +20340,11 @@
       }
     },
     "result": {
-      "total_latency_cycles": 3138590,
+      "total_latency_cycles": 1778879,
       "compute_cycles": 2629698,
       "network_cycles": 7809,
       "io_injection_cycles": 9363,
-      "memory_stall_cycles": 491720,
+      "memory_stall_cycles": 1040472,
       "allreduce_cycles": 0,
       "network_avg_latency": 40.671875,
       "network_max_latency": 61.0078125,
@@ -20375,7 +20375,7 @@
     }
   },
   {
-    "score": -724380.5120000001,
+    "score": -1236529.512,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -20503,11 +20503,11 @@
       }
     },
     "result": {
-      "total_latency_cycles": 704878,
+      "total_latency_cycles": 715131,
       "compute_cycles": 657474,
       "network_cycles": 13035,
       "io_injection_cycles": 3449,
-      "memory_stall_cycles": 30920,
+      "memory_stall_cycles": 1034712,
       "allreduce_cycles": 0,
       "network_avg_latency": 271.5625,
       "network_max_latency": 407.34375,
@@ -20538,7 +20538,7 @@
     }
   },
   {
-    "score": -3488174.2399999998,
+    "score": -2403256.2399999998,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -20666,11 +20666,11 @@
       }
     },
     "result": {
-      "total_latency_cycles": 3167381,
+      "total_latency_cycles": 1808087,
       "compute_cycles": 2629698,
       "network_cycles": 38571,
       "io_injection_cycles": 7392,
-      "memory_stall_cycles": 491720,
+      "memory_stall_cycles": 1040472,
       "allreduce_cycles": 0,
       "network_avg_latency": 200.890625,
       "network_max_latency": 301.3359375,
@@ -20701,7 +20701,7 @@
     }
   },
   {
-    "score": -725182.116,
+    "score": -1236838.116,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -20829,11 +20829,11 @@
       }
     },
     "result": {
-      "total_latency_cycles": 705632,
+      "total_latency_cycles": 715392,
       "compute_cycles": 657474,
       "network_cycles": 13296,
       "io_injection_cycles": 3942,
-      "memory_stall_cycles": 30920,
+      "memory_stall_cycles": 1034712,
       "allreduce_cycles": 0,
       "network_avg_latency": 277.0,
       "network_max_latency": 415.5,
@@ -20864,7 +20864,7 @@
     }
   },
   {
-    "score": -3426337.048,
+    "score": -2339448.048,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -20992,11 +20992,11 @@
       }
     },
     "result": {
-      "total_latency_cycles": 3161333,
+      "total_latency_cycles": 1800068,
       "compute_cycles": 2629698,
       "network_cycles": 30552,
       "io_injection_cycles": 9363,
-      "memory_stall_cycles": 491720,
+      "memory_stall_cycles": 1040472,
       "allreduce_cycles": 0,
       "network_avg_latency": 159.125,
       "network_max_latency": 238.6875,
@@ -21027,7 +21027,7 @@
     }
   },
   {
-    "score": -215024.316,
+    "score": -331232.316,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -21155,11 +21155,11 @@
       }
     },
     "result": {
-      "total_latency_cycles": 209654,
+      "total_latency_cycles": 199926,
       "compute_cycles": 173634,
       "network_cycles": 9792,
       "io_injection_cycles": 3942,
-      "memory_stall_cycles": 7880,
+      "memory_stall_cycles": 259752,
       "allreduce_cycles": 14406,
       "network_avg_latency": 204.0,
       "network_max_latency": 306.0,
@@ -21190,7 +21190,7 @@
     }
   },
   {
-    "score": -3433030.556,
+    "score": -2347866.5560000003,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -21318,11 +21318,11 @@
       }
     },
     "result": {
-      "total_latency_cycles": 3143888,
+      "total_latency_cycles": 1784348,
       "compute_cycles": 2629698,
       "network_cycles": 14832,
       "io_injection_cycles": 7638,
-      "memory_stall_cycles": 491720,
+      "memory_stall_cycles": 1040472,
       "allreduce_cycles": 0,
       "network_avg_latency": 77.25,
       "network_max_latency": 115.875,
@@ -21353,7 +21353,7 @@
     }
   },
   {
-    "score": -3425328.956,
+    "score": -2340164.956,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -21481,11 +21481,11 @@
       }
     },
     "result": {
-      "total_latency_cycles": 3144584,
+      "total_latency_cycles": 1785044,
       "compute_cycles": 2629698,
       "network_cycles": 15528,
       "io_injection_cycles": 7638,
-      "memory_stall_cycles": 491720,
+      "memory_stall_cycles": 1040472,
       "allreduce_cycles": 0,
       "network_avg_latency": 80.875,
       "network_max_latency": 121.3125,
@@ -21516,7 +21516,7 @@
     }
   },
   {
-    "score": -811684.0939999999,
+    "score": -1322601.0939999998,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -21644,11 +21644,11 @@
       }
     },
     "result": {
-      "total_latency_cycles": 767328,
+      "total_latency_cycles": 776349,
       "compute_cycles": 657474,
       "network_cycles": 74253,
       "io_injection_cycles": 4681,
-      "memory_stall_cycles": 30920,
+      "memory_stall_cycles": 1034712,
       "allreduce_cycles": 0,
       "network_avg_latency": 1546.9375,
       "network_max_latency": 2320.40625,
@@ -21679,7 +21679,7 @@
     }
   },
   {
-    "score": -3400886.756,
+    "score": -2315722.756,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -21807,11 +21807,11 @@
       }
     },
     "result": {
-      "total_latency_cycles": 3136820,
+      "total_latency_cycles": 1777280,
       "compute_cycles": 2629698,
       "network_cycles": 7764,
       "io_injection_cycles": 7638,
-      "memory_stall_cycles": 491720,
+      "memory_stall_cycles": 1040472,
       "allreduce_cycles": 0,
       "network_avg_latency": 40.4375,
       "network_max_latency": 60.65625,
@@ -21842,7 +21842,7 @@
     }
   },
   {
-    "score": -3485764.648,
+    "score": -2398875.648,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -21970,11 +21970,11 @@
       }
     },
     "result": {
-      "total_latency_cycles": 3172109,
+      "total_latency_cycles": 1810844,
       "compute_cycles": 2629698,
       "network_cycles": 41328,
       "io_injection_cycles": 9363,
-      "memory_stall_cycles": 491720,
+      "memory_stall_cycles": 1040472,
       "allreduce_cycles": 0,
       "network_avg_latency": 215.25,
       "network_max_latency": 322.875,
@@ -22005,7 +22005,7 @@
     }
   },
   {
-    "score": -3405328.348,
+    "score": -2318439.3479999998,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -22133,11 +22133,11 @@
       }
     },
     "result": {
-      "total_latency_cycles": 3141113,
+      "total_latency_cycles": 1779848,
       "compute_cycles": 2629698,
       "network_cycles": 10332,
       "io_injection_cycles": 9363,
-      "memory_stall_cycles": 491720,
+      "memory_stall_cycles": 1040472,
       "allreduce_cycles": 0,
       "network_avg_latency": 53.8125,
       "network_max_latency": 80.71875,
@@ -22168,7 +22168,7 @@
     }
   },
   {
-    "score": -3405307.048,
+    "score": -2318418.048,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -22296,11 +22296,11 @@
       }
     },
     "result": {
-      "total_latency_cycles": 3154154,
+      "total_latency_cycles": 1792889,
       "compute_cycles": 2629698,
       "network_cycles": 23373,
       "io_injection_cycles": 9363,
-      "memory_stall_cycles": 491720,
+      "memory_stall_cycles": 1040472,
       "allreduce_cycles": 0,
       "network_avg_latency": 121.734375,
       "network_max_latency": 182.6015625,
@@ -22331,7 +22331,7 @@
     }
   },
   {
-    "score": -3427721.2399999998,
+    "score": -2342803.2399999998,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -22459,11 +22459,11 @@
       }
     },
     "result": {
-      "total_latency_cycles": 3150494,
+      "total_latency_cycles": 1791200,
       "compute_cycles": 2629698,
       "network_cycles": 21684,
       "io_injection_cycles": 7392,
-      "memory_stall_cycles": 491720,
+      "memory_stall_cycles": 1040472,
       "allreduce_cycles": 0,
       "network_avg_latency": 112.9375,
       "network_max_latency": 169.40625,
@@ -22494,7 +22494,7 @@
     }
   },
   {
-    "score": -3445846.64,
+    "score": -2360928.64,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -22622,11 +22622,11 @@
       }
     },
     "result": {
-      "total_latency_cycles": 3176882,
+      "total_latency_cycles": 1817588,
       "compute_cycles": 2629698,
       "network_cycles": 48072,
       "io_injection_cycles": 7392,
-      "memory_stall_cycles": 491720,
+      "memory_stall_cycles": 1040472,
       "allreduce_cycles": 0,
       "network_avg_latency": 250.375,
       "network_max_latency": 375.5625,
@@ -22657,7 +22657,7 @@
     }
   },
   {
-    "score": -150384.194,
+    "score": -209795.694,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -22785,11 +22785,11 @@
       }
     },
     "result": {
-      "total_latency_cycles": 141032,
+      "total_latency_cycles": 128208,
       "compute_cycles": 105154,
       "network_cycles": 10140,
       "io_injection_cycles": 4681,
-      "memory_stall_cycles": 4588,
+      "memory_stall_cycles": 149059,
       "allreduce_cycles": 16469,
       "network_avg_latency": 211.25,
       "network_max_latency": 316.875,
@@ -22820,7 +22820,7 @@
     }
   },
   {
-    "score": -3397017.14,
+    "score": -2312099.14,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -22948,11 +22948,11 @@
       }
     },
     "result": {
-      "total_latency_cycles": 3139118,
+      "total_latency_cycles": 1779824,
       "compute_cycles": 2629698,
       "network_cycles": 10308,
       "io_injection_cycles": 7392,
-      "memory_stall_cycles": 491720,
+      "memory_stall_cycles": 1040472,
       "allreduce_cycles": 0,
       "network_avg_latency": 53.6875,
       "network_max_latency": 80.53125,
@@ -22983,7 +22983,7 @@
     }
   },
   {
-    "score": -3402125.248,
+    "score": -2315236.248,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -23111,11 +23111,11 @@
       }
     },
     "result": {
-      "total_latency_cycles": 3141374,
+      "total_latency_cycles": 1780109,
       "compute_cycles": 2629698,
       "network_cycles": 10593,
       "io_injection_cycles": 9363,
-      "memory_stall_cycles": 491720,
+      "memory_stall_cycles": 1040472,
       "allreduce_cycles": 0,
       "network_avg_latency": 55.171875,
       "network_max_latency": 82.7578125,
@@ -23146,7 +23146,7 @@
     }
   },
   {
-    "score": -233854.194,
+    "score": -355005.19399999996,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -23274,11 +23274,11 @@
       }
     },
     "result": {
-      "total_latency_cycles": 203821,
+      "total_latency_cycles": 198940,
       "compute_cycles": 164418,
       "network_cycles": 22636,
       "io_injection_cycles": 4681,
-      "memory_stall_cycles": 7880,
+      "memory_stall_cycles": 259944,
       "allreduce_cycles": 4206,
       "network_avg_latency": 471.5833333333333,
       "network_max_latency": 707.375,
@@ -23309,7 +23309,7 @@
     }
   },
   {
-    "score": -183606.216,
+    "score": -245656.716,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -23437,11 +23437,11 @@
       }
     },
     "result": {
-      "total_latency_cycles": 157111,
+      "total_latency_cycles": 146926,
       "compute_cycles": 105154,
       "network_cycles": 35187,
       "io_injection_cycles": 3942,
-      "memory_stall_cycles": 4588,
+      "memory_stall_cycles": 149059,
       "allreduce_cycles": 8240,
       "network_avg_latency": 733.0625,
       "network_max_latency": 1099.59375,
@@ -23472,7 +23472,7 @@
     }
   },
   {
-    "score": -200359.51599999997,
+    "score": -323510.516,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -23600,11 +23600,11 @@
       }
     },
     "result": {
-      "total_latency_cycles": 192247,
+      "total_latency_cycles": 189462,
       "compute_cycles": 173634,
       "network_cycles": 3185,
       "io_injection_cycles": 3942,
-      "memory_stall_cycles": 7880,
+      "memory_stall_cycles": 259752,
       "allreduce_cycles": 3606,
       "network_avg_latency": 66.35416666666667,
       "network_max_latency": 99.53125,
@@ -23635,7 +23635,7 @@
     }
   },
   {
-    "score": -256997.894,
+    "score": -365548.89400000003,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -23763,11 +23763,11 @@
       }
     },
     "result": {
-      "total_latency_cycles": 232128,
+      "total_latency_cycles": 214647,
       "compute_cycles": 164418,
       "network_cycles": 38343,
       "io_injection_cycles": 4681,
-      "memory_stall_cycles": 7880,
+      "memory_stall_cycles": 259944,
       "allreduce_cycles": 16806,
       "network_avg_latency": 798.8125,
       "network_max_latency": 1198.21875,
@@ -23798,7 +23798,7 @@
     }
   },
   {
-    "score": -3396177.056,
+    "score": -2311436.0560000003,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -23926,11 +23926,11 @@
       }
     },
     "result": {
-      "total_latency_cycles": 3136271,
+      "total_latency_cycles": 1777154,
       "compute_cycles": 2629698,
       "network_cycles": 7215,
       "io_injection_cycles": 7638,
-      "memory_stall_cycles": 491720,
+      "memory_stall_cycles": 1040472,
       "allreduce_cycles": 0,
       "network_avg_latency": 37.578125,
       "network_max_latency": 56.3671875,
@@ -23961,7 +23961,7 @@
     }
   },
   {
-    "score": -3479293.04,
+    "score": -2394375.04,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -24089,11 +24089,11 @@
       }
     },
     "result": {
-      "total_latency_cycles": 3172178,
+      "total_latency_cycles": 1812884,
       "compute_cycles": 2629698,
       "network_cycles": 43368,
       "io_injection_cycles": 7392,
-      "memory_stall_cycles": 491720,
+      "memory_stall_cycles": 1040472,
       "allreduce_cycles": 0,
       "network_avg_latency": 225.875,
       "network_max_latency": 338.8125,
@@ -24124,7 +24124,7 @@
     }
   },
   {
-    "score": -3456272.456,
+    "score": -2371108.456,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -24252,11 +24252,11 @@
       }
     },
     "result": {
-      "total_latency_cycles": 3149939,
+      "total_latency_cycles": 1790399,
       "compute_cycles": 2629698,
       "network_cycles": 20883,
       "io_injection_cycles": 7638,
-      "memory_stall_cycles": 491720,
+      "memory_stall_cycles": 1040472,
       "allreduce_cycles": 0,
       "network_avg_latency": 108.765625,
       "network_max_latency": 163.1484375,
@@ -24287,7 +24287,7 @@
     }
   },
   {
-    "score": -713935.716,
+    "score": -1226386.716,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -24415,11 +24415,11 @@
       }
     },
     "result": {
-      "total_latency_cycles": 695483,
+      "total_latency_cycles": 706038,
       "compute_cycles": 657474,
       "network_cycles": 3147,
       "io_injection_cycles": 3942,
-      "memory_stall_cycles": 30920,
+      "memory_stall_cycles": 1034712,
       "allreduce_cycles": 0,
       "network_avg_latency": 65.5625,
       "network_max_latency": 98.34375,
@@ -24450,7 +24450,7 @@
     }
   },
   {
-    "score": -132046.212,
+    "score": -197495.212,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -24578,11 +24578,11 @@
       }
     },
     "result": {
-      "total_latency_cycles": 121383,
+      "total_latency_cycles": 114479,
       "compute_cycles": 95262,
       "network_cycles": 13272,
       "io_injection_cycles": 3449,
-      "memory_stall_cycles": 4588,
+      "memory_stall_cycles": 149294,
       "allreduce_cycles": 4812,
       "network_avg_latency": 276.5,
       "network_max_latency": 414.75,
@@ -24613,7 +24613,7 @@
     }
   },
   {
-    "score": -233854.194,
+    "score": -355005.19399999996,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -24741,11 +24741,11 @@
       }
     },
     "result": {
-      "total_latency_cycles": 203821,
+      "total_latency_cycles": 198940,
       "compute_cycles": 164418,
       "network_cycles": 22636,
       "io_injection_cycles": 4681,
-      "memory_stall_cycles": 7880,
+      "memory_stall_cycles": 259944,
       "allreduce_cycles": 4206,
       "network_avg_latency": 471.5833333333333,
       "network_max_latency": 707.375,
@@ -24776,7 +24776,7 @@
     }
   },
   {
-    "score": -214372.11599999998,
+    "score": -327172.11600000004,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -24904,11 +24904,11 @@
       }
     },
     "result": {
-      "total_latency_cycles": 206342,
+      "total_latency_cycles": 193110,
       "compute_cycles": 164418,
       "network_cycles": 13296,
       "io_injection_cycles": 3942,
-      "memory_stall_cycles": 7880,
+      "memory_stall_cycles": 259944,
       "allreduce_cycles": 16806,
       "network_avg_latency": 277.0,
       "network_max_latency": 415.5,
@@ -24939,7 +24939,7 @@
     }
   },
   {
-    "score": -711432.9120000001,
+    "score": -1224753.9120000002,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -25067,11 +25067,11 @@
       }
     },
     "result": {
-      "total_latency_cycles": 694120,
+      "total_latency_cycles": 705545,
       "compute_cycles": 657474,
       "network_cycles": 2277,
       "io_injection_cycles": 3449,
-      "memory_stall_cycles": 30920,
+      "memory_stall_cycles": 1034712,
       "allreduce_cycles": 0,
       "network_avg_latency": 47.4375,
       "network_max_latency": 71.15625,
@@ -25102,7 +25102,7 @@
     }
   },
   {
-    "score": -3455374.556,
+    "score": -2370210.5560000003,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -25230,11 +25230,11 @@
       }
     },
     "result": {
-      "total_latency_cycles": 3157916,
+      "total_latency_cycles": 1798376,
       "compute_cycles": 2629698,
       "network_cycles": 28860,
       "io_injection_cycles": 7638,
-      "memory_stall_cycles": 491720,
+      "memory_stall_cycles": 1040472,
       "allreduce_cycles": 0,
       "network_avg_latency": 150.3125,
       "network_max_latency": 225.46875,
@@ -25265,7 +25265,7 @@
     }
   },
   {
-    "score": -368790.01600000006,
+    "score": -622548.0160000001,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -25393,11 +25393,11 @@
       }
     },
     "result": {
-      "total_latency_cycles": 359152,
+      "total_latency_cycles": 361654,
       "compute_cycles": 334914,
       "network_cycles": 2334,
       "io_injection_cycles": 3942,
-      "memory_stall_cycles": 15560,
+      "memory_stall_cycles": 518072,
       "allreduce_cycles": 2402,
       "network_avg_latency": 48.625,
       "network_max_latency": 72.9375,
@@ -25428,7 +25428,7 @@
     }
   },
   {
-    "score": -3454938.448,
+    "score": -2368049.4480000003,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -25556,11 +25556,11 @@
       }
     },
     "result": {
-      "total_latency_cycles": 3152327,
+      "total_latency_cycles": 1791062,
       "compute_cycles": 2629698,
       "network_cycles": 21546,
       "io_injection_cycles": 9363,
-      "memory_stall_cycles": 491720,
+      "memory_stall_cycles": 1040472,
       "allreduce_cycles": 0,
       "network_avg_latency": 112.21875,
       "network_max_latency": 168.328125,
@@ -25591,7 +25591,7 @@
     }
   },
   {
-    "score": -138142.81599999996,
+    "score": -202063.316,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -25719,11 +25719,11 @@
       }
     },
     "result": {
-      "total_latency_cycles": 128294,
+      "total_latency_cycles": 119979,
       "compute_cycles": 105154,
       "network_cycles": 6370,
       "io_injection_cycles": 3942,
-      "memory_stall_cycles": 4588,
+      "memory_stall_cycles": 149059,
       "allreduce_cycles": 8240,
       "network_avg_latency": 132.70833333333334,
       "network_max_latency": 199.0625,
@@ -25754,7 +25754,7 @@
     }
   },
   {
-    "score": -3417884.84,
+    "score": -2332966.84,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -25882,11 +25882,11 @@
       }
     },
     "result": {
-      "total_latency_cycles": 3149426,
+      "total_latency_cycles": 1790132,
       "compute_cycles": 2629698,
       "network_cycles": 20616,
       "io_injection_cycles": 7392,
-      "memory_stall_cycles": 491720,
+      "memory_stall_cycles": 1040472,
       "allreduce_cycles": 0,
       "network_avg_latency": 107.375,
       "network_max_latency": 161.0625,
@@ -25917,7 +25917,7 @@
     }
   },
   {
-    "score": -736152.8120000002,
+    "score": -1248301.8120000002,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -26045,11 +26045,11 @@
       }
     },
     "result": {
-      "total_latency_cycles": 706378,
+      "total_latency_cycles": 716631,
       "compute_cycles": 657474,
       "network_cycles": 14535,
       "io_injection_cycles": 3449,
-      "memory_stall_cycles": 30920,
+      "memory_stall_cycles": 1034712,
       "allreduce_cycles": 0,
       "network_avg_latency": 302.8125,
       "network_max_latency": 454.21875,
@@ -26080,7 +26080,7 @@
     }
   },
   {
-    "score": -3537721.04,
+    "score": -2452803.04,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -26208,11 +26208,11 @@
       }
     },
     "result": {
-      "total_latency_cycles": 3198434,
+      "total_latency_cycles": 1839140,
       "compute_cycles": 2629698,
       "network_cycles": 69624,
       "io_injection_cycles": 7392,
-      "memory_stall_cycles": 491720,
+      "memory_stall_cycles": 1040472,
       "allreduce_cycles": 0,
       "network_avg_latency": 362.625,
       "network_max_latency": 543.9375,
@@ -26243,7 +26243,7 @@
     }
   },
   {
-    "score": -3481140.448,
+    "score": -2394251.4480000003,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -26371,11 +26371,11 @@
       }
     },
     "result": {
-      "total_latency_cycles": 3174740,
+      "total_latency_cycles": 1813475,
       "compute_cycles": 2629698,
       "network_cycles": 43959,
       "io_injection_cycles": 9363,
-      "memory_stall_cycles": 491720,
+      "memory_stall_cycles": 1040472,
       "allreduce_cycles": 0,
       "network_avg_latency": 228.953125,
       "network_max_latency": 343.4296875,
@@ -26406,7 +26406,7 @@
     }
   },
   {
-    "score": -3419857.256,
+    "score": -2335377.256,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -26534,11 +26534,11 @@
       }
     },
     "result": {
-      "total_latency_cycles": 3136010,
+      "total_latency_cycles": 1777154,
       "compute_cycles": 2629698,
       "network_cycles": 6954,
       "io_injection_cycles": 7638,
-      "memory_stall_cycles": 491720,
+      "memory_stall_cycles": 1040472,
       "allreduce_cycles": 0,
       "network_avg_latency": 36.21875,
       "network_max_latency": 54.328125,
@@ -26569,7 +26569,7 @@
     }
   },
   {
-    "score": -764270.9160000001,
+    "score": -1275926.916,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -26697,11 +26697,11 @@
       }
     },
     "result": {
-      "total_latency_cycles": 745409,
+      "total_latency_cycles": 755169,
       "compute_cycles": 657474,
       "network_cycles": 53073,
       "io_injection_cycles": 3942,
-      "memory_stall_cycles": 30920,
+      "memory_stall_cycles": 1034712,
       "allreduce_cycles": 0,
       "network_avg_latency": 1105.6875,
       "network_max_latency": 1658.53125,
@@ -26732,7 +26732,7 @@
     }
   },
   {
-    "score": -383400.29400000005,
+    "score": -634475.294,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -26860,11 +26860,11 @@
       }
     },
     "result": {
-      "total_latency_cycles": 366786,
+      "total_latency_cycles": 366541,
       "compute_cycles": 328770,
       "network_cycles": 14973,
       "io_injection_cycles": 4681,
-      "memory_stall_cycles": 15560,
+      "memory_stall_cycles": 518200,
       "allreduce_cycles": 2802,
       "network_avg_latency": 311.9375,
       "network_max_latency": 467.90625,
@@ -26895,7 +26895,7 @@
     }
   },
   {
-    "score": -225233.216,
+    "score": -344027.216,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -27023,11 +27023,11 @@
       }
     },
     "result": {
-      "total_latency_cycles": 219198,
+      "total_latency_cycles": 212056,
       "compute_cycles": 173634,
       "network_cycles": 26536,
       "io_injection_cycles": 3942,
-      "memory_stall_cycles": 7880,
+      "memory_stall_cycles": 259752,
       "allreduce_cycles": 7206,
       "network_avg_latency": 552.8333333333334,
       "network_max_latency": 829.25,
@@ -27058,7 +27058,7 @@
     }
   },
   {
-    "score": -3489759.448,
+    "score": -2402870.4480000003,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -27186,11 +27186,11 @@
       }
     },
     "result": {
-      "total_latency_cycles": 3201929,
+      "total_latency_cycles": 1840664,
       "compute_cycles": 2629698,
       "network_cycles": 71148,
       "io_injection_cycles": 9363,
-      "memory_stall_cycles": 491720,
+      "memory_stall_cycles": 1040472,
       "allreduce_cycles": 0,
       "network_avg_latency": 370.5625,
       "network_max_latency": 555.84375,
@@ -27221,7 +27221,7 @@
     }
   },
   {
-    "score": -363791.916,
+    "score": -616223.9160000001,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -27349,11 +27349,11 @@
       }
     },
     "result": {
-      "total_latency_cycles": 354398,
+      "total_latency_cycles": 355510,
       "compute_cycles": 328770,
       "network_cycles": 3324,
       "io_injection_cycles": 3942,
-      "memory_stall_cycles": 15560,
+      "memory_stall_cycles": 518200,
       "allreduce_cycles": 2802,
       "network_avg_latency": 69.25,
       "network_max_latency": 103.875,
@@ -27384,7 +27384,7 @@
     }
   },
   {
-    "score": -3390517.648,
+    "score": -2305353.648,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -27512,11 +27512,11 @@
       }
     },
     "result": {
-      "total_latency_cycles": 3138419,
+      "total_latency_cycles": 1778879,
       "compute_cycles": 2629698,
       "network_cycles": 7638,
       "io_injection_cycles": 9363,
-      "memory_stall_cycles": 491720,
+      "memory_stall_cycles": 1040472,
       "allreduce_cycles": 0,
       "network_avg_latency": 39.78125,
       "network_max_latency": 59.671875,
@@ -27547,7 +27547,7 @@
     }
   },
   {
-    "score": -3454838.548,
+    "score": -2367949.548,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -27675,11 +27675,11 @@
       }
     },
     "result": {
-      "total_latency_cycles": 3143471,
+      "total_latency_cycles": 1782206,
       "compute_cycles": 2629698,
       "network_cycles": 12690,
       "io_injection_cycles": 9363,
-      "memory_stall_cycles": 491720,
+      "memory_stall_cycles": 1040472,
       "allreduce_cycles": 0,
       "network_avg_latency": 66.09375,
       "network_max_latency": 99.140625,
@@ -27710,7 +27710,7 @@
     }
   },
   {
-    "score": -162171.816,
+    "score": -216817.316,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -27838,11 +27838,11 @@
       }
     },
     "result": {
-      "total_latency_cycles": 145798,
+      "total_latency_cycles": 128208,
       "compute_cycles": 105154,
       "network_cycles": 15645,
       "io_injection_cycles": 3942,
-      "memory_stall_cycles": 4588,
+      "memory_stall_cycles": 149059,
       "allreduce_cycles": 16469,
       "network_avg_latency": 325.9375,
       "network_max_latency": 488.90625,
@@ -27873,7 +27873,7 @@
     }
   },
   {
-    "score": -228060.91199999998,
+    "score": -347347.91199999995,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -28001,11 +28001,11 @@
       }
     },
     "result": {
-      "total_latency_cycles": 218075,
+      "total_latency_cycles": 211426,
       "compute_cycles": 173634,
       "network_cycles": 25906,
       "io_injection_cycles": 3449,
-      "memory_stall_cycles": 7880,
+      "memory_stall_cycles": 259752,
       "allreduce_cycles": 7206,
       "network_avg_latency": 539.7083333333334,
       "network_max_latency": 809.5625,
@@ -28036,7 +28036,7 @@
     }
   },
   {
-    "score": -732870.294,
+    "score": -1243787.294,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -28164,11 +28164,11 @@
       }
     },
     "result": {
-      "total_latency_cycles": 713748,
+      "total_latency_cycles": 722769,
       "compute_cycles": 657474,
       "network_cycles": 20673,
       "io_injection_cycles": 4681,
-      "memory_stall_cycles": 30920,
+      "memory_stall_cycles": 1034712,
       "allreduce_cycles": 0,
       "network_avg_latency": 430.6875,
       "network_max_latency": 646.03125,
@@ -28199,7 +28199,7 @@
     }
   },
   {
-    "score": -3409165.04,
+    "score": -2324688.0399999996,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -28327,11 +28327,11 @@
       }
     },
     "result": {
-      "total_latency_cycles": 3135761,
+      "total_latency_cycles": 1776908,
       "compute_cycles": 2629698,
       "network_cycles": 6951,
       "io_injection_cycles": 7392,
-      "memory_stall_cycles": 491720,
+      "memory_stall_cycles": 1040472,
       "allreduce_cycles": 0,
       "network_avg_latency": 36.203125,
       "network_max_latency": 54.3046875,
@@ -28362,7 +28362,7 @@
     }
   },
   {
-    "score": -736087.694,
+    "score": -1247004.694,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -28490,11 +28490,11 @@
       }
     },
     "result": {
-      "total_latency_cycles": 705441,
+      "total_latency_cycles": 714462,
       "compute_cycles": 657474,
       "network_cycles": 12366,
       "io_injection_cycles": 4681,
-      "memory_stall_cycles": 30920,
+      "memory_stall_cycles": 1034712,
       "allreduce_cycles": 0,
       "network_avg_latency": 257.625,
       "network_max_latency": 386.4375,
@@ -28525,7 +28525,7 @@
     }
   },
   {
-    "score": -721722.5160000001,
+    "score": -1233378.5159999998,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -28653,11 +28653,11 @@
       }
     },
     "result": {
-      "total_latency_cycles": 698706,
+      "total_latency_cycles": 708466,
       "compute_cycles": 657474,
       "network_cycles": 6370,
       "io_injection_cycles": 3942,
-      "memory_stall_cycles": 30920,
+      "memory_stall_cycles": 1034712,
       "allreduce_cycles": 0,
       "network_avg_latency": 132.70833333333334,
       "network_max_latency": 199.0625,
@@ -28688,7 +28688,7 @@
     }
   },
   {
-    "score": -3641583.448,
+    "score": -2554694.4480000003,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -28816,11 +28816,11 @@
       }
     },
     "result": {
-      "total_latency_cycles": 3210956,
+      "total_latency_cycles": 1849691,
       "compute_cycles": 2629698,
       "network_cycles": 80175,
       "io_injection_cycles": 9363,
-      "memory_stall_cycles": 491720,
+      "memory_stall_cycles": 1040472,
       "allreduce_cycles": 0,
       "network_avg_latency": 417.578125,
       "network_max_latency": 626.3671875,
@@ -28851,7 +28851,7 @@
     }
   },
   {
-    "score": -3417510.956,
+    "score": -2332346.956,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -28979,11 +28979,11 @@
       }
     },
     "result": {
-      "total_latency_cycles": 3143498,
+      "total_latency_cycles": 1783958,
       "compute_cycles": 2629698,
       "network_cycles": 14442,
       "io_injection_cycles": 7638,
-      "memory_stall_cycles": 491720,
+      "memory_stall_cycles": 1040472,
       "allreduce_cycles": 0,
       "network_avg_latency": 75.21875,
       "network_max_latency": 112.828125,
@@ -29014,7 +29014,7 @@
     }
   },
   {
-    "score": -3414731.84,
+    "score": -2329813.84,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -29142,11 +29142,11 @@
       }
     },
     "result": {
-      "total_latency_cycles": 3139931,
+      "total_latency_cycles": 1780637,
       "compute_cycles": 2629698,
       "network_cycles": 11121,
       "io_injection_cycles": 7392,
-      "memory_stall_cycles": 491720,
+      "memory_stall_cycles": 1040472,
       "allreduce_cycles": 0,
       "network_avg_latency": 57.921875,
       "network_max_latency": 86.8828125,
@@ -29177,7 +29177,7 @@
     }
   },
   {
-    "score": -225997.716,
+    "score": -339406.716,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -29305,11 +29305,11 @@
       }
     },
     "result": {
-      "total_latency_cycles": 212453,
+      "total_latency_cycles": 199926,
       "compute_cycles": 173634,
       "network_cycles": 12591,
       "io_injection_cycles": 3942,
-      "memory_stall_cycles": 7880,
+      "memory_stall_cycles": 259752,
       "allreduce_cycles": 14406,
       "network_avg_latency": 262.3125,
       "network_max_latency": 393.46875,
@@ -29340,7 +29340,7 @@
     }
   },
   {
-    "score": -3416033.156,
+    "score": -2331199.156,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -29468,11 +29468,11 @@
       }
     },
     "result": {
-      "total_latency_cycles": 3136364,
+      "total_latency_cycles": 1777154,
       "compute_cycles": 2629698,
       "network_cycles": 7308,
       "io_injection_cycles": 7638,
-      "memory_stall_cycles": 491720,
+      "memory_stall_cycles": 1040472,
       "allreduce_cycles": 0,
       "network_avg_latency": 38.0625,
       "network_max_latency": 57.09375,
@@ -29503,7 +29503,7 @@
     }
   },
   {
-    "score": -162902.594,
+    "score": -217310.094,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -29631,11 +29631,11 @@
       }
     },
     "result": {
-      "total_latency_cycles": 146036,
+      "total_latency_cycles": 128208,
       "compute_cycles": 105154,
       "network_cycles": 15144,
       "io_injection_cycles": 4681,
-      "memory_stall_cycles": 4588,
+      "memory_stall_cycles": 149059,
       "allreduce_cycles": 16469,
       "network_avg_latency": 315.5,
       "network_max_latency": 473.25,
@@ -29666,7 +29666,7 @@
     }
   },
   {
-    "score": -3396977.756,
+    "score": -2312230.756,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -29794,11 +29794,11 @@
       }
     },
     "result": {
-      "total_latency_cycles": 3136277,
+      "total_latency_cycles": 1777154,
       "compute_cycles": 2629698,
       "network_cycles": 7221,
       "io_injection_cycles": 7638,
-      "memory_stall_cycles": 491720,
+      "memory_stall_cycles": 1040472,
       "allreduce_cycles": 0,
       "network_avg_latency": 37.609375,
       "network_max_latency": 56.4140625,
@@ -29829,7 +29829,7 @@
     }
   },
   {
-    "score": -3415045.64,
+    "score": -2330127.64,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -29957,11 +29957,11 @@
       }
     },
     "result": {
-      "total_latency_cycles": 3143090,
+      "total_latency_cycles": 1783796,
       "compute_cycles": 2629698,
       "network_cycles": 14280,
       "io_injection_cycles": 7392,
-      "memory_stall_cycles": 491720,
+      "memory_stall_cycles": 1040472,
       "allreduce_cycles": 0,
       "network_avg_latency": 74.375,
       "network_max_latency": 111.5625,
@@ -29992,7 +29992,7 @@
     }
   },
   {
-    "score": -3445846.64,
+    "score": -2360928.64,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -30120,11 +30120,11 @@
       }
     },
     "result": {
-      "total_latency_cycles": 3176882,
+      "total_latency_cycles": 1817588,
       "compute_cycles": 2629698,
       "network_cycles": 48072,
       "io_injection_cycles": 7392,
-      "memory_stall_cycles": 491720,
+      "memory_stall_cycles": 1040472,
       "allreduce_cycles": 0,
       "network_avg_latency": 250.375,
       "network_max_latency": 375.5625,
@@ -30155,7 +30155,7 @@
     }
   },
   {
-    "score": -125691.812,
+    "score": -193294.31199999998,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -30283,11 +30283,11 @@
       }
     },
     "result": {
-      "total_latency_cycles": 120498,
+      "total_latency_cycles": 115865,
       "compute_cycles": 105154,
       "network_cycles": 3181,
       "io_injection_cycles": 3449,
-      "memory_stall_cycles": 4588,
+      "memory_stall_cycles": 149059,
       "allreduce_cycles": 4126,
       "network_avg_latency": 66.27083333333333,
       "network_max_latency": 99.40625,
@@ -30318,7 +30318,7 @@
     }
   },
   {
-    "score": -711193.0160000001,
+    "score": -1224343.0159999998,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -30446,11 +30446,11 @@
       }
     },
     "result": {
-      "total_latency_cycles": 694784,
+      "total_latency_cycles": 706038,
       "compute_cycles": 657474,
       "network_cycles": 2448,
       "io_injection_cycles": 3942,
-      "memory_stall_cycles": 30920,
+      "memory_stall_cycles": 1034712,
       "allreduce_cycles": 0,
       "network_avg_latency": 51.0,
       "network_max_latency": 76.5,
@@ -30481,7 +30481,7 @@
     }
   },
   {
-    "score": -722779.494,
+    "score": -1233696.494,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -30609,11 +30609,11 @@
       }
     },
     "result": {
-      "total_latency_cycles": 699258,
+      "total_latency_cycles": 708279,
       "compute_cycles": 657474,
       "network_cycles": 6183,
       "io_injection_cycles": 4681,
-      "memory_stall_cycles": 30920,
+      "memory_stall_cycles": 1034712,
       "allreduce_cycles": 0,
       "network_avg_latency": 128.8125,
       "network_max_latency": 193.21875,
@@ -30644,7 +30644,7 @@
     }
   },
   {
-    "score": -130954.216,
+    "score": -192900.216,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -30772,11 +30772,11 @@
       }
     },
     "result": {
-      "total_latency_cycles": 121226,
+      "total_latency_cycles": 110819,
       "compute_cycles": 95262,
       "network_cycles": 7822,
       "io_injection_cycles": 3942,
-      "memory_stall_cycles": 4588,
+      "memory_stall_cycles": 149294,
       "allreduce_cycles": 9612,
       "network_avg_latency": 162.95833333333334,
       "network_max_latency": 244.4375,
@@ -30807,7 +30807,7 @@
     }
   },
   {
-    "score": -3459620.2399999998,
+    "score": -2374702.2399999998,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -30935,11 +30935,11 @@
       }
     },
     "result": {
-      "total_latency_cycles": 3170042,
+      "total_latency_cycles": 1810748,
       "compute_cycles": 2629698,
       "network_cycles": 41232,
       "io_injection_cycles": 7392,
-      "memory_stall_cycles": 491720,
+      "memory_stall_cycles": 1040472,
       "allreduce_cycles": 0,
       "network_avg_latency": 214.75,
       "network_max_latency": 322.125,
@@ -30970,7 +30970,7 @@
     }
   },
   {
-    "score": -386654.812,
+    "score": -636897.812,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -31098,11 +31098,11 @@
       }
     },
     "result": {
-      "total_latency_cycles": 367116,
+      "total_latency_cycles": 366103,
       "compute_cycles": 334914,
       "network_cycles": 8391,
       "io_injection_cycles": 3449,
-      "memory_stall_cycles": 15560,
+      "memory_stall_cycles": 518072,
       "allreduce_cycles": 4802,
       "network_avg_latency": 174.8125,
       "network_max_latency": 262.21875,
@@ -31133,7 +31133,7 @@
     }
   },
   {
-    "score": -116594.394,
+    "score": -183637.39400000003,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -31261,11 +31261,11 @@
       }
     },
     "result": {
-      "total_latency_cycles": 111329,
+      "total_latency_cycles": 106019,
       "compute_cycles": 95262,
       "network_cycles": 1986,
       "io_injection_cycles": 4681,
-      "memory_stall_cycles": 4588,
+      "memory_stall_cycles": 149294,
       "allreduce_cycles": 4812,
       "network_avg_latency": 41.375,
       "network_max_latency": 62.0625,
@@ -31296,7 +31296,7 @@
     }
   },
   {
-    "score": -713726.394,
+    "score": -1226272.394,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -31424,11 +31424,11 @@
       }
     },
     "result": {
-      "total_latency_cycles": 696127,
+      "total_latency_cycles": 706777,
       "compute_cycles": 657474,
       "network_cycles": 3052,
       "io_injection_cycles": 4681,
-      "memory_stall_cycles": 30920,
+      "memory_stall_cycles": 1034712,
       "allreduce_cycles": 0,
       "network_avg_latency": 63.583333333333336,
       "network_max_latency": 95.375,
@@ -31459,7 +31459,7 @@
     }
   },
   {
-    "score": -3426337.048,
+    "score": -2339448.048,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -31587,11 +31587,11 @@
       }
     },
     "result": {
-      "total_latency_cycles": 3161333,
+      "total_latency_cycles": 1800068,
       "compute_cycles": 2629698,
       "network_cycles": 30552,
       "io_injection_cycles": 9363,
-      "memory_stall_cycles": 491720,
+      "memory_stall_cycles": 1040472,
       "allreduce_cycles": 0,
       "network_avg_latency": 159.125,
       "network_max_latency": 238.6875,
@@ -31622,7 +31622,7 @@
     }
   },
   {
-    "score": -378726.412,
+    "score": -631033.412,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -31750,11 +31750,11 @@
       }
     },
     "result": {
-      "total_latency_cycles": 366784,
+      "total_latency_cycles": 367771,
       "compute_cycles": 328770,
       "network_cycles": 16203,
       "io_injection_cycles": 3449,
-      "memory_stall_cycles": 15560,
+      "memory_stall_cycles": 518200,
       "allreduce_cycles": 2802,
       "network_avg_latency": 337.5625,
       "network_max_latency": 506.34375,
@@ -31785,7 +31785,7 @@
     }
   },
   {
-    "score": -214923.194,
+    "score": -330140.19399999996,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -31913,11 +31913,11 @@
       }
     },
     "result": {
-      "total_latency_cycles": 203925,
+      "total_latency_cycles": 193110,
       "compute_cycles": 164418,
       "network_cycles": 10140,
       "io_injection_cycles": 4681,
-      "memory_stall_cycles": 7880,
+      "memory_stall_cycles": 259944,
       "allreduce_cycles": 16806,
       "network_avg_latency": 211.25,
       "network_max_latency": 316.875,
@@ -31948,7 +31948,7 @@
     }
   },
   {
-    "score": -3590655.448,
+    "score": -2503766.4480000003,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -32076,11 +32076,11 @@
       }
     },
     "result": {
-      "total_latency_cycles": 3173813,
+      "total_latency_cycles": 1812548,
       "compute_cycles": 2629698,
       "network_cycles": 43032,
       "io_injection_cycles": 9363,
-      "memory_stall_cycles": 491720,
+      "memory_stall_cycles": 1040472,
       "allreduce_cycles": 0,
       "network_avg_latency": 224.125,
       "network_max_latency": 336.1875,
@@ -32111,7 +32111,7 @@
     }
   },
   {
-    "score": -3424018.64,
+    "score": -2339100.64,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -32239,11 +32239,11 @@
       }
     },
     "result": {
-      "total_latency_cycles": 3158042,
+      "total_latency_cycles": 1798748,
       "compute_cycles": 2629698,
       "network_cycles": 29232,
       "io_injection_cycles": 7392,
-      "memory_stall_cycles": 491720,
+      "memory_stall_cycles": 1040472,
       "allreduce_cycles": 0,
       "network_avg_latency": 152.25,
       "network_max_latency": 228.375,
@@ -32274,7 +32274,7 @@
     }
   },
   {
-    "score": -721712.816,
+    "score": -1233368.8159999999,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -32402,11 +32402,11 @@
       }
     },
     "result": {
-      "total_latency_cycles": 698703,
+      "total_latency_cycles": 708463,
       "compute_cycles": 657474,
       "network_cycles": 6367,
       "io_injection_cycles": 3942,
-      "memory_stall_cycles": 30920,
+      "memory_stall_cycles": 1034712,
       "allreduce_cycles": 0,
       "network_avg_latency": 132.64583333333334,
       "network_max_latency": 198.96875,
@@ -32437,7 +32437,7 @@
     }
   },
   {
-    "score": -214216.41199999998,
+    "score": -331373.41199999995,
     "config": {
       "wafer": {
         "reticles_x": 2,
@@ -32565,11 +32565,11 @@
       }
     },
     "result": {
-      "total_latency_cycles": 208705,
+      "total_latency_cycles": 199926,
       "compute_cycles": 173634,
       "network_cycles": 9336,
       "io_injection_cycles": 3449,
-      "memory_stall_cycles": 7880,
+      "memory_stall_cycles": 259752,
       "allreduce_cycles": 14406,
       "network_avg_latency": 194.5,
       "network_max_latency": 291.75,
