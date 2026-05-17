@@ -576,17 +576,21 @@ def _simulate_allreduce_cycles(
     ring_global = [node for node in ring_nodes]
 
     allreduce_mode = "entwined" if strategy == "entwined_ring" else "sequential"
+    sim_experts = min(active_experts, 3)
+
     traffic = generate_ring_allreduce_traffic(
         participating_nodes=ring_global,
         payload_bytes_per_expert=payload_bytes,
-        num_experts=active_experts,
+        num_experts=sim_experts,
         strategy=allreduce_mode,
     )
     if not traffic:
         return 0
 
-    simulated_cycles = _run_noc_allreduce_simulation(traffic, config)
-    return max(0, int(simulated_cycles))
+    cycles = _run_noc_allreduce_simulation(traffic, config)
+    if active_experts > sim_experts:
+        cycles = int(cycles * active_experts / sim_experts)
+    return max(0, cycles)
 
 
 def _run_noc_allreduce_simulation(
