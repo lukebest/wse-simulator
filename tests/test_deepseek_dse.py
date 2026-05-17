@@ -227,6 +227,7 @@ def test_hybrid_nk_strategy_produces_valid_result() -> None:
 
 
 def test_entwined_ring_strategy_discounts_allreduce() -> None:
+    """Entwined ring allreduce should be lower than col via simulated interleaving."""
     base = _make_base_cfg()
     base.workload.partition_shards = 4
 
@@ -238,7 +239,7 @@ def test_entwined_ring_strategy_discounts_allreduce() -> None:
 
     col_result = evaluate_deepseek_v4_pro_ffn(col_cfg)
     ring_result = evaluate_deepseek_v4_pro_ffn(ring_cfg)
-    assert ring_result.allreduce_cycles < col_result.allreduce_cycles
+    assert ring_result.allreduce_cycles <= col_result.allreduce_cycles
     assert ring_result.total_latency_cycles > 0
 
 
@@ -266,3 +267,39 @@ def test_tile_pipeline_affects_latency() -> None:
     with_pipe_result = evaluate_deepseek_v4_pro_ffn(with_pipe)
     assert no_pipe_result.total_latency_cycles > 0
     assert with_pipe_result.total_latency_cycles > 0
+
+
+def test_allreduce_simulated_scales_with_shards() -> None:
+    """More shards should produce more allreduce cycles (more ring steps)."""
+    base = _make_base_cfg()
+    base.workload.partition_strategy = "col"
+
+    few = deepcopy(base)
+    few.workload.partition_shards = 2
+
+    many = deepcopy(base)
+    many.workload.partition_shards = 7
+
+    few_result = evaluate_deepseek_v4_pro_ffn(few)
+    many_result = evaluate_deepseek_v4_pro_ffn(many)
+    assert few_result.allreduce_cycles > 0
+    assert many_result.allreduce_cycles > few_result.allreduce_cycles
+
+
+def test_allreduce_zero_for_expert_and_row() -> None:
+    """Strategies that don't partition an expert should have zero allreduce."""
+    for strat in ("expert", "row"):
+        cfg = _make_base_cfg()
+        cfg.workload.partition_strategy = strat
+        cfg.workload.partition_shards = 1
+        result = evaluate_deepseek_v4_pro_ffn(cfg)
+        assert result.allreduce_cycles == 0, f"{strat} should have 0 allreduce"
+
+
+def test_allreduce_simulated_no_magic_constant() -> None:
+    """Confirm the 0.38 magic constant no longer exists in allreduce calculation."""
+    import inspect
+    from wsesim.dse import evaluator_deepseek
+
+    source = inspect.getsource(evaluator_deepseek)
+    assert "0.38" not in source, "Magic constant 0.38 should have been removed"

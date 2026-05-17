@@ -9,6 +9,7 @@ import simpy
 
 from wsesim.core.config import WSEConfig
 from wsesim.core.stats import SimResult
+from wsesim.network.collective import generate_ring_allreduce_traffic
 from wsesim.network.flow_control.credit_vc import CreditBasedVCFlowControl
 from wsesim.network.flow_control.wormhole import WormholeFlowControl
 from wsesim.network.network import UnifiedNetwork
@@ -78,7 +79,7 @@ def evaluate_deepseek_v4_pro_ffn(config: WSEConfig) -> SimResult:
         partition_strategy=config.workload.partition_strategy,
     )
     memory_stall_cycles = max(1, sum(memory_stage_cycles.values()))
-    allreduce_cycles = _estimate_allreduce_cycles(workload, config, partition_shards)
+    allreduce_cycles = _simulate_allreduce_cycles(workload, config, partition_shards, mapping)
     overlapped_latency_cycles = _estimate_stage_overlap_latency(
         compute_stage_cycles=compute_stage_cycles,
         memory_stage_cycles=memory_stage_cycles,
@@ -490,8 +491,6 @@ def _estimate_stage_overlap_latency(
     ffn_path = max(w1, w3) + elem + w2
 
     comm_tail = max(int(network_cycles), int(io_injection_cycles), int(allreduce_cycles))
-    if partition_strategy == "entwined_ring":
-        comm_tail = max(int(network_cycles), int(io_injection_cycles), int(allreduce_cycles * 0.38))
 
     return max(1, ffn_path + comm_tail)
 
@@ -533,10 +532,61 @@ def _estimate_allreduce_cycles(workload, config: WSEConfig, partition_shards: in
     latency_cycles = int(2 * (shards - 1) * max(1, config.network.noc.link_latency_cycles))
     total = max(0, transfer_cycles + latency_cycles)
 
-    if strategy == "entwined_ring":
-        total = int(total * 0.38)
-
     return total
+
+
+def _simulate_allreduce_cycles(
+    workload, config: WSEConfig, partition_shards: int, mapping,
+) -> int:
+    """Simulate ring allreduce via SimPy instead of analytical formula."""
+    shards = max(1, partition_shards)
+    strategy = config.workload.partition_strategy
+    if shards <= 1 or strategy in {"expert", "row"}:
+        return 0
+
+    decode_tokens = int(workload.metadata["decode_tokens"])
+    hidden = int(workload.metadata["hidden_dim"])
+    ffn_dim = int(workload.metadata["expert_ffn_dim"])
+    active_experts = int(workload.metadata["active_routed_experts"]) + int(
+        workload.metadata["num_shared_experts"]
+    )
+    fp_bytes = 2
+
+    if strategy in {"col", "entwined_ring"}:
+        payload_bytes = decode_tokens * hidden * fp_bytes
+    elif strategy in {"k_split", "streaming"}:
+        payload_bytes = 2 * decode_tokens * ffn_dim * fp_bytes
+    elif strategy == "block":
+        side = max(1, isqrt(shards))
+        payload_bytes = decode_tokens * hidden * fp_bytes * side // max(1, shards)
+    elif strategy == "hybrid_nk":
+        payload_bytes = 2 * decode_tokens * ffn_dim * fp_bytes + decode_tokens * hidden * fp_bytes
+    else:
+        return 0
+
+    cores_per_reticle = max(1, config.wafer.cores_per_reticle)
+    compute_nodes = _reticle_compute_nodes(config)
+
+    ring_nodes: list[int] = []
+    if shards <= len(compute_nodes):
+        ring_nodes = compute_nodes[:shards]
+    else:
+        ring_nodes = list(range(shards))
+
+    ring_global = [node for node in ring_nodes]
+
+    allreduce_mode = "entwined" if strategy == "entwined_ring" else "sequential"
+    traffic = generate_ring_allreduce_traffic(
+        participating_nodes=ring_global,
+        payload_bytes_per_expert=payload_bytes,
+        num_experts=active_experts,
+        strategy=allreduce_mode,
+    )
+    if not traffic:
+        return 0
+
+    simulated_cycles, _ = _run_hierarchical_network_simulation(traffic, config)
+    return max(0, int(simulated_cycles))
 
 
 def _build_noc_network(env: simpy.Environment, config: WSEConfig) -> UnifiedNetwork:
@@ -667,6 +717,7 @@ def _run_hierarchical_network_simulation(
                 reticle_cols=reticle_cols,
                 noc_networks=noc_networks,
                 now_network=now_network,
+                delay_cycles=int(item.get("delay_cycles", 0)),
             )
         )
     env.run()
@@ -762,7 +813,11 @@ def _send_hierarchical_packet(
     reticle_cols: int,
     noc_networks: dict[int, UnifiedNetwork],
     now_network: UnifiedNetwork,
+    delay_cycles: int = 0,
 ):
+    if delay_cycles > 0:
+        yield env.timeout(delay_cycles)
+
     if src_core is None and dst_core is not None and src_io_phys is not None:
         dst_reticle = dst_core // cores_per_reticle
         dst_local = dst_core % cores_per_reticle

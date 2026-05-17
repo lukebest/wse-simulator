@@ -226,3 +226,48 @@ def test_vc_is_reserved_per_packet_until_tail() -> None:
     sim_result.update_from_network_stats(net.stats, sim_time_cycles=int(env.now))
     assert sim_result.network_cycles > 0
     assert sim_result.network_throughput > 0
+
+
+def test_ring_allreduce_sequential_generates_correct_traffic() -> None:
+    from wsesim.network.collective import generate_ring_allreduce_traffic
+
+    nodes = [0, 1, 2, 3]
+    traffic = generate_ring_allreduce_traffic(
+        participating_nodes=nodes,
+        payload_bytes_per_expert=1024,
+        num_experts=2,
+        strategy="sequential",
+    )
+    assert len(traffic) > 0
+    for item in traffic:
+        assert item["src_core"] in nodes
+        assert item["dst_core"] in nodes
+        assert item["src_core"] != item["dst_core"]
+        assert item["size_bytes"] > 0
+        assert item["payload"] in ("allreduce_rs", "allreduce_ag")
+    S = len(nodes)
+    expected_items_per_expert = 2 * (S - 1) * S
+    assert len(traffic) == expected_items_per_expert * 2
+
+
+def test_ring_allreduce_entwined_generates_staggered_traffic() -> None:
+    from wsesim.network.collective import generate_ring_allreduce_traffic
+
+    nodes = [0, 1, 2, 3]
+    traffic = generate_ring_allreduce_traffic(
+        participating_nodes=nodes,
+        payload_bytes_per_expert=1024,
+        num_experts=3,
+        strategy="entwined",
+    )
+    assert len(traffic) > 0
+    delays = {item["delay_cycles"] for item in traffic}
+    assert len(delays) > 1, "Entwined mode should produce varied delay offsets"
+
+
+def test_ring_allreduce_empty_cases() -> None:
+    from wsesim.network.collective import generate_ring_allreduce_traffic
+
+    assert generate_ring_allreduce_traffic([0], 1024, 2) == []
+    assert generate_ring_allreduce_traffic([0, 1], 1024, 0) == []
+    assert generate_ring_allreduce_traffic([0, 1], 0, 2) == []

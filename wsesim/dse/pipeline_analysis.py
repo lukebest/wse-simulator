@@ -8,11 +8,11 @@ from math import ceil
 from wsesim.core.config import WSEConfig
 from wsesim.dse.evaluator_deepseek import (
     _effective_partition_shards,
-    _estimate_allreduce_cycles,
     _estimate_compute_stage_cycles,
     _estimate_memory_stage_cycles,
     _estimate_network_metrics,
     _resolve_partitioner,
+    _simulate_allreduce_cycles,
 )
 from wsesim.workload.generator import (
     DeepSeekV4ProFFNProfile,
@@ -97,7 +97,7 @@ def compute_pipeline_breakdown(config: WSEConfig, config_label: str | None = Non
     mem_w2_cycles = int(memory_stage_cycles["expert_w2_proj"])
 
     network_metrics = _estimate_network_metrics(workload, _fake_mapping(workload, config), config)
-    allreduce_cycles = _estimate_allreduce_cycles(workload, config, shards)
+    allreduce_cycles = _simulate_allreduce_cycles(workload, config, shards, _fake_mapping(workload, config))
     io_injection_cycles = int(network_metrics["io_injection_cycles"])
     network_cycles = int(network_metrics["network_cycles"])
 
