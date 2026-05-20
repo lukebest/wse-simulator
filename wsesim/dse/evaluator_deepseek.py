@@ -17,9 +17,11 @@ from wsesim.network.packet import Packet
 from wsesim.network.routing.dimension_order import DimensionOrderRouting
 from wsesim.network.routing.table_based import TableBasedRouting
 from wsesim.network.routing.ugal import UGALRouting
+from wsesim.network.topology.butterfly import Butterfly
 from wsesim.network.topology.flat_butterfly import FlatButterfly
 from wsesim.network.topology.mesh2d import Mesh2D
-from wsesim.network.topology.torus2d import Torus2D
+from wsesim.network.topology.supermesh_alter import SuperMeshAlter
+from wsesim.network.topology.supermesh_bi import SuperMeshBi
 from wsesim.workload.generator import (
     DeepSeekV4ProFFNProfile,
     generate_deepseek_v4_pro_decode_ffn_workload,
@@ -655,8 +657,8 @@ def _build_network_domain(
 ) -> UnifiedNetwork:
     num_nodes = max(4, num_nodes)
     topology_name = domain_config.topology
-    if topology_name in {"mesh2d", "torus2d"}:
-        if rows is not None and cols is not None and topology_name == "mesh2d":
+    if topology_name == "mesh2d":
+        if rows is not None and cols is not None:
             num_nodes = max(4, rows * cols)
             topology = Mesh2D(rows=rows, cols=cols)
         else:
@@ -664,9 +666,15 @@ def _build_network_domain(
             if side * side != num_nodes:
                 side += 1
                 num_nodes = side * side
-            topology = Mesh2D() if topology_name == "mesh2d" else Torus2D()
+            topology = Mesh2D()
     elif topology_name == "flat_butterfly":
         topology = FlatButterfly()
+    elif topology_name == "butterfly":
+        topology = Butterfly(rows=rows, cols=cols)
+    elif topology_name == "supermesh_bi":
+        topology = SuperMeshBi(rows=rows, cols=cols)
+    elif topology_name == "supermesh_alter":
+        topology = SuperMeshAlter(rows=rows, cols=cols)
     else:
         topology = Mesh2D()
 
@@ -704,7 +712,19 @@ def _build_network_domain(
     )
     if routing_name == "table_based":
         network.routing = TableBasedRouting(network.graph)
+    if hasattr(topology, "enhanced_edges"):
+        _apply_enhanced_edge_bandwidth(network, topology.enhanced_edges(num_nodes))
     return network
+
+
+def _apply_enhanced_edge_bandwidth(network: UnifiedNetwork, enhanced_edges: set[tuple[int, int]]) -> None:
+    if not enhanced_edges:
+        return
+    for src, dst in enhanced_edges:
+        if (src, dst) in network.links:
+            network.links[(src, dst)].bandwidth_flits_per_cycle *= 2
+        if (dst, src) in network.links:
+            network.links[(dst, src)].bandwidth_flits_per_cycle *= 2
 
 
 def _run_hierarchical_network_simulation(

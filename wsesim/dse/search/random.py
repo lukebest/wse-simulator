@@ -31,14 +31,16 @@ class RandomSearch(SearchStrategy):
         elif cfg.workload.partition_strategy == "block":
             cfg.workload.partition_shards = self._rng.choice([1, 4])
 
-        cfg.network.noc.topology = self._rng.choice(["mesh2d", "torus2d", "flat_butterfly"])
+        cfg.network.noc.topology = self._rng.choice(
+            ["mesh2d", "flat_butterfly", "butterfly", "supermesh_bi", "supermesh_alter"]
+        )
         cfg.network.noc.routing = self._rng.choice(["xy", "ugal", "table_based"])
         cfg.network.noc.flow_control = self._rng.choice(["credit_vc", "wormhole"])
         cfg.network.noc.buffer_depth = self._rng.choice([4, 8, 16])
         cfg.network.noc.num_vcs = self._rng.choice([1, 2, 4])
         cfg.network.noc.link_bw_flits_per_cycle = self._rng.choice([1, 2, 4])
 
-        cfg.network.now.topology = self._rng.choice(["mesh2d", "flat_butterfly"])
+        cfg.network.now.topology = self._rng.choice(["mesh2d", "flat_butterfly", "butterfly"])
         cfg.network.now.routing = self._rng.choice(["xy", "ugal", "table_based"])
         cfg.network.now.flow_control = self._rng.choice(["credit_vc", "wormhole"])
 
