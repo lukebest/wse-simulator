@@ -131,10 +131,6 @@ def test_random_search_explores_dse_dimensions() -> None:
         tile_pipelines.add(cfg.workload.tile_pipeline)
         if cfg.workload.partition_strategy == "expert":
             assert cfg.workload.partition_shards == 1
-        if cfg.workload.partition_strategy == "row":
-            assert cfg.workload.partition_shards == 1
-        if cfg.workload.partition_strategy == "block":
-            assert cfg.workload.partition_shards in {1, 4}
         history.append((cfg, 0.0))
 
     assert "nearest" in policies
@@ -143,14 +139,7 @@ def test_random_search_explores_dse_dimensions() -> None:
     assert "nearest" in io_policies
     assert "load_aware" in io_policies
     assert batch_sizes == {4, 16}
-    assert "expert" in partition_strategies
-    assert "col" in partition_strategies
-    assert "k_split" in partition_strategies
-    assert "row" in partition_strategies
-    assert "block" in partition_strategies
-    assert "hybrid_nk" in partition_strategies
-    assert "entwined_ring" in partition_strategies
-    assert "streaming" in partition_strategies
+    assert partition_strategies == {"expert", "col", "k_split"}
     assert "mesh2d" in noc_topologies
     assert "flat_butterfly" in noc_topologies
     assert "mesh2d" in now_topologies

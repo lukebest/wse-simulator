@@ -10,17 +10,24 @@ from wsesim.dse.search.base import SearchStrategy
 
 
 class RandomSearch(SearchStrategy):
-    def __init__(self, base: WSEConfig, seed: int = 1234) -> None:
+    def __init__(
+        self,
+        base: WSEConfig,
+        seed: int = 1234,
+        partition_strategies: list[str] | None = None,
+    ) -> None:
         self.base = base
         self._rng = random.Random(seed)
+        self._partition_strategies = partition_strategies or [
+            "expert",
+            "col",
+            "k_split",
+        ]
 
     def suggest(self, history: list[tuple[WSEConfig, float]]) -> WSEConfig:
         cfg = deepcopy(self.base)
         cfg.workload.decode_tokens = self._rng.choice([4, 16])
-        cfg.workload.partition_strategy = self._rng.choice([
-            "expert", "col", "k_split", "row", "block",
-            "hybrid_nk", "entwined_ring", "streaming",
-        ])
+        cfg.workload.partition_strategy = self._rng.choice(self._partition_strategies)
         cfg.workload.partition_shards = self._rng.choice([1, 2, 4, 7])
         cfg.workload.tile_pipeline = self._rng.choice([True, False])
 

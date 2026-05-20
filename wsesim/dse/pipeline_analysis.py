@@ -11,6 +11,7 @@ from wsesim.dse.evaluator_deepseek import (
     _estimate_compute_stage_cycles,
     _estimate_memory_stage_cycles,
     _estimate_network_metrics,
+    _estimate_stage_overlap_latency,
     _resolve_partitioner,
     _simulate_allreduce_cycles,
 )
@@ -156,6 +157,130 @@ class _MappingProxy:
     def __init__(self, assignments: dict[str, list[int]]) -> None:
         self.assignments = assignments
         self.core_tasks: dict[int, list[str]] = {}
+
+
+def compute_overlap_breakdown(config: WSEConfig) -> dict:
+    """Return max-path/stage-overlap latency breakdown aligned with the evaluator."""
+    profile = DeepSeekV4ProFFNProfile(
+        hidden_dim=config.workload.hidden_dim,
+        expert_ffn_dim=config.workload.expert_ffn_dim,
+        num_routed_experts=config.workload.num_routed_experts,
+        num_shared_experts=config.workload.num_shared_experts,
+        top_k=config.workload.top_k,
+        decode_tokens=config.workload.decode_tokens,
+        routing_skew_alpha=config.workload.routing_skew_alpha,
+        capacity_factor=config.workload.capacity_factor,
+    )
+    workload = generate_deepseek_v4_pro_decode_ffn_workload(profile)
+    shards = _effective_partition_shards(workload, config)
+    partitioner = _resolve_partitioner(config.workload.partition_strategy)
+    tasks = {
+        op.name: partitioner.partition(
+            op,
+            shards=(
+                shards
+                if op.op_type in {"expert_w1_proj", "expert_w3_proj", "expert_w2_proj", "elementwise_mul"}
+                else 1
+            ),
+        )
+        for op in workload.ops
+    }
+    op_lookup = {op.name: op for op in workload.ops}
+    compute_stage = _estimate_compute_stage_cycles(tasks, op_lookup, config)
+    memory_stage = _estimate_memory_stage_cycles(
+        workload=workload,
+        config=config,
+        partition_shards=shards,
+        partition_strategy=config.workload.partition_strategy,
+    )
+    mapping = _fake_mapping(workload, config)
+    network_metrics = _estimate_network_metrics(workload, mapping, config)
+    allreduce_cycles = _simulate_allreduce_cycles(workload, config, shards, mapping)
+
+    w1 = max(int(compute_stage["expert_w1_proj"]), int(memory_stage["expert_w1_proj"]))
+    w3 = max(int(compute_stage["expert_w3_proj"]), int(memory_stage["expert_w3_proj"]))
+    w2 = max(int(compute_stage["expert_w2_proj"]), int(memory_stage["expert_w2_proj"]))
+    elem = int(compute_stage["elementwise_mul"])
+    ffn_path = max(w1, w3) + elem + w2
+    io_cycles = int(network_metrics["io_injection_cycles"])
+    net_cycles = int(network_metrics["network_cycles"])
+    comm_tail = max(net_cycles, io_cycles, int(allreduce_cycles))
+    total = _estimate_stage_overlap_latency(
+        compute_stage_cycles=compute_stage,
+        memory_stage_cycles=memory_stage,
+        network_cycles=net_cycles,
+        io_injection_cycles=io_cycles,
+        allreduce_cycles=int(allreduce_cycles),
+        partition_strategy=config.workload.partition_strategy,
+        tile_pipeline=getattr(config.workload, "tile_pipeline", False),
+    )
+
+    return {
+        "total_latency_cycles": total,
+        "ffn_path_cycles": ffn_path,
+        "comm_tail_cycles": comm_tail,
+        "w1_stage_cycles": w1,
+        "w3_stage_cycles": w3,
+        "elem_cycles": elem,
+        "w2_stage_cycles": w2,
+        "compute_w1": int(compute_stage["expert_w1_proj"]),
+        "compute_w3": int(compute_stage["expert_w3_proj"]),
+        "compute_w2": int(compute_stage["expert_w2_proj"]),
+        "compute_elem": elem,
+        "mem_w1": int(memory_stage["expert_w1_proj"]),
+        "mem_w3": int(memory_stage["expert_w3_proj"]),
+        "mem_w2": int(memory_stage["expert_w2_proj"]),
+        "io_injection_cycles": io_cycles,
+        "network_cycles": net_cycles,
+        "allreduce_cycles": int(allreduce_cycles),
+        "partition_strategy": config.workload.partition_strategy,
+        "partition_shards": shards,
+        "batch_size": int(workload.metadata["decode_tokens"]),
+        "noc_topology": config.network.noc.topology,
+        "now_topology": config.network.now.topology,
+        "noc_routing": config.network.noc.routing,
+        "now_routing": config.network.now.routing,
+        "tile_pipeline": getattr(config.workload, "tile_pipeline", False),
+    }
+
+
+def format_overlap_breakdown_markdown(breakdown: dict, title: str = "Latency Breakdown") -> str:
+    """Format overlap breakdown as markdown for reporting."""
+    lines = [
+        f"# {title}",
+        "",
+        "## Configuration",
+        f"- Partition: `{breakdown['partition_strategy']}` / shards={breakdown['partition_shards']}",
+        f"- Batch size: {breakdown['batch_size']}",
+        f"- NoC: `{breakdown['noc_topology']}:{breakdown['noc_routing']}`",
+        f"- NoW: `{breakdown['now_topology']}:{breakdown['now_routing']}`",
+        f"- Tile pipeline: {breakdown['tile_pipeline']}",
+        "",
+        "## Total Latency (max-path / stage-overlap model)",
+        f"- **Total**: {breakdown['total_latency_cycles']:,} cycles",
+        f"- FFN path: {breakdown['ffn_path_cycles']:,} cycles",
+        f"- Comm tail: {breakdown['comm_tail_cycles']:,} cycles",
+        "",
+        "## FFN Path Detail",
+        "```",
+        f"W1 = max(compute, mem) = max({breakdown['compute_w1']:,}, {breakdown['mem_w1']:,}) = {breakdown['w1_stage_cycles']:,}",
+        f"W3 = max(compute, mem) = max({breakdown['compute_w3']:,}, {breakdown['mem_w3']:,}) = {breakdown['w3_stage_cycles']:,}",
+        f"ElemMul = {breakdown['elem_cycles']:,}",
+        f"W2 = max(compute, mem) = max({breakdown['compute_w2']:,}, {breakdown['mem_w2']:,}) = {breakdown['w2_stage_cycles']:,}",
+        f"ffn_path = max(W1,W3) + Elem + W2 = max({breakdown['w1_stage_cycles']:,},{breakdown['w3_stage_cycles']:,}) + {breakdown['elem_cycles']:,} + {breakdown['w2_stage_cycles']:,} = {breakdown['ffn_path_cycles']:,}",
+        "```",
+        "",
+        "## Communication Tail",
+        "```",
+        f"comm_tail = max(network, io, allreduce)",
+        f"         = max({breakdown['network_cycles']:,}, {breakdown['io_injection_cycles']:,}, {breakdown['allreduce_cycles']:,})",
+        f"         = {breakdown['comm_tail_cycles']:,}",
+        "```",
+        "",
+        "## Verification",
+        f"total = ffn_path + comm_tail = {breakdown['ffn_path_cycles']:,} + {breakdown['comm_tail_cycles']:,} = {breakdown['ffn_path_cycles'] + breakdown['comm_tail_cycles']:,}",
+    ]
+    return "\n".join(lines)
 
 
 def _fake_mapping(workload, config: WSEConfig) -> _MappingProxy:

@@ -8,7 +8,11 @@ from pathlib import Path
 from wsesim.core.config import WSEConfig
 from wsesim.dse.engine import DSEEngine
 from wsesim.dse.evaluator_deepseek import evaluate_deepseek_v4_pro_ffn
-from wsesim.dse.pipeline_analysis import compute_pipeline_breakdown
+from wsesim.dse.pipeline_analysis import (
+    compute_overlap_breakdown,
+    compute_pipeline_breakdown,
+    format_overlap_breakdown_markdown,
+)
 from wsesim.dse.plot import (
     plot_bandwidth_utilization,
     plot_latency_breakdown,
@@ -51,6 +55,17 @@ def main() -> None:
         default=Path("outputs"),
         help="Directory to write DSE artifacts.",
     )
+    parser.add_argument(
+        "--partition-strategies",
+        nargs="+",
+        default=None,
+        help="Restrict partition search (e.g. col entwined_ring for N-split only).",
+    )
+    parser.add_argument(
+        "--breakdown-best",
+        action="store_true",
+        help="Write max-path overlap latency breakdown for the best trial.",
+    )
     args = parser.parse_args()
 
     base = WSEConfig()
@@ -64,13 +79,33 @@ def main() -> None:
 
     engine = DSEEngine(
         base_config=base,
-        strategy=RandomSearch(base, seed=args.seed),
+        strategy=RandomSearch(
+            base,
+            seed=args.seed,
+            partition_strategies=args.partition_strategies,
+        ),
         evaluator=evaluate_deepseek_v4_pro_ffn,
         workers=max(1, args.workers),
     )
     trials = engine.run_detailed(trials=max(1, args.trials))
     best = summarize_best_trial(trials)
     print("best:", best)
+
+    best_trial = max(trials, key=lambda trial: trial.score)
+    if args.breakdown_best:
+        breakdown = compute_overlap_breakdown(best_trial.config)
+        label = (
+            f"{best_trial.config.workload.partition_strategy}/"
+            f"s{best_trial.config.workload.partition_shards}/"
+            f"b{best_trial.config.workload.decode_tokens}/"
+            f"{best_trial.config.network.noc.topology}:{best_trial.config.network.now.topology}"
+        )
+        md = format_overlap_breakdown_markdown(breakdown, title=f"Best Trial Latency Breakdown — {label}")
+        breakdown_path = args.output_dir / "best_trial_latency_breakdown.md"
+        breakdown_path.parent.mkdir(parents=True, exist_ok=True)
+        breakdown_path.write_text(md, encoding="utf-8")
+        print("breakdown:", breakdown_path)
+        print(md)
 
     ranked = sorted(trials, key=lambda trial: trial.score, reverse=True)[:5]
     for idx, trial in enumerate(ranked, start=1):
