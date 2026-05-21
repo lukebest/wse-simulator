@@ -188,6 +188,30 @@ def test_deepseek_evaluator_responds_to_batch_size() -> None:
     assert large_result.total_latency_cycles > small_result.total_latency_cycles
 
 
+def test_partition_shards_for_2x2_reticle_is_batch_invariant() -> None:
+    base = WSEConfig()
+    base.workload.model_name = "deepseek_v4_pro_ffn_decode"
+    base.workload.num_routed_experts = 384
+    base.workload.num_shared_experts = 1
+    base.workload.top_k = 6
+    base.workload.partition_strategy = "col"
+    base.workload.partition_shards = 7
+    base.workload.mapping_strategy = "expert_affinity"
+    base.wafer.reticles_x = 2
+    base.wafer.reticles_y = 2
+
+    small_batch = deepcopy(base)
+    large_batch = deepcopy(base)
+    small_batch.workload.decode_tokens = 4
+    large_batch.workload.decode_tokens = 32
+
+    small_result = evaluate_deepseek_v4_pro_ffn(small_batch)
+    large_result = evaluate_deepseek_v4_pro_ffn(large_batch)
+
+    assert int(small_result.metadata["partition_shards"]) == 7
+    assert int(large_result.metadata["partition_shards"]) == 7
+
+
 def _make_base_cfg(num_experts: int = 8) -> WSEConfig:
     cfg = WSEConfig()
     cfg.workload.model_name = "deepseek_v4_pro_ffn_decode"

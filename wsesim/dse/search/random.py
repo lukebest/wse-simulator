@@ -59,10 +59,13 @@ class RandomSearch(SearchStrategy):
             ["round_robin", "nearest", "load_aware"]
         )
 
-        active_experts = min(
-            cfg.workload.top_k + cfg.workload.num_shared_experts,
-            cfg.workload.num_routed_experts + cfg.workload.num_shared_experts,
-        )
+        if cfg.wafer.reticles_x == 2 and cfg.wafer.reticles_y == 2:
+            active_experts = 1
+        else:
+            active_experts = min(
+                cfg.workload.top_k + cfg.workload.num_shared_experts,
+                cfg.workload.num_routed_experts + cfg.workload.num_shared_experts,
+            )
         max_shards = max(1, cfg.wafer.total_cores // max(1, active_experts))
         cfg.workload.partition_shards = min(cfg.workload.partition_shards, max_shards)
         return cfg

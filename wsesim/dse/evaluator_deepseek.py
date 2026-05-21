@@ -157,9 +157,14 @@ def _effective_partition_shards(workload, config: WSEConfig) -> int:
     if config.workload.partition_strategy == "expert":
         return 1
     requested = max(1, int(config.workload.partition_shards))
-    active_experts = int(workload.metadata.get("active_routed_experts", 0)) + int(
-        workload.metadata.get("num_shared_experts", 0)
-    )
+    if config.wafer.reticles_x == 2 and config.wafer.reticles_y == 2:
+        # In 2x2-reticle workload modeling, treat experts as a single active expert
+        # regardless of decode batch size when deriving shard feasibility.
+        active_experts = 1
+    else:
+        active_experts = int(workload.metadata.get("active_routed_experts", 0)) + int(
+            workload.metadata.get("num_shared_experts", 0)
+        )
     max_by_cores = max(1, config.wafer.total_cores // max(1, active_experts))
     return max(1, min(requested, max_by_cores))
 
