@@ -9,7 +9,10 @@ import simpy
 
 from wsesim.core.config import WSEConfig
 from wsesim.core.stats import SimResult
-from wsesim.network.collective import generate_ring_allreduce_traffic
+from wsesim.network.collective import (
+    generate_collective_traffic,
+    select_collective_algorithm,
+)
 from wsesim.network.flow_control.credit_vc import CreditBasedVCFlowControl
 from wsesim.network.flow_control.wormhole import WormholeFlowControl
 from wsesim.network.network import UnifiedNetwork
@@ -81,6 +84,7 @@ def evaluate_deepseek_v4_pro_ffn(config: WSEConfig) -> SimResult:
         partition_strategy=config.workload.partition_strategy,
     )
     memory_stall_cycles = max(1, sum(memory_stage_cycles.values()))
+    selected_collective_algorithm = _resolve_collective_algorithm(config, partition_shards)
     allreduce_cycles = _simulate_allreduce_cycles(workload, config, partition_shards, mapping)
     overlapped_latency_cycles = _estimate_stage_overlap_latency(
         compute_stage_cycles=compute_stage_cycles,
@@ -121,6 +125,7 @@ def evaluate_deepseek_v4_pro_ffn(config: WSEConfig) -> SimResult:
             "io_injection_cycles": int(network_metrics.get("io_injection_cycles", 0)),
             "partition_strategy": config.workload.partition_strategy,
             "partition_shards": partition_shards,
+            "collective_algorithm": selected_collective_algorithm,
             "allreduce_cycles": allreduce_cycles,
         },
     )
@@ -546,6 +551,7 @@ def _simulate_allreduce_cycles(
     workload, config: WSEConfig, partition_shards: int, mapping,
 ) -> int:
     """Simulate ring allreduce via SimPy instead of analytical formula."""
+    del mapping
     shards = max(1, partition_shards)
     strategy = config.workload.partition_strategy
     if shards <= 1 or strategy in {"expert", "row"}:
@@ -572,35 +578,44 @@ def _simulate_allreduce_cycles(
         return 0
 
     cores_per_reticle = max(1, config.wafer.cores_per_reticle)
-    compute_nodes = _reticle_compute_nodes(config)
-    noc_node_count = max(1, config.wafer.reticle_rows * config.wafer.reticle_cols)
-    if shards > len(compute_nodes) or shards > noc_node_count:
-        return _estimate_allreduce_cycles(workload, config, partition_shards)
+    ring_global = list(range(min(shards, max(1, config.wafer.total_cores))))
 
-    ring_nodes: list[int] = []
-    if shards <= len(compute_nodes):
-        ring_nodes = compute_nodes[:shards]
-    else:
-        ring_nodes = list(range(min(shards, noc_node_count)))
-
-    ring_global = [node for node in ring_nodes]
+    selected_algorithm = _resolve_collective_algorithm(config, shards)
 
     allreduce_mode = "entwined" if strategy == "entwined_ring" else "sequential"
     sim_experts = min(active_experts, 3)
 
-    traffic = generate_ring_allreduce_traffic(
-        participating_nodes=ring_global,
+    rows, cols = _factor_near_square(max(1, len(ring_global)))
+    traffic = generate_collective_traffic(
+        algorithm=selected_algorithm,
+        participating_nodes_global=ring_global,
+        cores_per_reticle=cores_per_reticle,
         payload_bytes_per_expert=payload_bytes,
         num_experts=sim_experts,
-        strategy=allreduce_mode,
+        topology_hint={"rows": rows, "cols": cols},
+        ring_strategy=allreduce_mode,
     )
     if not traffic:
         return 0
 
-    cycles = _run_noc_allreduce_simulation(traffic, config)
+    cycles, _ = _run_hierarchical_network_simulation(traffic, config)
     if active_experts > sim_experts:
         cycles = int(cycles * active_experts / sim_experts)
     return max(0, cycles)
+
+
+def _resolve_collective_algorithm(config: WSEConfig, shards: int) -> str:
+    requested_algorithm = (config.workload.collective_algorithm or "auto").strip().lower()
+    if requested_algorithm != "auto":
+        return requested_algorithm
+    return select_collective_algorithm(
+        partition_strategy=config.workload.partition_strategy,
+        noc_topology=config.network.noc.topology,
+        now_topology=config.network.now.topology,
+        shards=shards,
+        cores_per_reticle=max(1, config.wafer.cores_per_reticle),
+        reticle_count=max(1, config.wafer.reticle_count),
+    )
 
 
 def _run_noc_allreduce_simulation(
@@ -733,6 +748,14 @@ def _apply_enhanced_edge_bandwidth(network: UnifiedNetwork, enhanced_edges: set[
             network.links[(src, dst)].bandwidth_flits_per_cycle *= 2
         if (dst, src) in network.links:
             network.links[(dst, src)].bandwidth_flits_per_cycle *= 2
+
+
+def _factor_near_square(value: int) -> tuple[int, int]:
+    side = max(1, isqrt(max(1, value)))
+    for rows in range(side, 0, -1):
+        if value % rows == 0:
+            return rows, value // rows
+    return 1, max(1, value)
 
 
 def _run_hierarchical_network_simulation(

@@ -73,6 +73,11 @@ def main() -> None:
         help="Fix partition_shards for all trials (e.g. 176).",
     )
     parser.add_argument(
+        "--collective-algorithm",
+        default=None,
+        help="Fix collective algorithm for all trials (e.g. hierarchical, ring, auto).",
+    )
+    parser.add_argument(
         "--breakdown-best",
         action="store_true",
         help="Write max-path overlap latency breakdown for the best trial.",
@@ -91,6 +96,8 @@ def main() -> None:
         base.workload.partition_strategy = args.partition_strategy
     if args.partition_shards is not None:
         base.workload.partition_shards = args.partition_shards
+    if args.collective_algorithm is not None:
+        base.workload.collective_algorithm = args.collective_algorithm
 
     engine = DSEEngine(
         base_config=base,
@@ -100,6 +107,7 @@ def main() -> None:
             partition_strategies=args.partition_strategies,
             fixed_partition_strategy=args.partition_strategy,
             fixed_partition_shards=args.partition_shards,
+            fixed_collective_algorithm=args.collective_algorithm,
         ),
         evaluator=evaluate_deepseek_v4_pro_ffn,
         workers=max(1, args.workers),

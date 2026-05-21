@@ -327,3 +327,35 @@ def test_allreduce_simulated_no_magic_constant() -> None:
 
     source = inspect.getsource(evaluator_deepseek)
     assert "0.38" not in source, "Magic constant 0.38 should have been removed"
+
+
+def test_col_s176_auto_uses_hierarchical_without_fallback() -> None:
+    cfg = _make_base_cfg(num_experts=384)
+    cfg.workload.partition_strategy = "col"
+    cfg.workload.partition_shards = 176
+    cfg.workload.collective_algorithm = "auto"
+    cfg.workload.decode_tokens = 4
+    cfg.network.noc.topology = "mesh2d"
+    cfg.network.now.topology = "mesh2d"
+
+    result = evaluate_deepseek_v4_pro_ffn(cfg)
+    assert result.allreduce_cycles > 0
+    assert result.metadata["collective_algorithm"] == "hierarchical"
+
+
+def test_collective_algorithm_knob_changes_latency() -> None:
+    base = _make_base_cfg(num_experts=384)
+    base.workload.partition_strategy = "col"
+    base.workload.partition_shards = 16
+    base.workload.decode_tokens = 4
+    base.network.noc.topology = "butterfly"
+    base.network.now.topology = "mesh2d"
+
+    ring_cfg = deepcopy(base)
+    rhd_cfg = deepcopy(base)
+    ring_cfg.workload.collective_algorithm = "ring"
+    rhd_cfg.workload.collective_algorithm = "recursive_halving_doubling"
+
+    ring_result = evaluate_deepseek_v4_pro_ffn(ring_cfg)
+    rhd_result = evaluate_deepseek_v4_pro_ffn(rhd_cfg)
+    assert rhd_result.allreduce_cycles <= ring_result.allreduce_cycles

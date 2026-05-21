@@ -17,6 +17,7 @@ class RandomSearch(SearchStrategy):
         partition_strategies: list[str] | None = None,
         fixed_partition_strategy: str | None = None,
         fixed_partition_shards: int | None = None,
+        fixed_collective_algorithm: str | None = None,
     ) -> None:
         self.base = base
         self._rng = random.Random(seed)
@@ -27,6 +28,7 @@ class RandomSearch(SearchStrategy):
         ]
         self._fixed_partition_strategy = fixed_partition_strategy
         self._fixed_partition_shards = fixed_partition_shards
+        self._fixed_collective_algorithm = fixed_collective_algorithm
 
     def suggest(self, history: list[tuple[WSEConfig, float]]) -> WSEConfig:
         cfg = deepcopy(self.base)
@@ -39,6 +41,19 @@ class RandomSearch(SearchStrategy):
             cfg.workload.partition_shards = self._fixed_partition_shards
         else:
             cfg.workload.partition_shards = self._rng.choice([1, 2, 4, 7])
+        if self._fixed_collective_algorithm is not None:
+            cfg.workload.collective_algorithm = self._fixed_collective_algorithm
+        else:
+            cfg.workload.collective_algorithm = self._rng.choice(
+                [
+                    "auto",
+                    "ring",
+                    "recursive_halving_doubling",
+                    "2d_ring",
+                    "direct_allgather",
+                    "hierarchical",
+                ]
+            )
         cfg.workload.tile_pipeline = self._rng.choice([True, False])
 
         if self._fixed_partition_shards is None:

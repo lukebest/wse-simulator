@@ -106,7 +106,7 @@ class WorkloadConfig:
     capacity_factor: float = 1.25
     partition_strategy: str = "expert"
     partition_shards: int = 1
-    collective_algorithm: str = "ring"
+    collective_algorithm: str = "auto"
     tile_pipeline: bool = False
     mapping_strategy: str = "nearest_neighbor"
 
