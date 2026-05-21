@@ -78,6 +78,11 @@ def main() -> None:
         help="Fix collective algorithm for all trials (e.g. hierarchical, ring, auto).",
     )
     parser.add_argument(
+        "--collective-full-sim",
+        action="store_true",
+        help="Use full-precision collective SimPy (slower, disables shard/expert downsampling).",
+    )
+    parser.add_argument(
         "--breakdown-best",
         action="store_true",
         help="Write max-path overlap latency breakdown for the best trial.",
@@ -98,6 +103,7 @@ def main() -> None:
         base.workload.partition_shards = args.partition_shards
     if args.collective_algorithm is not None:
         base.workload.collective_algorithm = args.collective_algorithm
+    base.workload.collective_full_sim = bool(args.collective_full_sim)
 
     engine = DSEEngine(
         base_config=base,

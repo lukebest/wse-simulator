@@ -578,12 +578,23 @@ def _simulate_allreduce_cycles(
         return 0
 
     cores_per_reticle = max(1, config.wafer.cores_per_reticle)
-    ring_global = list(range(min(shards, max(1, config.wafer.total_cores))))
+    total_cores = max(1, config.wafer.total_cores)
+    full_sim = bool(getattr(config.workload, "collective_full_sim", False))
+    # Keep large-shard collectives tractable by default: simulate a representative
+    # subset and scale cycles back to requested shard count. Can be disabled by
+    # setting workload.collective_full_sim=True.
+    max_sim_shards = total_cores if full_sim else min(64, total_cores)
+    sim_shards = min(shards, max_sim_shards)
+    ring_global = list(range(min(sim_shards, total_cores)))
 
     selected_algorithm = _resolve_collective_algorithm(config, shards)
 
     allreduce_mode = "entwined" if strategy == "entwined_ring" else "sequential"
     sim_experts = min(active_experts, 3)
+    if full_sim:
+        sim_experts = active_experts
+    if shards > sim_shards:
+        sim_experts = 1
 
     rows, cols = _factor_near_square(max(1, len(ring_global)))
     traffic = generate_collective_traffic(
@@ -599,6 +610,8 @@ def _simulate_allreduce_cycles(
         return 0
 
     cycles, _ = _run_hierarchical_network_simulation(traffic, config)
+    if shards > sim_shards and not full_sim:
+        cycles = int(cycles * shards / max(1, sim_shards))
     if active_experts > sim_experts:
         cycles = int(cycles * active_experts / sim_experts)
     return max(0, cycles)
