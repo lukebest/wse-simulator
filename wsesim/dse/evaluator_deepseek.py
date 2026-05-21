@@ -573,12 +573,15 @@ def _simulate_allreduce_cycles(
 
     cores_per_reticle = max(1, config.wafer.cores_per_reticle)
     compute_nodes = _reticle_compute_nodes(config)
+    noc_node_count = max(1, config.wafer.reticle_rows * config.wafer.reticle_cols)
+    if shards > len(compute_nodes) or shards > noc_node_count:
+        return _estimate_allreduce_cycles(workload, config, partition_shards)
 
     ring_nodes: list[int] = []
     if shards <= len(compute_nodes):
         ring_nodes = compute_nodes[:shards]
     else:
-        ring_nodes = list(range(shards))
+        ring_nodes = list(range(min(shards, noc_node_count)))
 
     ring_global = [node for node in ring_nodes]
 

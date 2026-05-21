@@ -62,6 +62,17 @@ def main() -> None:
         help="Restrict partition search (e.g. col entwined_ring for N-split only).",
     )
     parser.add_argument(
+        "--partition-strategy",
+        default=None,
+        help="Fix partition strategy for all trials (e.g. col).",
+    )
+    parser.add_argument(
+        "--partition-shards",
+        type=int,
+        default=None,
+        help="Fix partition_shards for all trials (e.g. 176).",
+    )
+    parser.add_argument(
         "--breakdown-best",
         action="store_true",
         help="Write max-path overlap latency breakdown for the best trial.",
@@ -76,6 +87,10 @@ def main() -> None:
     base.workload.num_shared_experts = 1
     base.workload.top_k = 6
     base.workload.mapping_strategy = "expert_affinity"
+    if args.partition_strategy is not None:
+        base.workload.partition_strategy = args.partition_strategy
+    if args.partition_shards is not None:
+        base.workload.partition_shards = args.partition_shards
 
     engine = DSEEngine(
         base_config=base,
@@ -83,6 +98,8 @@ def main() -> None:
             base,
             seed=args.seed,
             partition_strategies=args.partition_strategies,
+            fixed_partition_strategy=args.partition_strategy,
+            fixed_partition_shards=args.partition_shards,
         ),
         evaluator=evaluate_deepseek_v4_pro_ffn,
         workers=max(1, args.workers),

@@ -15,6 +15,8 @@ class RandomSearch(SearchStrategy):
         base: WSEConfig,
         seed: int = 1234,
         partition_strategies: list[str] | None = None,
+        fixed_partition_strategy: str | None = None,
+        fixed_partition_shards: int | None = None,
     ) -> None:
         self.base = base
         self._rng = random.Random(seed)
@@ -23,20 +25,29 @@ class RandomSearch(SearchStrategy):
             "col",
             "k_split",
         ]
+        self._fixed_partition_strategy = fixed_partition_strategy
+        self._fixed_partition_shards = fixed_partition_shards
 
     def suggest(self, history: list[tuple[WSEConfig, float]]) -> WSEConfig:
         cfg = deepcopy(self.base)
         cfg.workload.decode_tokens = self._rng.choice([4, 16])
-        cfg.workload.partition_strategy = self._rng.choice(self._partition_strategies)
-        cfg.workload.partition_shards = self._rng.choice([1, 2, 4, 7])
+        if self._fixed_partition_strategy is not None:
+            cfg.workload.partition_strategy = self._fixed_partition_strategy
+        else:
+            cfg.workload.partition_strategy = self._rng.choice(self._partition_strategies)
+        if self._fixed_partition_shards is not None:
+            cfg.workload.partition_shards = self._fixed_partition_shards
+        else:
+            cfg.workload.partition_shards = self._rng.choice([1, 2, 4, 7])
         cfg.workload.tile_pipeline = self._rng.choice([True, False])
 
-        if cfg.workload.partition_strategy == "expert":
-            cfg.workload.partition_shards = 1
-        elif cfg.workload.partition_strategy == "row":
-            cfg.workload.partition_shards = 1
-        elif cfg.workload.partition_strategy == "block":
-            cfg.workload.partition_shards = self._rng.choice([1, 4])
+        if self._fixed_partition_shards is None:
+            if cfg.workload.partition_strategy == "expert":
+                cfg.workload.partition_shards = 1
+            elif cfg.workload.partition_strategy == "row":
+                cfg.workload.partition_shards = 1
+            elif cfg.workload.partition_strategy == "block":
+                cfg.workload.partition_shards = self._rng.choice([1, 4])
 
         cfg.network.noc.topology = self._rng.choice(
             ["mesh2d", "flat_butterfly", "butterfly", "supermesh_bi", "supermesh_alter"]
