@@ -51,6 +51,15 @@ def test_tdm_flat_butterfly_4x4_network_runs() -> None:
     assert net.stats.max_packet_latency > 0
 
 
+def test_tdm_flat_butterfly_4x4_route_colors() -> None:
+    topo = TDMFlatButterfly(k=2, n=4, rows=4, cols=4)
+    assert topo.route_color(0, 5) == 1
+    assert topo.route_color(0, 6) is None
+    min_c, color = topo.min_route_color(0, 6)
+    assert min_c == 2
+    assert color == 0
+
+
 def test_tdm_flat_butterfly_4x4_collective_traffic() -> None:
     traffic = generate_collective_traffic(
         algorithm="nd_dimension_exchange_allreduce",

@@ -1,9 +1,17 @@
 """Visualize and validate TDM color plans on 4x4 mesh (readable version).
 
+Semantics:
+- Each color = one conflict-free FB sub-topology slice on the physical mesh.
+- C is set by physical edge contention (NOT n).
+- For a known (src, dst): pick ONE color shared by ALL logical hops on the
+  dimension-order route; the flit keeps that color for its whole lifetime.
+
 How to read the outputs:
-- *_overview.png : physical mesh only; edge label = how many logical FB paths use that link (load).
-- *_colors.png   : one subplot per color; each curved arrow = one logical FB long link active in that color.
-- *_guide.png    : annotated example for quick orientation.
+- *_overview.png       : physical mesh; edge label = logical FB load (contention).
+- *_colors.png           : one subplot per color; curved arrow = logical FB link.
+- *_guide.png            : single logical link -> physical XY -> its color.
+- *_route_0_5.png        : k2_n4 only; worked example src=0 dst=5.
+- *_route_0_6.png        : k2_n4 only; worked example src=0 dst=6.
 """
 
 from __future__ import annotations
@@ -81,6 +89,23 @@ def _undirected_load(plan, topo: TDMFlatButterfly) -> dict[tuple[int, int], int]
     return merged
 
 
+def _logical_hops(topo: TDMFlatButterfly, src: int, dst: int) -> list[tuple[int, int, int]]:
+    """Dimension-order FB route as (u, v, dim) hops."""
+    hops: list[tuple[int, int, int]] = []
+    for u, v in topo.dim_order_route(src, dst):
+        dim = next(
+            d
+            for d in range(topo.n)
+            if topo.to_coords(u)[d] != topo.to_coords(v)[d]
+        )
+        hops.append((u, v, dim))
+    return hops
+
+
+def _route_color(topo: TDMFlatButterfly, src: int, dst: int) -> int | None:
+    return topo.route_color(src, dst)
+
+
 def _logical_links_in_color(plan, color: int) -> list[tuple[int, int, int]]:
     seen: set[tuple[int, int]] = set()
     links: list[tuple[int, int, int]] = []
@@ -102,6 +127,7 @@ def _draw_logical_arc(
     color: str,
     label: str | None = None,
     rad: float = 0.15,
+    lw: float = 2.0,
 ) -> None:
     x0, y0 = _node_xy(src, cols)
     x1, y1 = _node_xy(dst, cols)
@@ -110,7 +136,7 @@ def _draw_logical_arc(
         (x1, y1),
         arrowstyle="-|>",
         mutation_scale=12,
-        linewidth=2.0,
+        linewidth=lw,
         color=color,
         connectionstyle=f"arc3,rad={rad}",
         zorder=2,
@@ -195,8 +221,8 @@ def _plot_colors(topo: TDMFlatButterfly, out_path: Path) -> None:
         axes_list[idx].axis("off")
 
     fig.suptitle(
-        f"Each subplot = one TDM color (time slot). Curved arrow = logical FB long link.\n"
-        f"k={topo.k}, n={topo.n}, period C={plan.C}",
+        f"Each subplot = one TDM color = conflict-free FB sub-topology on physical mesh.\n"
+        f"k={topo.k}, n={topo.n}, C={plan.C} (physical lower bound={plan.color_lower_bound}, NOT n).",
         fontsize=11,
         y=1.02,
     )
@@ -255,10 +281,155 @@ def _plot_guide(topo: TDMFlatButterfly, out_path: Path) -> None:
     plt.close(fig)
 
 
+def _plot_route_guide(topo: TDMFlatButterfly, src: int, dst: int, out_path: Path) -> None:
+    """Worked example: pick one color for a multi-hop src->dst route."""
+    plan = topo.coloring()
+    hops = _logical_hops(topo, src, dst)
+    route_color_val = _route_color(topo, src, dst)
+    if route_color_val is None:
+        print(f"[WARN] default plan has no single color for {src}->{dst}; skip {out_path.name}")
+        return
+
+    palette = plt.get_cmap("tab10", max(plan.C, 1))
+    slot_color = palette(route_color_val)
+    hop_colors = ["#1f77b4", "#ff7f0e", "#2ca02c", "#d62728"]
+
+    fig, axes = plt.subplots(1, 3, figsize=(14, 4.8))
+
+    ax = axes[0]
+    _draw_mesh_grid(ax, topo.rows, topo.cols)
+    for i, (u, v, dim) in enumerate(hops):
+        c = hop_colors[i % len(hop_colors)]
+        _draw_logical_arc(ax, u, v, topo.cols, color=c, label=f"d{dim}: {u}->{v}", rad=0.22 - 0.08 * i)
+    sx, sy = _node_xy(src, topo.cols)
+    dx, dy = _node_xy(dst, topo.cols)
+    ax.scatter([sx], [sy], s=220, facecolors="none", edgecolors="tab:blue", linewidths=2, zorder=6)
+    ax.scatter([dx], [dy], s=220, facecolors="none", edgecolors="tab:red", linewidths=2, zorder=6)
+    hop_labels = " -> ".join(str(u) for u, _, _ in hops) + f" -> {dst}"
+    ax.set_title(
+        f"(a) Logical route {src} -> {dst}\n"
+        f"{len(hops)} FB hops (<= n={topo.n}): {hop_labels}"
+    )
+
+    ax = axes[1]
+    _draw_mesh_grid(ax, topo.rows, topo.cols)
+    for idx, (u, v, dim) in enumerate(_logical_links_in_color(plan, route_color_val)):
+        rad = 0.10 if idx % 2 == 0 else -0.10
+        _draw_logical_arc(ax, u, v, topo.cols, color=slot_color, rad=rad, lw=1.2)
+    for u, v, dim in hops:
+        _draw_logical_arc(
+            ax, u, v, topo.cols, color="black", label=f"{u}->{v} d{dim}", rad=0.25, lw=2.8,
+        )
+    ax.set_title(
+        f"(b) Pick color = {route_color_val} for whole lifetime\n"
+        f"all {len(hops)} hops belong to color {route_color_val} sub-topology"
+    )
+
+    ax = axes[2]
+    _draw_mesh_grid(ax, topo.rows, topo.cols)
+    phys_edges: list[tuple[int, int]] = []
+    for u, v, _ in hops:
+        for hop_src, hop_dst in topo.physical_path(u, v):
+            x0, y0 = _node_xy(hop_src, topo.cols)
+            x1, y1 = _node_xy(hop_dst, topo.cols)
+            ax.annotate(
+                "",
+                xy=(x1, y1),
+                xytext=(x0, y0),
+                arrowprops=dict(arrowstyle="-|>", color="tab:green", lw=2.8),
+                zorder=2,
+            )
+            phys_edges.append((hop_src, hop_dst))
+    ax.set_title(
+        f"(c) Physical XY hops (sequential, no shared edge)\n"
+        f"{phys_edges}  ->  non-blocking within color {route_color_val}"
+    )
+
+    fig.suptitle(
+        f"k={topo.k}, n={topo.n}: {src} -> {dst} uses color {route_color_val} "
+        f"(constant, <= {len(hops)} logical hops)",
+        fontsize=12,
+    )
+    fig.tight_layout()
+    fig.savefig(out_path, dpi=200, bbox_inches="tight")
+    plt.close(fig)
+
+
+def _plot_route_0_6_guide(topo: TDMFlatButterfly, out_path: Path) -> None:
+    """0->6: default greedy plan fails; show min-C path-aware fix."""
+    from wsesim.network.tdm_coloring import assign_colors_for_routes
+
+    src, dst = 0, 6
+    plan = topo.coloring()
+    hops = _logical_hops(topo, src, dst)
+    path_links = topo.dim_order_route(src, dst)
+    greedy_colors = [plan.color_of_logical[(u, v)] for u, v, _ in hops]
+    min_c, fixed_color = topo.min_route_color(src, dst)
+
+    links = topo.logical_links()
+    paths = {(u, v): topo.physical_path(u, v) for u, v, _ in links}
+    fixed_plan = assign_colors_for_routes(
+        links, paths, topo.physical_links(), force_monochrome_paths=[path_links]
+    )
+
+    hop_colors = ["#1f77b4", "#ff7f0e"]
+    fig, axes = plt.subplots(1, 4, figsize=(18, 4.8))
+
+    ax = axes[0]
+    _draw_mesh_grid(ax, topo.rows, topo.cols)
+    for i, (u, v, dim) in enumerate(hops):
+        _draw_logical_arc(ax, u, v, topo.cols, color=hop_colors[i], label=f"d{dim}: {u}->{v}", rad=0.22 - 0.08 * i)
+    ax.set_title(f"(a) Logical route 0->6\n0->2->6 ({len(hops)} hops)")
+
+    ax = axes[1]
+    _draw_mesh_grid(ax, topo.rows, topo.cols)
+    for i, (u, v, dim) in enumerate(hops):
+        c = hop_colors[i]
+        _draw_logical_arc(ax, u, v, topo.cols, color=c, label=f"color {greedy_colors[i]}", rad=0.22 - 0.08 * i)
+    ax.set_title(
+        f"(b) Default greedy plan: NO valid pick\n"
+        f"hop colors = {greedy_colors} (must be equal)"
+    )
+
+    ax = axes[2]
+    _draw_mesh_grid(ax, topo.rows, topo.cols)
+    slot = plt.get_cmap("tab10")(fixed_color if fixed_color is not None else 0)
+    for idx, (u, v, dim) in enumerate(_logical_links_in_color(fixed_plan, fixed_color or 0)):
+        _draw_logical_arc(ax, u, v, topo.cols, color=slot, rad=0.10 if idx % 2 == 0 else -0.10, lw=1.0)
+    for u, v, dim in hops:
+        _draw_logical_arc(ax, u, v, topo.cols, color="black", label=f"{u}->{v}", rad=0.25, lw=2.8)
+    ax.set_title(
+        f"(c) Path-aware fix: min C={min_c}, pick color {fixed_color}\n"
+        f"both hops share color {fixed_color}"
+    )
+
+    ax = axes[3]
+    _draw_mesh_grid(ax, topo.rows, topo.cols)
+    phys: list[tuple[int, int]] = []
+    for u, v, _ in hops:
+        for a, b in topo.physical_path(u, v):
+            x0, y0 = _node_xy(a, topo.cols)
+            x1, y1 = _node_xy(b, topo.cols)
+            ax.annotate("", xy=(x1, y1), xytext=(x0, y0),
+                        arrowprops=dict(arrowstyle="-|>", color="tab:green", lw=2.8), zorder=2)
+            phys.append((a, b))
+    ax.set_title(f"(d) Physical hops {phys}\nedge-disjoint -> non-blocking")
+
+    fig.suptitle(
+        f"k=2,n=4: 0->6 needs path-aware coloring; min C={min_c}, choose color {fixed_color}",
+        fontsize=12,
+    )
+    fig.tight_layout()
+    fig.savefig(out_path, dpi=200, bbox_inches="tight")
+    plt.close(fig)
+
+
 def _write_summary(topo: TDMFlatButterfly, out_path: Path) -> None:
     plan = topo.coloring()
     lines = [
         f"k={topo.k}, n={topo.n}, C={plan.C}, lower_bound={plan.color_lower_bound}",
+        "Each color = conflict-free FB sub-topology (C from physical mesh, NOT n).",
+        "Route rule: pick ONE color shared by all logical hops on the dim-order path.",
         "",
         "Node layout (row-major 4x4):",
         " 0  1  2  3",
@@ -276,6 +447,17 @@ def _write_summary(topo: TDMFlatButterfly, out_path: Path) -> None:
             lines.append(f"    {src}->{dst} dim{dim}, XY hops={len(hops)}")
         if len(links) > 6:
             lines.append(f"    ... {len(links) - 6} more")
+    if topo.k == 2 and topo.n == 4:
+        for src, dst in ((0, 5), (0, 6)):
+            hops = _logical_hops(topo, src, dst)
+            c = _route_color(topo, src, dst)
+            lines.extend(["", f"Example {src} -> {dst}:", f"  logical hops = {hops}"])
+            if c is not None:
+                lines.append(f"  default plan: pick color = {c}")
+            else:
+                min_c, fixed = topo.min_route_color(src, dst)
+                lines.append("  default plan: NO single color (hops disagree)")
+                lines.append(f"  path-aware min C={min_c}, pick color = {fixed}")
     out_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
@@ -287,6 +469,9 @@ def _render_case(k: int, n: int, out_dir: Path) -> None:
     _plot_overview(topo, out_dir / f"k{k}_n{n}_overview.png")
     _plot_colors(topo, out_dir / f"k{k}_n{n}_colors.png")
     _plot_guide(topo, out_dir / f"k{k}_n{n}_guide.png")
+    if k == 2 and n == 4:
+        _plot_route_guide(topo, 0, 5, out_dir / f"k{k}_n{n}_route_0_5.png")
+        _plot_route_0_6_guide(topo, out_dir / f"k{k}_n{n}_route_0_6.png")
     _write_summary(topo, out_dir / f"k{k}_n{n}_summary.txt")
 
 

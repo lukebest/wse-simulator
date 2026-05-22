@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from wsesim.network.tdm_coloring import ColorPlan, assign_colors
+from wsesim.network.tdm_coloring import ColorPlan, assign_colors, min_colors_for_route, route_color
 from wsesim.network.topology.base import Topology
 
 
@@ -122,6 +122,25 @@ class TDMFlatButterfly(Topology):
                 edges.append((down, node))
         return edges
 
+    def dim_order_route(self, src: int, dst: int) -> list[tuple[int, int]]:
+        """Dimension-order logical hops as directed (u, v) links."""
+        if src == dst:
+            return []
+        hops: list[tuple[int, int]] = []
+        cur = src
+        cur_coords = list(self.to_coords(cur))
+        dst_coords = self.to_coords(dst)
+        for dim in range(self.n):
+            if cur_coords[dim] == dst_coords[dim]:
+                continue
+            nxt_coords = list(cur_coords)
+            nxt_coords[dim] = dst_coords[dim]
+            nxt = self.to_node(tuple(nxt_coords))
+            hops.append((cur, nxt))
+            cur = nxt
+            cur_coords = nxt_coords
+        return hops
+
     def coloring(self) -> ColorPlan:
         if self._color_plan is None:
             links = self.logical_links()
@@ -132,3 +151,18 @@ class TDMFlatButterfly(Topology):
                 physical_links=self.physical_links(),
             )
         return self._color_plan
+
+    def route_color(self, src: int, dst: int) -> int | None:
+        """Color for constant-color dim-order routing, if the default plan allows it."""
+        return route_color(self.coloring(), self.dim_order_route(src, dst))
+
+    def min_route_color(self, src: int, dst: int) -> tuple[int, int | None]:
+        """Minimum C and color when this route alone is forced monochrome."""
+        links = self.logical_links()
+        paths = {(u, v): self.physical_path(u, v) for u, v, _ in links}
+        return min_colors_for_route(
+            logical_links=links,
+            physical_paths=paths,
+            physical_links=self.physical_links(),
+            route_path=self.dim_order_route(src, dst),
+        )
