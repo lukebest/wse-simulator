@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TDM FB · Color 数与 Mesh / FB 规模规律</title>
+<style>
+  :root { --bg:#0f1419; --panel:#1a2332; --text:#e8edf4; --muted:#94a3b8; --border:#2d3a4f; --accent:#2563eb; --ok:#16a34a; --warn:#eab308; --bad:#dc2626; }
+  * { box-sizing:border-box; }
+  body { margin:0; font-family:"IBM Plex Sans",system-ui,sans-serif; background:var(--bg); color:var(--text); line-height:1.65; }
+  header { padding:2rem; background:linear-gradient(135deg,#1e293b,#0f172a); border-bottom:1px solid var(--border); }
+  header h1 { margin:0 0 .5rem; font-size:1.65rem; }
+  header p { color:var(--muted); max-width:52rem; margin:.3rem 0; }
+  main { max-width:1100px; margin:0 auto; padding:2rem 1.5rem 3rem; }
+  section { margin-bottom:2rem; }
+  h2 { font-size:1.2rem; margin:0 0 .75rem; }
+  h3 { font-size:1rem; color:var(--muted); margin:1rem 0 .5rem; }
+  .panel { background:var(--panel); border:1px solid var(--border); border-radius:10px; padding:1.1rem 1.3rem; margin-bottom:1rem; }
+  .highlight { border-left:4px solid var(--accent); }
+  .answer { border-left:4px solid var(--ok); background:linear-gradient(90deg,rgba(22,163,74,.12),transparent); }
+  .answer .big { font-size:1.8rem; font-weight:700; color:#86efac; }
+  .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(200px,1fr)); gap:.75rem; }
+  .stat { background:var(--panel); border:1px solid var(--border); border-radius:8px; padding:.85rem 1rem; }
+  .stat .v { font-size:1.4rem; font-weight:700; }
+  .stat .l { font-size:.8rem; color:var(--muted); }
+  table { width:100%; border-collapse:collapse; font-size:.84rem; }
+  th,td { border:1px solid var(--border); padding:.45rem .6rem; text-align:left; }
+  th { background:#243044; position:sticky; top:0; }
+  tr.ok { background:rgba(22,163,74,.08); }
+  tr.over { opacity:.55; }
+  code { background:#243044; padding:.1rem .35rem; border-radius:3px; font-size:.88em; }
+  .formula { font-family:ui-monospace,monospace; background:#111827; border-radius:8px; padding:1rem; font-size:.9rem; overflow-x:auto; }
+  canvas { width:100%; max-width:900px; height:320px; background:#111827; border-radius:8px; display:block; margin:.5rem 0; }
+  .controls { display:flex; flex-wrap:wrap; gap:.5rem; align-items:center; margin:.75rem 0; }
+  select,input { background:#243044; color:var(--text); border:1px solid var(--border); border-radius:6px; padding:.35rem .5rem; }
+  .tag { display:inline-block; padding:.15rem .45rem; border-radius:4px; font-size:.75rem; font-weight:600; }
+  .tag.ok { background:rgba(22,163,74,.25); color:#86efac; }
+  .tag.warn { background:rgba(234,179,8,.2); color:#fde047; }
+  .tag.bad { background:rgba(220,38,38,.2); color:#fca5a5; }
+  footer { text-align:center; color:var(--muted); font-size:.75rem; padding:1.5rem; border-top:1px solid var(--border); }
+  ul { color:var(--muted); }
+  li { margin:.35rem 0; }
+</style>
+</head>
+<body>
+<header>
+  <h1>TDM Flattened Butterfly：Color 数 × Mesh 规模 × FB 规模</h1>
+  <p>基于 <code>wsesim</code> 物理 max-load 扫描（= 贪心着色下界 C）。约束：<code>kⁿ = S²</code>（S×S mesh，N=S² PE）。</p>
+</header>
+<main>
+
+<section class="panel answer">
+  <h2>Color = 24 时，最大支持多大 Mesh？</h2>
+  <p class="big">32 × 32（1024 PE）</p>
+  <p>在全部合法 (k,n) 配置中，<strong>最大且 C≤24</strong> 的为 <code>(k,n)=(2,10)</code>：<strong>C=21</strong>，逻辑链路 10240 条，逻辑直径 10 跳。</p>
+  <table style="margin-top:1rem">
+    <thead><tr><th>场景</th><th>最大 Mesh</th><th>推荐 (k,n)</th><th>C</th><th>说明</th></tr></thead>
+    <tbody>
+      <tr class="ok"><td><strong>任意 FB 配置</strong></td><td><strong>32×32</strong></td><td>(2,10)</td><td>21</td><td>全局最大（binary 高 flat）</td></tr>
+      <tr class="ok"><td>2-flat（n=2）</td><td><strong>9×9</strong></td><td>(9,2)</td><td>20</td><td>高 radix 短直径；10×10 已达 C=25</td></tr>
+      <tr class="ok"><td>与 WSE 文档常见 8×8 同级</td><td>8×8</td><td>(8,2)</td><td>16</td><td>2-flat 高 radix</td></tr>
+      <tr class="ok"><td>同 64 PE、最低 C</td><td>8×8</td><td>(2,6)</td><td>5</td><td>binary 6-flat</td></tr>
+      <tr class="ok"><td>16×16 可选</td><td>16×16</td><td>(2,8) / (4,4)</td><td>10 / 18</td><td>均 ≤24</td></tr>
+    </tbody>
+  </table>
+  <p style="color:var(--muted);font-size:.88rem;margin:.75rem 0 0">注意：C=24 是<strong>上界</strong>；具体 (k,n) 需 C≤24 且满足 kⁿ=S²。不存在单一「mesh 规模→C」映射——同一 S 上不同 (k,n) 的 C 可差 4× 以上。</p>
+</section>
+
+<section class="panel highlight">
+  <h2>核心规律</h2>
+  <div class="formula">C = max_{物理有向边 e} |{ 逻辑链路 ℓ : XY_route(ℓ) ∋ e }|  = color_lower_bound</div>
+  <ul>
+    <li><strong>C 不等于</strong>逻辑维度 n、逻辑链路数 L、或 mesh 边总数。</li>
+    <li><strong>C 等于</strong>最拥塞物理边上的逻辑路径条数（TDM 周期下界；已测配置贪心均达到）。</li>
+    <li>约束：<code>N = S² = kⁿ</code>，L = N·n·(k−1)。</li>
+    <li>同 N 下：<strong>k↑ n↓</strong> → L↑ 且 C↑（长组内链路多）；<strong>k=2 n↑</strong> → C 缓增，可撑更大 mesh。</li>
+  </ul>
+</section>
+
+<section>
+  <h2>经验公式</h2>
+  <div class="grid">
+    <div class="stat"><div class="v">C = ⌊k²/4⌋</div><div class="l">2-flat (n=2)，S×S mesh，k=S（实测 k=4…32）</div></div>
+    <div class="stat"><div class="v">C = (k−1)²</div><div class="l">例：8×8 (4,3) → C=9</div></div>
+    <div class="stat"><div class="v">C ≤ 24 → k≤9</div><div class="l">n=2 时：9×9 可行，10×10 超限 (C=25)</div></div>
+    <div class="stat"><div class="v">k=2 族</div><div class="l">n=4→C=2, n=6→5, n=8→10, n=10→21</div></div>
+  </div>
+</section>
+
+<section>
+  <h2>已文档化配置对照</h2>
+  <table>
+    <thead><tr><th>Mesh</th><th>(k,n)</th><th>N</th><th>L</th><th>C</th><th>C/N</th><th>逻辑直径</th></tr></thead>
+    <tbody>
+      <tr><td>4×4</td><td>(4,2)</td><td>16</td><td>96</td><td>4</td><td>25%</td><td>2</td></tr>
+      <tr><td>4×4</td><td>(2,4)</td><td>16</td><td>64</td><td>2</td><td>12.5%</td><td>4</td></tr>
+      <tr><td>8×8</td><td>(8,2)</td><td>64</td><td>896</td><td>16</td><td>25%</td><td>2</td></tr>
+      <tr><td>8×8</td><td>(4,3)</td><td>64</td><td>576</td><td>9</td><td>14%</td><td>3</td></tr>
+      <tr><td>8×8</td><td>(2,6)</td><td>64</td><td>384</td><td>5</td><td>7.8%</td><td>6</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section>
+  <h2>C 随 Mesh 规模变化（交互图）</h2>
+  <div class="controls">
+    <label>族：<select id="family">
+      <option value="n2">n=2（2-flat，k=S）</option>
+      <option value="k2">k=2（binary hypercube）</option>
+      <option value="all">全部配置（C≤24 高亮）</option>
+    </select></label>
+    <label>Color 上限：<input id="maxc" type="number" value="24" min="1" max="300" style="width:4rem"></label>
+  </div>
+  <canvas id="chart" width="900" height="320"></canvas>
+  <p style="color:var(--muted);font-size:.85rem">横轴：Mesh 边长 S；纵轴：Color 数 C。虚线 = 所选 Color 上限。</p>
+</section>
+
+<section>
+  <h2>全表：S≤32 合法 (k,n) 与 C</h2>
+  <div class="controls">
+    <label>筛选：<select id="filter">
+      <option value="all">全部</option>
+      <option value="ok">仅 C≤24</option>
+      <option value="n2">仅 n=2</option>
+      <option value="k2">仅 k=2</option>
+    </select></label>
+  </div>
+  <div style="max-height:420px;overflow:auto">
+    <table id="data-table"><thead><tr><th>Mesh</th><th>N</th><th>k</th><th>n</th><th>L</th><th>C</th><th>C≤24</th></tr></thead><tbody></tbody></table>
+  </div>
+</section>
+
+<section class="panel">
+  <h2>设计含义（Cerebras 24 Color）</h2>
+  <ul>
+    <li>若坚持 <strong>2-flat 高 radix</strong>（逻辑 2 跳、组内全连）：mesh 不宜超过 <strong>9×9</strong>。</li>
+    <li>若可接受 <strong>binary 多 flat</strong>（逻辑 10 跳）：单程序可覆盖 <strong>32×32 = 1024 PE</strong>（C=21，余 3 个 color 余量）。</li>
+    <li>8×8 (8,2) 用 C=16，余 8 个 color —— 与现有 4×4 (4,2) 用 C=4 占满下界 的比例类似。</li>
+    <li>选 (k,n) 是在 <strong>逻辑直径</strong>、<strong>链路数 L</strong>、<strong>TDM 周期 C</strong> 之间的权衡，不能只看 mesh 边长。</li>
+  </ul>
+</section>
+
+</main>
+<footer>docs/tdm_fb_color_scaling.html · wse-simulator TDM FB max-load scan</footer>
+
+<script>
+const SCAN = [{"side":2,"N":4,"k":2,"n":2,"C":1,"links":8},{"side":3,"N":9,"k":3,"n":2,"C":2,"links":36},{"side":4,"N":16,"k":4,"n":2,"C":4,"links":96},{"side":4,"N":16,"k":2,"n":4,"C":2,"links":64},{"side":5,"N":25,"k":5,"n":2,"C":6,"links":200},{"side":6,"N":36,"k":6,"n":2,"C":9,"links":360},{"side":7,"N":49,"k":7,"n":2,"C":12,"links":588},{"side":8,"N":64,"k":8,"n":2,"C":16,"links":896},{"side":8,"N":64,"k":4,"n":3,"C":9,"links":576},{"side":8,"N":64,"k":2,"n":6,"C":5,"links":384},{"side":9,"N":81,"k":9,"n":2,"C":20,"links":1296},{"side":9,"N":81,"k":3,"n":4,"C":8,"links":648},{"side":10,"N":100,"k":10,"n":2,"C":25,"links":1800},{"side":11,"N":121,"k":11,"n":2,"C":30,"links":2420},{"side":12,"N":144,"k":12,"n":2,"C":36,"links":3168},{"side":13,"N":169,"k":13,"n":2,"C":42,"links":4056},{"side":14,"N":196,"k":14,"n":2,"C":49,"links":5096},{"side":15,"N":225,"k":15,"n":2,"C":56,"links":6300},{"side":16,"N":256,"k":16,"n":2,"C":64,"links":7680},{"side":16,"N":256,"k":4,"n":4,"C":18,"links":3072},{"side":16,"N":256,"k":2,"n":8,"C":10,"links":2048},{"side":17,"N":289,"k":17,"n":2,"C":72,"links":9248},{"side":18,"N":324,"k":18,"n":2,"C":81,"links":11016},{"side":19,"N":361,"k":19,"n":2,"C":90,"links":12996},{"side":20,"N":400,"k":20,"n":2,"C":100,"links":15200},{"side":21,"N":441,"k":21,"n":2,"C":110,"links":17640},{"side":22,"N":484,"k":22,"n":2,"C":121,"links":20328},{"side":23,"N":529,"k":23,"n":2,"C":132,"links":23276},{"side":24,"N":576,"k":24,"n":2,"C":144,"links":26496},{"side":25,"N":625,"k":25,"n":2,"C":156,"links":30000},{"side":25,"N":625,"k":5,"n":4,"C":36,"links":10000},{"side":26,"N":676,"k":26,"n":2,"C":169,"links":33800},{"side":27,"N":729,"k":27,"n":2,"C":182,"links":37908},{"side":27,"N":729,"k":9,"n":3,"C":74,"links":17496},{"side":27,"N":729,"k":3,"n":6,"C":26,"links":8748},{"side":28,"N":784,"k":28,"n":2,"C":196,"links":42336},{"side":29,"N":841,"k":29,"n":2,"C":210,"links":47096},{"side":30,"N":900,"k":30,"n":2,"C":225,"links":52200},{"side":31,"N":961,"k":31,"n":2,"C":240,"links":57660},{"side":32,"N":1024,"k":32,"n":2,"C":256,"links":63488},{"side":32,"N":1024,"k":4,"n":5,"C":38,"links":15360},{"side":32,"N":1024,"k":2,"n":10,"C":21,"links":10240}];
+const MAX_C_DEFAULT = 24;
+
+function drawChart() {
+  const family = document.getElementById('family').value;
+  const maxC = +document.getElementById('maxc').value;
+  const canvas = document.getElementById('chart');
+  const ctx = canvas.getContext('2d');
+  const W = canvas.width, H = canvas.height;
+  ctx.clearRect(0,0,W,H);
+
+  let data = SCAN.slice();
+  if (family === 'n2') data = data.filter(d => d.n === 2);
+  else if (family === 'k2') data = data.filter(d => d.k === 2);
+  data.sort((a,b) => a.side - b.side);
+
+  const maxS = Math.max(...data.map(d => d.side), 10);
+  const maxVal = Math.max(...data.map(d => d.C), maxC) * 1.1;
+  const pad = { l: 55, r: 20, t: 20, b: 40 };
+  const pw = W - pad.l - pad.r, ph = H - pad.t - pad.b;
+
+  const x = s => pad.l + (s / maxS) * pw;
+  const y = c => pad.t + ph - (c / maxVal) * ph;
+
+  // grid
+  ctx.strokeStyle = '#334155'; ctx.lineWidth = 1;
+  for (let c = 0; c <= maxVal; c += Math.ceil(maxVal/8/5)*5 || 5) {
+    ctx.beginPath(); ctx.moveTo(pad.l, y(c)); ctx.lineTo(W-pad.r, y(c)); ctx.stroke();
+    ctx.fillStyle = '#64748b'; ctx.font = '11px monospace'; ctx.fillText(c, 4, y(c)+4);
+  }
+  for (let s = 0; s <= maxS; s += Math.max(1, Math.floor(maxS/8))) {
+    ctx.fillStyle = '#64748b'; ctx.fillText(s, x(s)-4, H-8);
+  }
+
+  // limit line
+  ctx.strokeStyle = '#eab308'; ctx.setLineDash([6,4]); ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.moveTo(pad.l, y(maxC)); ctx.lineTo(W-pad.r, y(maxC)); ctx.stroke();
+  ctx.setLineDash([]);
+  ctx.fillStyle = '#fde047'; ctx.fillText('C='+maxC, W-pad.r-40, y(maxC)-6);
+
+  // lines per family
+  ctx.strokeStyle = '#60a5fa'; ctx.lineWidth = 2;
+  ctx.beginPath();
+  data.forEach((d,i) => { const px=x(d.side), py=y(d.C); i?ctx.lineTo(px,py):ctx.moveTo(px,py); });
+  ctx.stroke();
+
+  // points
+  data.forEach(d => {
+    const ok = d.C <= maxC;
+    ctx.beginPath(); ctx.arc(x(d.side), y(d.C), ok?5:4, 0, Math.PI*2);
+    ctx.fillStyle = ok ? '#4ade80' : '#f87171'; ctx.fill();
+    if (d.side >= 8 && (family !== 'all' || d.C <= maxC+5)) {
+      ctx.fillStyle = '#94a3b8'; ctx.font = '10px monospace';
+      ctx.fillText(`(${d.k},${d.n})`, x(d.side)+6, y(d.C)-4);
+    }
+  });
+
+  ctx.fillStyle = '#94a3b8'; ctx.font = '12px sans-serif';
+  ctx.fillText('Mesh 边长 S', W/2-30, H-2);
+  ctx.save(); ctx.translate(14, H/2); ctx.rotate(-Math.PI/2);
+  ctx.fillText('Color 数 C', 0, 0); ctx.restore();
+}
+
+function fillTable() {
+  const filt = document.getElementById('filter').value;
+  const maxC = MAX_C_DEFAULT;
+  const tbody = document.querySelector('#data-table tbody');
+  tbody.innerHTML = '';
+  let rows = SCAN.slice().sort((a,b) => a.side - b.side || a.C - b.C);
+  if (filt === 'ok') rows = rows.filter(d => d.C <= maxC);
+  if (filt === 'n2') rows = rows.filter(d => d.n === 2);
+  if (filt === 'k2') rows = rows.filter(d => d.k === 2);
+  rows.forEach(d => {
+    const ok = d.C <= maxC;
+    const tr = document.createElement('tr');
+    if (ok) tr.className = 'ok'; else if (d.C > maxC) tr.className = 'over';
+    tr.innerHTML = `<td>${d.side}×${d.side}</td><td>${d.N}</td><td>${d.k}</td><td>${d.n}</td><td>${d.links}</td><td><strong>${d.C}</strong></td><td>${ok?'<span class="tag ok">✓</span>':'<span class="tag bad">✗</span>'}</td>`;
+    tbody.appendChild(tr);
+  });
+}
+
+document.getElementById('family').onchange = drawChart;
+document.getElementById('maxc').oninput = drawChart;
+document.getElementById('filter').onchange = fillTable;
+drawChart(); fillTable();
+</script>
+</body></html>
