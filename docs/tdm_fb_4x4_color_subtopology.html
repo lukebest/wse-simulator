@@ -1,0 +1,492 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>4×4 TDM Flattened Butterfly — 4 Color 子拓扑</title>
+<style>
+  :root { --bg:#0f1419; --panel:#1a2332; --text:#e8edf4; --muted:#94a3b8; --border:#2d3a4f; --mesh:#334155; }
+  * { box-sizing:border-box; }
+  body { margin:0; font-family:"IBM Plex Sans","Segoe UI",system-ui,sans-serif; background:var(--bg); color:var(--text); line-height:1.6; }
+  header.hero { padding:2.5rem 2rem 2rem; background:linear-gradient(135deg,#1e293b 0%,#0f172a 60%,#1a1a2e 100%); border-bottom:1px solid var(--border); }
+  header.hero h1 { margin:0 0 .5rem; font-size:1.75rem; }
+  header.hero p { margin:.25rem 0; color:var(--muted); max-width:52rem; }
+  main { max-width:1200px; margin:0 auto; padding:2rem 1.5rem 4rem; }
+  section { margin-bottom:2.5rem; }
+  h2 { font-size:1.25rem; margin:0 0 1rem; }
+  .summary-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(200px,1fr)); gap:1rem; margin:1.5rem 0; }
+  .stat { background:var(--panel); border:1px solid var(--border); border-radius:10px; padding:1rem 1.25rem; }
+  .stat .val { font-size:1.75rem; font-weight:700; }
+  .stat .lbl { color:var(--muted); font-size:.875rem; }
+  .node-ref { font-family:ui-monospace,monospace; background:var(--panel); border:1px solid var(--border); border-radius:8px; padding:1rem 1.25rem; white-space:pre; font-size:.9rem; }
+  table { width:100%; border-collapse:collapse; font-size:.9rem; }
+  th,td { border:1px solid var(--border); padding:.6rem .75rem; text-align:left; }
+  th { background:#243044; }
+  .lookup td.hi { text-align:center; font-family:ui-monospace,monospace; font-weight:600; }
+  .lookup th:first-child,.lookup td:first-child { text-align:center; }
+  .color-card { background:var(--panel); border:1px solid var(--border); border-radius:12px; padding:1.25rem 1.5rem 1.5rem; margin-bottom:2rem; }
+  .color-card.c0 { border-top:3px solid #2563eb; }
+  .color-card.c1 { border-top:3px solid #ea580c; }
+  .color-card.c2 { border-top:3px solid #16a34a; }
+  .color-card.c3 { border-top:3px solid #9333ea; }
+  .color-card header h2 { margin:0; }
+  .color-card .subtitle { color:var(--muted); margin:.25rem 0 1rem; font-size:.9rem; }
+  .svg-wrap { background:#111827; border-radius:8px; padding:.5rem; overflow:auto; }
+  .topo-svg { width:100%; max-width:520px; height:auto; display:block; margin:0 auto; }
+  .mesh-edge { stroke:var(--mesh); stroke-width:1.2; opacity:.45; }
+  .c0-link { stroke-width:3.5; opacity:.85; stroke-linecap:round; }
+  .node { fill:#1e293b; stroke:#64748b; stroke-width:1.5; }
+  .node-label { fill:#e2e8f0; font-size:13px; font-family:ui-monospace,monospace; text-anchor:middle; }
+  .logic-link { fill:none; stroke-width:2.4; opacity:.92; }
+  .legend { margin-top:.75rem; font-size:.85rem; color:var(--muted); display:flex; align-items:center; gap:.5rem; }
+  .dot { width:10px; height:10px; border-radius:50%; display:inline-block; }
+  .samples { font-family:ui-monospace,monospace; font-size:.82rem; color:var(--muted); line-height:1.7; }
+  details summary { cursor:pointer; color:var(--muted); font-size:.875rem; margin-top:.5rem; }
+  .tdm-bar { display:flex; gap:4px; margin:1rem 0; }
+  .tdm-slot { flex:1; text-align:center; padding:.75rem .5rem; border-radius:8px; font-size:.85rem; font-weight:600; }
+  .tdm-slot.s0 { background:rgba(37,99,235,.25); color:#93c5fd; }
+  .tdm-slot.s1 { background:rgba(234,88,12,.25); color:#fdba74; }
+  .tdm-slot.s2 { background:rgba(22,163,74,.25); color:#86efac; }
+  .tdm-slot.s3 { background:rgba(147,51,234,.25); color:#d8b4fe; }
+  code { background:#243044; padding:.15rem .4rem; border-radius:4px; font-size:.85em; }
+  footer { text-align:center; color:var(--muted); font-size:.8rem; padding:2rem; border-top:1px solid var(--border); }
+  @media (max-width:640px) { header.hero { padding:1.5rem 1rem; } main { padding:1rem; } }
+</style>
+</head>
+<body>
+<header class="hero">
+  <h1>4×4 Mesh 上的 4-ary, 2-flat Flattened Butterfly</h1>
+  <p>物理层：4×4 2D Mesh（16 PE）。逻辑层：4-ary, 2-flat FB（96 有向逻辑链路）。</p>
+  <p>通过 <strong>4 个 Color 时分复用</strong>物理链路；每个 Color 是一个静态路由、物理边不冲突的逻辑子拓扑，合并后构成完整 FB。</p>
+</header>
+<main>
+  <section>
+    <h2>核心结论</h2>
+    <div class="summary-grid">
+      <div class="stat"><div class="val">4</div><div class="lbl">TDM Color 数（物理边负载下界）</div></div>
+      <div class="stat"><div class="val">96</div><div class="lbl">有向逻辑链路总数</div></div>
+      <div class="stat"><div class="val">48+16+16+16</div><div class="lbl">C0 / C1 / C2 / C3 分配</div></div>
+      <div class="stat"><div class="val">≤2</div><div class="lbl">逻辑跳数上限</div></div>
+    </div>
+  </section>
+  <section>
+    <h2>节点编号（行优先）</h2>
+    <div class="node-ref"> 0   1   2   3     ← row 0
+ 4   5   6   7     ← row 1
+ 8   9  10  11     ← row 2
+12  13  14  15     ← row 3</div>
+  </section>
+  <section>
+    <h2>TDM 调度周期</h2>
+    <div class="tdm-bar">
+      <div class="tdm-slot s0">t≡0 mod 4<br>Color 0</div>
+      <div class="tdm-slot s1">t≡1 mod 4<br>Color 1</div>
+      <div class="tdm-slot s2">t≡2 mod 4<br>Color 2</div>
+      <div class="tdm-slot s3">t≡3 mod 4<br>Color 3</div>
+    </div>
+    <p style="color:var(--muted);font-size:.9rem;">数据按 (src,dst) 选定 Color，仅在该 Color 时隙传输。</p>
+  </section>
+  <section>
+    <h2>Color 分配规则</h2>
+    <table>
+      <thead><tr><th>Color</th><th>跳距</th><th>特征</th><th>每组链路数</th></tr></thead>
+      <tbody>
+        <tr><td>C0</td><td>1</td><td>邻接双向</td><td>6</td></tr>
+        <tr><td>C1</td><td>2</td><td>端点出发 n₀→n₂, n₃→n₁</td><td>2</td></tr>
+        <tr><td>C2</td><td>2</td><td>中间出发 n₁→n₃, n₂→n₀</td><td>2</td></tr>
+        <tr><td>C3</td><td>3</td><td>端到端双向</td><td>2</td></tr>
+      </tbody>
+    </table>
+  </section>
+  <section>
+    <h2>四个 Color 逻辑子拓扑</h2>
+    <p style="color:var(--muted);font-size:.9rem;margin-bottom:1.5rem;">圆圈内为节点 id。C0 用粗蓝双向 mesh 边；C1–C3 用弯曲有向箭头表示跨距逻辑链路。</p>
+    
+    <section class="color-card c0" id="color-0">
+      <header><h2>Color 0</h2>
+        <p class="subtitle">距离-1 邻接双向 (= 物理 Mesh) · 48 条有向逻辑链路</p></header>
+      <div class="svg-wrap"><svg viewBox="0 0 470 470" class="topo-svg" role="img" aria-label="Color 0 sub-topology">
+<defs>
+<marker id="arrow-0" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+  <path d="M 0 0 L 10 5 L 0 10 z" fill="#2563eb"/>
+</marker>
+</defs>
+<circle cx="70.0" cy="70.0" r="18" class="node"/>
+<text x="70.0" y="75.0" class="node-label">0</text>
+<circle cx="180.0" cy="70.0" r="18" class="node"/>
+<text x="180.0" y="75.0" class="node-label">1</text>
+<circle cx="290.0" cy="70.0" r="18" class="node"/>
+<text x="290.0" y="75.0" class="node-label">2</text>
+<circle cx="400.0" cy="70.0" r="18" class="node"/>
+<text x="400.0" y="75.0" class="node-label">3</text>
+<circle cx="70.0" cy="180.0" r="18" class="node"/>
+<text x="70.0" y="185.0" class="node-label">4</text>
+<circle cx="180.0" cy="180.0" r="18" class="node"/>
+<text x="180.0" y="185.0" class="node-label">5</text>
+<circle cx="290.0" cy="180.0" r="18" class="node"/>
+<text x="290.0" y="185.0" class="node-label">6</text>
+<circle cx="400.0" cy="180.0" r="18" class="node"/>
+<text x="400.0" y="185.0" class="node-label">7</text>
+<circle cx="70.0" cy="290.0" r="18" class="node"/>
+<text x="70.0" y="295.0" class="node-label">8</text>
+<circle cx="180.0" cy="290.0" r="18" class="node"/>
+<text x="180.0" y="295.0" class="node-label">9</text>
+<circle cx="290.0" cy="290.0" r="18" class="node"/>
+<text x="290.0" y="295.0" class="node-label">10</text>
+<circle cx="400.0" cy="290.0" r="18" class="node"/>
+<text x="400.0" y="295.0" class="node-label">11</text>
+<circle cx="70.0" cy="400.0" r="18" class="node"/>
+<text x="70.0" y="405.0" class="node-label">12</text>
+<circle cx="180.0" cy="400.0" r="18" class="node"/>
+<text x="180.0" y="405.0" class="node-label">13</text>
+<circle cx="290.0" cy="400.0" r="18" class="node"/>
+<text x="290.0" y="405.0" class="node-label">14</text>
+<circle cx="400.0" cy="400.0" r="18" class="node"/>
+<text x="400.0" y="405.0" class="node-label">15</text>
+<line x1="70" y1="70" x2="180" y2="70" class="c0-link" stroke="#2563eb"/>
+<polygon points="120.0,67.0 130.0,70.0 120.0,73.0" fill="#2563eb" opacity=".7"/>
+<polygon points="130.0,67.0 120.0,70.0 130.0,73.0" fill="#2563eb" opacity=".7"/>
+<line x1="70" y1="70" x2="70" y2="180" class="c0-link" stroke="#2563eb"/>
+<polygon points="67.0,120.0 70.0,130.0 73.0,120.0" fill="#2563eb" opacity=".7"/>
+<polygon points="67.0,130.0 70.0,120.0 73.0,130.0" fill="#2563eb" opacity=".7"/>
+<line x1="180" y1="70" x2="290" y2="70" class="c0-link" stroke="#2563eb"/>
+<polygon points="230.0,67.0 240.0,70.0 230.0,73.0" fill="#2563eb" opacity=".7"/>
+<polygon points="240.0,67.0 230.0,70.0 240.0,73.0" fill="#2563eb" opacity=".7"/>
+<line x1="180" y1="70" x2="180" y2="180" class="c0-link" stroke="#2563eb"/>
+<polygon points="177.0,120.0 180.0,130.0 183.0,120.0" fill="#2563eb" opacity=".7"/>
+<polygon points="177.0,130.0 180.0,120.0 183.0,130.0" fill="#2563eb" opacity=".7"/>
+<line x1="290" y1="70" x2="400" y2="70" class="c0-link" stroke="#2563eb"/>
+<polygon points="340.0,67.0 350.0,70.0 340.0,73.0" fill="#2563eb" opacity=".7"/>
+<polygon points="350.0,67.0 340.0,70.0 350.0,73.0" fill="#2563eb" opacity=".7"/>
+<line x1="290" y1="70" x2="290" y2="180" class="c0-link" stroke="#2563eb"/>
+<polygon points="287.0,120.0 290.0,130.0 293.0,120.0" fill="#2563eb" opacity=".7"/>
+<polygon points="287.0,130.0 290.0,120.0 293.0,130.0" fill="#2563eb" opacity=".7"/>
+<line x1="400" y1="70" x2="400" y2="180" class="c0-link" stroke="#2563eb"/>
+<polygon points="397.0,120.0 400.0,130.0 403.0,120.0" fill="#2563eb" opacity=".7"/>
+<polygon points="397.0,130.0 400.0,120.0 403.0,130.0" fill="#2563eb" opacity=".7"/>
+<line x1="70" y1="180" x2="180" y2="180" class="c0-link" stroke="#2563eb"/>
+<polygon points="120.0,177.0 130.0,180.0 120.0,183.0" fill="#2563eb" opacity=".7"/>
+<polygon points="130.0,177.0 120.0,180.0 130.0,183.0" fill="#2563eb" opacity=".7"/>
+<line x1="70" y1="180" x2="70" y2="290" class="c0-link" stroke="#2563eb"/>
+<polygon points="67.0,230.0 70.0,240.0 73.0,230.0" fill="#2563eb" opacity=".7"/>
+<polygon points="67.0,240.0 70.0,230.0 73.0,240.0" fill="#2563eb" opacity=".7"/>
+<line x1="180" y1="180" x2="290" y2="180" class="c0-link" stroke="#2563eb"/>
+<polygon points="230.0,177.0 240.0,180.0 230.0,183.0" fill="#2563eb" opacity=".7"/>
+<polygon points="240.0,177.0 230.0,180.0 240.0,183.0" fill="#2563eb" opacity=".7"/>
+<line x1="180" y1="180" x2="180" y2="290" class="c0-link" stroke="#2563eb"/>
+<polygon points="177.0,230.0 180.0,240.0 183.0,230.0" fill="#2563eb" opacity=".7"/>
+<polygon points="177.0,240.0 180.0,230.0 183.0,240.0" fill="#2563eb" opacity=".7"/>
+<line x1="290" y1="180" x2="400" y2="180" class="c0-link" stroke="#2563eb"/>
+<polygon points="340.0,177.0 350.0,180.0 340.0,183.0" fill="#2563eb" opacity=".7"/>
+<polygon points="350.0,177.0 340.0,180.0 350.0,183.0" fill="#2563eb" opacity=".7"/>
+<line x1="290" y1="180" x2="290" y2="290" class="c0-link" stroke="#2563eb"/>
+<polygon points="287.0,230.0 290.0,240.0 293.0,230.0" fill="#2563eb" opacity=".7"/>
+<polygon points="287.0,240.0 290.0,230.0 293.0,240.0" fill="#2563eb" opacity=".7"/>
+<line x1="400" y1="180" x2="400" y2="290" class="c0-link" stroke="#2563eb"/>
+<polygon points="397.0,230.0 400.0,240.0 403.0,230.0" fill="#2563eb" opacity=".7"/>
+<polygon points="397.0,240.0 400.0,230.0 403.0,240.0" fill="#2563eb" opacity=".7"/>
+<line x1="70" y1="290" x2="180" y2="290" class="c0-link" stroke="#2563eb"/>
+<polygon points="120.0,287.0 130.0,290.0 120.0,293.0" fill="#2563eb" opacity=".7"/>
+<polygon points="130.0,287.0 120.0,290.0 130.0,293.0" fill="#2563eb" opacity=".7"/>
+<line x1="70" y1="290" x2="70" y2="400" class="c0-link" stroke="#2563eb"/>
+<polygon points="67.0,340.0 70.0,350.0 73.0,340.0" fill="#2563eb" opacity=".7"/>
+<polygon points="67.0,350.0 70.0,340.0 73.0,350.0" fill="#2563eb" opacity=".7"/>
+<line x1="180" y1="290" x2="290" y2="290" class="c0-link" stroke="#2563eb"/>
+<polygon points="230.0,287.0 240.0,290.0 230.0,293.0" fill="#2563eb" opacity=".7"/>
+<polygon points="240.0,287.0 230.0,290.0 240.0,293.0" fill="#2563eb" opacity=".7"/>
+<line x1="180" y1="290" x2="180" y2="400" class="c0-link" stroke="#2563eb"/>
+<polygon points="177.0,340.0 180.0,350.0 183.0,340.0" fill="#2563eb" opacity=".7"/>
+<polygon points="177.0,350.0 180.0,340.0 183.0,350.0" fill="#2563eb" opacity=".7"/>
+<line x1="290" y1="290" x2="400" y2="290" class="c0-link" stroke="#2563eb"/>
+<polygon points="340.0,287.0 350.0,290.0 340.0,293.0" fill="#2563eb" opacity=".7"/>
+<polygon points="350.0,287.0 340.0,290.0 350.0,293.0" fill="#2563eb" opacity=".7"/>
+<line x1="290" y1="290" x2="290" y2="400" class="c0-link" stroke="#2563eb"/>
+<polygon points="287.0,340.0 290.0,350.0 293.0,340.0" fill="#2563eb" opacity=".7"/>
+<polygon points="287.0,350.0 290.0,340.0 293.0,350.0" fill="#2563eb" opacity=".7"/>
+<line x1="400" y1="290" x2="400" y2="400" class="c0-link" stroke="#2563eb"/>
+<polygon points="397.0,340.0 400.0,350.0 403.0,340.0" fill="#2563eb" opacity=".7"/>
+<polygon points="397.0,350.0 400.0,340.0 403.0,350.0" fill="#2563eb" opacity=".7"/>
+<line x1="70" y1="400" x2="180" y2="400" class="c0-link" stroke="#2563eb"/>
+<polygon points="120.0,397.0 130.0,400.0 120.0,403.0" fill="#2563eb" opacity=".7"/>
+<polygon points="130.0,397.0 120.0,400.0 130.0,403.0" fill="#2563eb" opacity=".7"/>
+<line x1="180" y1="400" x2="290" y2="400" class="c0-link" stroke="#2563eb"/>
+<polygon points="230.0,397.0 240.0,400.0 230.0,403.0" fill="#2563eb" opacity=".7"/>
+<polygon points="240.0,397.0 230.0,400.0 240.0,403.0" fill="#2563eb" opacity=".7"/>
+<line x1="290" y1="400" x2="400" y2="400" class="c0-link" stroke="#2563eb"/>
+<polygon points="340.0,397.0 350.0,400.0 340.0,403.0" fill="#2563eb" opacity=".7"/>
+<polygon points="350.0,397.0 340.0,400.0 350.0,403.0" fill="#2563eb" opacity=".7"/>
+</svg></div>
+      <div class="legend"><span class="dot" style="background:#2563eb"></span>粗蓝线 = 双向邻接逻辑链路（= 物理 mesh）</div>
+      <details><summary>链路样例</summary><p class="samples">0→1 (dim0)<br>0→4 (dim1)<br>1→0 (dim0)<br>1→2 (dim0)<br>1→5 (dim1)<br>2→1 (dim0)<br>2→3 (dim0)<br>2→6 (dim1)<br>… 共 48 条</p></details>
+    </section>
+    <section class="color-card c1" id="color-1">
+      <header><h2>Color 1</h2>
+        <p class="subtitle">距离-2 端点出发 · 16 条有向逻辑链路</p></header>
+      <div class="svg-wrap"><svg viewBox="0 0 470 470" class="topo-svg" role="img" aria-label="Color 1 sub-topology">
+<defs>
+<marker id="arrow-1" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+  <path d="M 0 0 L 10 5 L 0 10 z" fill="#ea580c"/>
+</marker>
+</defs>
+<circle cx="70.0" cy="70.0" r="18" class="node"/>
+<text x="70.0" y="75.0" class="node-label">0</text>
+<circle cx="180.0" cy="70.0" r="18" class="node"/>
+<text x="180.0" y="75.0" class="node-label">1</text>
+<circle cx="290.0" cy="70.0" r="18" class="node"/>
+<text x="290.0" y="75.0" class="node-label">2</text>
+<circle cx="400.0" cy="70.0" r="18" class="node"/>
+<text x="400.0" y="75.0" class="node-label">3</text>
+<circle cx="70.0" cy="180.0" r="18" class="node"/>
+<text x="70.0" y="185.0" class="node-label">4</text>
+<circle cx="180.0" cy="180.0" r="18" class="node"/>
+<text x="180.0" y="185.0" class="node-label">5</text>
+<circle cx="290.0" cy="180.0" r="18" class="node"/>
+<text x="290.0" y="185.0" class="node-label">6</text>
+<circle cx="400.0" cy="180.0" r="18" class="node"/>
+<text x="400.0" y="185.0" class="node-label">7</text>
+<circle cx="70.0" cy="290.0" r="18" class="node"/>
+<text x="70.0" y="295.0" class="node-label">8</text>
+<circle cx="180.0" cy="290.0" r="18" class="node"/>
+<text x="180.0" y="295.0" class="node-label">9</text>
+<circle cx="290.0" cy="290.0" r="18" class="node"/>
+<text x="290.0" y="295.0" class="node-label">10</text>
+<circle cx="400.0" cy="290.0" r="18" class="node"/>
+<text x="400.0" y="295.0" class="node-label">11</text>
+<circle cx="70.0" cy="400.0" r="18" class="node"/>
+<text x="70.0" y="405.0" class="node-label">12</text>
+<circle cx="180.0" cy="400.0" r="18" class="node"/>
+<text x="180.0" y="405.0" class="node-label">13</text>
+<circle cx="290.0" cy="400.0" r="18" class="node"/>
+<text x="290.0" y="405.0" class="node-label">14</text>
+<circle cx="400.0" cy="400.0" r="18" class="node"/>
+<text x="400.0" y="405.0" class="node-label">15</text>
+<line x1="70" y1="70" x2="180" y2="70" class="mesh-edge"/>
+<line x1="70" y1="70" x2="70" y2="180" class="mesh-edge"/>
+<line x1="180" y1="70" x2="290" y2="70" class="mesh-edge"/>
+<line x1="180" y1="70" x2="180" y2="180" class="mesh-edge"/>
+<line x1="290" y1="70" x2="400" y2="70" class="mesh-edge"/>
+<line x1="290" y1="70" x2="290" y2="180" class="mesh-edge"/>
+<line x1="400" y1="70" x2="400" y2="180" class="mesh-edge"/>
+<line x1="70" y1="180" x2="180" y2="180" class="mesh-edge"/>
+<line x1="70" y1="180" x2="70" y2="290" class="mesh-edge"/>
+<line x1="180" y1="180" x2="290" y2="180" class="mesh-edge"/>
+<line x1="180" y1="180" x2="180" y2="290" class="mesh-edge"/>
+<line x1="290" y1="180" x2="400" y2="180" class="mesh-edge"/>
+<line x1="290" y1="180" x2="290" y2="290" class="mesh-edge"/>
+<line x1="400" y1="180" x2="400" y2="290" class="mesh-edge"/>
+<line x1="70" y1="290" x2="180" y2="290" class="mesh-edge"/>
+<line x1="70" y1="290" x2="70" y2="400" class="mesh-edge"/>
+<line x1="180" y1="290" x2="290" y2="290" class="mesh-edge"/>
+<line x1="180" y1="290" x2="180" y2="400" class="mesh-edge"/>
+<line x1="290" y1="290" x2="400" y2="290" class="mesh-edge"/>
+<line x1="290" y1="290" x2="290" y2="400" class="mesh-edge"/>
+<line x1="400" y1="290" x2="400" y2="400" class="mesh-edge"/>
+<line x1="70" y1="400" x2="180" y2="400" class="mesh-edge"/>
+<line x1="180" y1="400" x2="290" y2="400" class="mesh-edge"/>
+<line x1="290" y1="400" x2="400" y2="400" class="mesh-edge"/>
+<path d="M 70.0 70.0 Q 180.0 16.0 290.0 70.0" class="logic-link" stroke="#ea580c" marker-end="url(#arrow-1)"/>
+<path d="M 70.0 70.0 Q 16.0 180.0 70.0 290.0" class="logic-link" stroke="#ea580c" marker-end="url(#arrow-1)"/>
+<path d="M 180.0 70.0 Q 126.0 180.0 180.0 290.0" class="logic-link" stroke="#ea580c" marker-end="url(#arrow-1)"/>
+<path d="M 290.0 70.0 Q 236.0 180.0 290.0 290.0" class="logic-link" stroke="#ea580c" marker-end="url(#arrow-1)"/>
+<path d="M 400.0 70.0 Q 290.0 124.0 180.0 70.0" class="logic-link" stroke="#ea580c" marker-end="url(#arrow-1)"/>
+<path d="M 400.0 70.0 Q 346.0 180.0 400.0 290.0" class="logic-link" stroke="#ea580c" marker-end="url(#arrow-1)"/>
+<path d="M 70.0 180.0 Q 180.0 126.0 290.0 180.0" class="logic-link" stroke="#ea580c" marker-end="url(#arrow-1)"/>
+<path d="M 400.0 180.0 Q 290.0 234.0 180.0 180.0" class="logic-link" stroke="#ea580c" marker-end="url(#arrow-1)"/>
+<path d="M 70.0 290.0 Q 180.0 236.0 290.0 290.0" class="logic-link" stroke="#ea580c" marker-end="url(#arrow-1)"/>
+<path d="M 400.0 290.0 Q 290.0 344.0 180.0 290.0" class="logic-link" stroke="#ea580c" marker-end="url(#arrow-1)"/>
+<path d="M 70.0 400.0 Q 180.0 346.0 290.0 400.0" class="logic-link" stroke="#ea580c" marker-end="url(#arrow-1)"/>
+<path d="M 70.0 400.0 Q 124.0 290.0 70.0 180.0" class="logic-link" stroke="#ea580c" marker-end="url(#arrow-1)"/>
+<path d="M 180.0 400.0 Q 234.0 290.0 180.0 180.0" class="logic-link" stroke="#ea580c" marker-end="url(#arrow-1)"/>
+<path d="M 290.0 400.0 Q 344.0 290.0 290.0 180.0" class="logic-link" stroke="#ea580c" marker-end="url(#arrow-1)"/>
+<path d="M 400.0 400.0 Q 290.0 454.0 180.0 400.0" class="logic-link" stroke="#ea580c" marker-end="url(#arrow-1)"/>
+<path d="M 400.0 400.0 Q 454.0 290.0 400.0 180.0" class="logic-link" stroke="#ea580c" marker-end="url(#arrow-1)"/>
+</svg></div>
+      <div class="legend"><span class="dot" style="background:#ea580c"></span>弯曲箭头 = 该 Color 时隙内激活的逻辑 FB 长链路</div>
+      <details><summary>链路样例</summary><p class="samples">0→2 (dim0)<br>0→8 (dim1)<br>1→9 (dim1)<br>2→10 (dim1)<br>3→1 (dim0)<br>3→11 (dim1)<br>4→6 (dim0)<br>7→5 (dim0)<br>… 共 16 条</p></details>
+    </section>
+    <section class="color-card c2" id="color-2">
+      <header><h2>Color 2</h2>
+        <p class="subtitle">距离-2 中间出发 · 16 条有向逻辑链路</p></header>
+      <div class="svg-wrap"><svg viewBox="0 0 470 470" class="topo-svg" role="img" aria-label="Color 2 sub-topology">
+<defs>
+<marker id="arrow-2" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+  <path d="M 0 0 L 10 5 L 0 10 z" fill="#16a34a"/>
+</marker>
+</defs>
+<circle cx="70.0" cy="70.0" r="18" class="node"/>
+<text x="70.0" y="75.0" class="node-label">0</text>
+<circle cx="180.0" cy="70.0" r="18" class="node"/>
+<text x="180.0" y="75.0" class="node-label">1</text>
+<circle cx="290.0" cy="70.0" r="18" class="node"/>
+<text x="290.0" y="75.0" class="node-label">2</text>
+<circle cx="400.0" cy="70.0" r="18" class="node"/>
+<text x="400.0" y="75.0" class="node-label">3</text>
+<circle cx="70.0" cy="180.0" r="18" class="node"/>
+<text x="70.0" y="185.0" class="node-label">4</text>
+<circle cx="180.0" cy="180.0" r="18" class="node"/>
+<text x="180.0" y="185.0" class="node-label">5</text>
+<circle cx="290.0" cy="180.0" r="18" class="node"/>
+<text x="290.0" y="185.0" class="node-label">6</text>
+<circle cx="400.0" cy="180.0" r="18" class="node"/>
+<text x="400.0" y="185.0" class="node-label">7</text>
+<circle cx="70.0" cy="290.0" r="18" class="node"/>
+<text x="70.0" y="295.0" class="node-label">8</text>
+<circle cx="180.0" cy="290.0" r="18" class="node"/>
+<text x="180.0" y="295.0" class="node-label">9</text>
+<circle cx="290.0" cy="290.0" r="18" class="node"/>
+<text x="290.0" y="295.0" class="node-label">10</text>
+<circle cx="400.0" cy="290.0" r="18" class="node"/>
+<text x="400.0" y="295.0" class="node-label">11</text>
+<circle cx="70.0" cy="400.0" r="18" class="node"/>
+<text x="70.0" y="405.0" class="node-label">12</text>
+<circle cx="180.0" cy="400.0" r="18" class="node"/>
+<text x="180.0" y="405.0" class="node-label">13</text>
+<circle cx="290.0" cy="400.0" r="18" class="node"/>
+<text x="290.0" y="405.0" class="node-label">14</text>
+<circle cx="400.0" cy="400.0" r="18" class="node"/>
+<text x="400.0" y="405.0" class="node-label">15</text>
+<line x1="70" y1="70" x2="180" y2="70" class="mesh-edge"/>
+<line x1="70" y1="70" x2="70" y2="180" class="mesh-edge"/>
+<line x1="180" y1="70" x2="290" y2="70" class="mesh-edge"/>
+<line x1="180" y1="70" x2="180" y2="180" class="mesh-edge"/>
+<line x1="290" y1="70" x2="400" y2="70" class="mesh-edge"/>
+<line x1="290" y1="70" x2="290" y2="180" class="mesh-edge"/>
+<line x1="400" y1="70" x2="400" y2="180" class="mesh-edge"/>
+<line x1="70" y1="180" x2="180" y2="180" class="mesh-edge"/>
+<line x1="70" y1="180" x2="70" y2="290" class="mesh-edge"/>
+<line x1="180" y1="180" x2="290" y2="180" class="mesh-edge"/>
+<line x1="180" y1="180" x2="180" y2="290" class="mesh-edge"/>
+<line x1="290" y1="180" x2="400" y2="180" class="mesh-edge"/>
+<line x1="290" y1="180" x2="290" y2="290" class="mesh-edge"/>
+<line x1="400" y1="180" x2="400" y2="290" class="mesh-edge"/>
+<line x1="70" y1="290" x2="180" y2="290" class="mesh-edge"/>
+<line x1="70" y1="290" x2="70" y2="400" class="mesh-edge"/>
+<line x1="180" y1="290" x2="290" y2="290" class="mesh-edge"/>
+<line x1="180" y1="290" x2="180" y2="400" class="mesh-edge"/>
+<line x1="290" y1="290" x2="400" y2="290" class="mesh-edge"/>
+<line x1="290" y1="290" x2="290" y2="400" class="mesh-edge"/>
+<line x1="400" y1="290" x2="400" y2="400" class="mesh-edge"/>
+<line x1="70" y1="400" x2="180" y2="400" class="mesh-edge"/>
+<line x1="180" y1="400" x2="290" y2="400" class="mesh-edge"/>
+<line x1="290" y1="400" x2="400" y2="400" class="mesh-edge"/>
+<path d="M 180.0 70.0 Q 290.0 16.0 400.0 70.0" class="logic-link" stroke="#16a34a" marker-end="url(#arrow-2)"/>
+<path d="M 290.0 70.0 Q 180.0 124.0 70.0 70.0" class="logic-link" stroke="#16a34a" marker-end="url(#arrow-2)"/>
+<path d="M 70.0 180.0 Q 16.0 290.0 70.0 400.0" class="logic-link" stroke="#16a34a" marker-end="url(#arrow-2)"/>
+<path d="M 180.0 180.0 Q 290.0 126.0 400.0 180.0" class="logic-link" stroke="#16a34a" marker-end="url(#arrow-2)"/>
+<path d="M 180.0 180.0 Q 126.0 290.0 180.0 400.0" class="logic-link" stroke="#16a34a" marker-end="url(#arrow-2)"/>
+<path d="M 290.0 180.0 Q 180.0 234.0 70.0 180.0" class="logic-link" stroke="#16a34a" marker-end="url(#arrow-2)"/>
+<path d="M 290.0 180.0 Q 236.0 290.0 290.0 400.0" class="logic-link" stroke="#16a34a" marker-end="url(#arrow-2)"/>
+<path d="M 400.0 180.0 Q 346.0 290.0 400.0 400.0" class="logic-link" stroke="#16a34a" marker-end="url(#arrow-2)"/>
+<path d="M 70.0 290.0 Q 124.0 180.0 70.0 70.0" class="logic-link" stroke="#16a34a" marker-end="url(#arrow-2)"/>
+<path d="M 180.0 290.0 Q 290.0 236.0 400.0 290.0" class="logic-link" stroke="#16a34a" marker-end="url(#arrow-2)"/>
+<path d="M 180.0 290.0 Q 234.0 180.0 180.0 70.0" class="logic-link" stroke="#16a34a" marker-end="url(#arrow-2)"/>
+<path d="M 290.0 290.0 Q 180.0 344.0 70.0 290.0" class="logic-link" stroke="#16a34a" marker-end="url(#arrow-2)"/>
+<path d="M 290.0 290.0 Q 344.0 180.0 290.0 70.0" class="logic-link" stroke="#16a34a" marker-end="url(#arrow-2)"/>
+<path d="M 400.0 290.0 Q 454.0 180.0 400.0 70.0" class="logic-link" stroke="#16a34a" marker-end="url(#arrow-2)"/>
+<path d="M 180.0 400.0 Q 290.0 346.0 400.0 400.0" class="logic-link" stroke="#16a34a" marker-end="url(#arrow-2)"/>
+<path d="M 290.0 400.0 Q 180.0 454.0 70.0 400.0" class="logic-link" stroke="#16a34a" marker-end="url(#arrow-2)"/>
+</svg></div>
+      <div class="legend"><span class="dot" style="background:#16a34a"></span>弯曲箭头 = 该 Color 时隙内激活的逻辑 FB 长链路</div>
+      <details><summary>链路样例</summary><p class="samples">1→3 (dim0)<br>2→0 (dim0)<br>4→12 (dim1)<br>5→7 (dim0)<br>5→13 (dim1)<br>6→4 (dim0)<br>6→14 (dim1)<br>7→15 (dim1)<br>… 共 16 条</p></details>
+    </section>
+    <section class="color-card c3" id="color-3">
+      <header><h2>Color 3</h2>
+        <p class="subtitle">距离-3 端到端双向 · 16 条有向逻辑链路</p></header>
+      <div class="svg-wrap"><svg viewBox="0 0 470 470" class="topo-svg" role="img" aria-label="Color 3 sub-topology">
+<defs>
+<marker id="arrow-3" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+  <path d="M 0 0 L 10 5 L 0 10 z" fill="#9333ea"/>
+</marker>
+</defs>
+<circle cx="70.0" cy="70.0" r="18" class="node"/>
+<text x="70.0" y="75.0" class="node-label">0</text>
+<circle cx="180.0" cy="70.0" r="18" class="node"/>
+<text x="180.0" y="75.0" class="node-label">1</text>
+<circle cx="290.0" cy="70.0" r="18" class="node"/>
+<text x="290.0" y="75.0" class="node-label">2</text>
+<circle cx="400.0" cy="70.0" r="18" class="node"/>
+<text x="400.0" y="75.0" class="node-label">3</text>
+<circle cx="70.0" cy="180.0" r="18" class="node"/>
+<text x="70.0" y="185.0" class="node-label">4</text>
+<circle cx="180.0" cy="180.0" r="18" class="node"/>
+<text x="180.0" y="185.0" class="node-label">5</text>
+<circle cx="290.0" cy="180.0" r="18" class="node"/>
+<text x="290.0" y="185.0" class="node-label">6</text>
+<circle cx="400.0" cy="180.0" r="18" class="node"/>
+<text x="400.0" y="185.0" class="node-label">7</text>
+<circle cx="70.0" cy="290.0" r="18" class="node"/>
+<text x="70.0" y="295.0" class="node-label">8</text>
+<circle cx="180.0" cy="290.0" r="18" class="node"/>
+<text x="180.0" y="295.0" class="node-label">9</text>
+<circle cx="290.0" cy="290.0" r="18" class="node"/>
+<text x="290.0" y="295.0" class="node-label">10</text>
+<circle cx="400.0" cy="290.0" r="18" class="node"/>
+<text x="400.0" y="295.0" class="node-label">11</text>
+<circle cx="70.0" cy="400.0" r="18" class="node"/>
+<text x="70.0" y="405.0" class="node-label">12</text>
+<circle cx="180.0" cy="400.0" r="18" class="node"/>
+<text x="180.0" y="405.0" class="node-label">13</text>
+<circle cx="290.0" cy="400.0" r="18" class="node"/>
+<text x="290.0" y="405.0" class="node-label">14</text>
+<circle cx="400.0" cy="400.0" r="18" class="node"/>
+<text x="400.0" y="405.0" class="node-label">15</text>
+<line x1="70" y1="70" x2="180" y2="70" class="mesh-edge"/>
+<line x1="70" y1="70" x2="70" y2="180" class="mesh-edge"/>
+<line x1="180" y1="70" x2="290" y2="70" class="mesh-edge"/>
+<line x1="180" y1="70" x2="180" y2="180" class="mesh-edge"/>
+<line x1="290" y1="70" x2="400" y2="70" class="mesh-edge"/>
+<line x1="290" y1="70" x2="290" y2="180" class="mesh-edge"/>
+<line x1="400" y1="70" x2="400" y2="180" class="mesh-edge"/>
+<line x1="70" y1="180" x2="180" y2="180" class="mesh-edge"/>
+<line x1="70" y1="180" x2="70" y2="290" class="mesh-edge"/>
+<line x1="180" y1="180" x2="290" y2="180" class="mesh-edge"/>
+<line x1="180" y1="180" x2="180" y2="290" class="mesh-edge"/>
+<line x1="290" y1="180" x2="400" y2="180" class="mesh-edge"/>
+<line x1="290" y1="180" x2="290" y2="290" class="mesh-edge"/>
+<line x1="400" y1="180" x2="400" y2="290" class="mesh-edge"/>
+<line x1="70" y1="290" x2="180" y2="290" class="mesh-edge"/>
+<line x1="70" y1="290" x2="70" y2="400" class="mesh-edge"/>
+<line x1="180" y1="290" x2="290" y2="290" class="mesh-edge"/>
+<line x1="180" y1="290" x2="180" y2="400" class="mesh-edge"/>
+<line x1="290" y1="290" x2="400" y2="290" class="mesh-edge"/>
+<line x1="290" y1="290" x2="290" y2="400" class="mesh-edge"/>
+<line x1="400" y1="290" x2="400" y2="400" class="mesh-edge"/>
+<line x1="70" y1="400" x2="180" y2="400" class="mesh-edge"/>
+<line x1="180" y1="400" x2="290" y2="400" class="mesh-edge"/>
+<line x1="290" y1="400" x2="400" y2="400" class="mesh-edge"/>
+<path d="M 70.0 70.0 Q 235.0 0.0 400.0 70.0" class="logic-link" stroke="#9333ea" marker-end="url(#arrow-3)"/>
+<path d="M 70.0 70.0 Q 0.0 235.0 70.0 400.0" class="logic-link" stroke="#9333ea" marker-end="url(#arrow-3)"/>
+<path d="M 180.0 70.0 Q 110.0 235.0 180.0 400.0" class="logic-link" stroke="#9333ea" marker-end="url(#arrow-3)"/>
+<path d="M 290.0 70.0 Q 220.0 235.0 290.0 400.0" class="logic-link" stroke="#9333ea" marker-end="url(#arrow-3)"/>
+<path d="M 400.0 70.0 Q 235.0 140.0 70.0 70.0" class="logic-link" stroke="#9333ea" marker-end="url(#arrow-3)"/>
+<path d="M 400.0 70.0 Q 330.0 235.0 400.0 400.0" class="logic-link" stroke="#9333ea" marker-end="url(#arrow-3)"/>
+<path d="M 70.0 180.0 Q 235.0 110.0 400.0 180.0" class="logic-link" stroke="#9333ea" marker-end="url(#arrow-3)"/>
+<path d="M 400.0 180.0 Q 235.0 250.0 70.0 180.0" class="logic-link" stroke="#9333ea" marker-end="url(#arrow-3)"/>
+<path d="M 70.0 290.0 Q 235.0 220.0 400.0 290.0" class="logic-link" stroke="#9333ea" marker-end="url(#arrow-3)"/>
+<path d="M 400.0 290.0 Q 235.0 360.0 70.0 290.0" class="logic-link" stroke="#9333ea" marker-end="url(#arrow-3)"/>
+<path d="M 70.0 400.0 Q 235.0 330.0 400.0 400.0" class="logic-link" stroke="#9333ea" marker-end="url(#arrow-3)"/>
+<path d="M 70.0 400.0 Q 140.0 235.0 70.0 70.0" class="logic-link" stroke="#9333ea" marker-end="url(#arrow-3)"/>
+<path d="M 180.0 400.0 Q 250.0 235.0 180.0 70.0" class="logic-link" stroke="#9333ea" marker-end="url(#arrow-3)"/>
+<path d="M 290.0 400.0 Q 360.0 235.0 290.0 70.0" class="logic-link" stroke="#9333ea" marker-end="url(#arrow-3)"/>
+<path d="M 400.0 400.0 Q 235.0 470.0 70.0 400.0" class="logic-link" stroke="#9333ea" marker-end="url(#arrow-3)"/>
+<path d="M 400.0 400.0 Q 470.0 235.0 400.0 70.0" class="logic-link" stroke="#9333ea" marker-end="url(#arrow-3)"/>
+</svg></div>
+      <div class="legend"><span class="dot" style="background:#9333ea"></span>弯曲箭头 = 该 Color 时隙内激活的逻辑 FB 长链路</div>
+      <details><summary>链路样例</summary><p class="samples">0→3 (dim0)<br>0→12 (dim1)<br>1→13 (dim1)<br>2→14 (dim1)<br>3→0 (dim0)<br>3→15 (dim1)<br>4→7 (dim0)<br>7→4 (dim0)<br>… 共 16 条</p></details>
+    </section>
+  </section>
+  <section>
+    <h2>Color 查找表</h2>
+    <p style="color:var(--muted);font-size:.9rem;">4 节点组内源位置 ps → 目的位置 pd（dim0/dim1 通用）</p>
+    <table class='lookup'><thead><tr><th>ps＼pd</th><th>0</th><th>1</th><th>2</th><th>3</th></tr></thead><tbody><tr><th>0</th><td class=''>—</td><td class='hl'>C0</td><td class='hl'>C1</td><td class='hl'>C3</td></tr><tr><th>1</th><td class='hl'>C0</td><td class=''>—</td><td class='hl'>C0</td><td class='hl'>C2</td></tr><tr><th>2</th><td class='hl'>C2</td><td class='hl'>C0</td><td class=''>—</td><td class='hl'>C0</td></tr><tr><th>3</th><td class='hl'>C3</td><td class='hl'>C1</td><td class='hl'>C0</td><td class=''>—</td></tr></tbody></table>
+  </section>
+  <section>
+    <h2>路由示例</h2>
+    <table>
+      <thead><tr><th>通信</th><th>距离</th><th>维度序路由</th><th>Color</th></tr></thead>
+      <tbody><tr><td><code>0 → 5</code></td><td>行差1 + 列差1</td><td>0→1(C0) → 1→5(C0)</td><td>单 Color C0</td></tr><tr><td><code>0 → 10</code></td><td>行差2 + 列差2</td><td>0→2(C1) → 2→10(C1)</td><td>单 Color C1</td></tr><tr><td><code>0 → 6</code></td><td>行差1 + 列差2</td><td>0→4(C0) → 4→6(C1)</td><td>跨 C0 + C1</td></tr><tr><td><code>0 → 15</code></td><td>行差3 + 列差3</td><td>0→3(C3) → 3→15(C3)</td><td>单 Color C3</td></tr></tbody>
+    </table>
+  </section>
+</main>
+<footer>docs/tdm_fb_4x4_color_subtopology.html · 4×4 TDM Flattened Butterfly</footer>
+</body></html>
