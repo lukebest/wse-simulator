@@ -11,6 +11,8 @@ COLLECTIVE_ALGORITHMS = {
     "2d_ring",
     "direct_allgather",
     "hierarchical",
+    "nd_dimension_exchange_allreduce",
+    "nd_dimension_exchange_allgather",
 }
 
 
@@ -29,6 +31,8 @@ def select_collective_algorithm(
         return "hierarchical"
     if s <= 8:
         return "direct_allgather"
+    if noc_topology.startswith("tdm_flat_butterfly"):
+        return "nd_dimension_exchange_allreduce"
     if noc_topology in {"butterfly", "flat_butterfly"} and _is_power_of_two(s):
         return "recursive_halving_doubling"
     if noc_topology == "mesh2d":
@@ -75,6 +79,20 @@ def generate_collective_traffic(
         return _2d_ring(participating_nodes_global, payload_bytes_per_expert, num_experts, rows, cols)
     if algo == "direct_allgather":
         return _direct_allgather(participating_nodes_global, payload_bytes_per_expert, num_experts)
+    if algo == "nd_dimension_exchange_allreduce":
+        return _nd_dimension_exchange_allreduce(
+            participating_nodes_global,
+            payload_bytes_per_expert,
+            num_experts,
+            topology_hint=topology_hint or {},
+        )
+    if algo == "nd_dimension_exchange_allgather":
+        return _nd_dimension_exchange_allgather(
+            participating_nodes_global,
+            payload_bytes_per_expert,
+            num_experts,
+            topology_hint=topology_hint or {},
+        )
     return _hierarchical(participating_nodes_global, payload_bytes_per_expert, num_experts, cores_per_reticle)
 
 
@@ -206,6 +224,73 @@ def _direct_allgather(nodes: list[int], payload_bytes: int, num_experts: int) ->
     return traffic
 
 
+def _nd_dimension_exchange_allreduce(
+    nodes: list[int], payload_bytes: int, num_experts: int, topology_hint: dict,
+) -> list[dict]:
+    if len(nodes) <= 1:
+        return []
+    k, n = _resolve_kn(topology_hint, len(nodes))
+    groups_by_dim = _groups_by_dimension(nodes, k, n)
+    traffic: list[dict] = []
+    chunk = max(1, ceil(payload_bytes / max(1, len(nodes))))
+
+    for expert_id in range(num_experts):
+        offset = expert_id * max(1, n * k)
+        for dim in range(n):
+            groups = groups_by_dim[dim]
+            if _is_power_of_two(k):
+                stages = int(log2(k))
+                for stage in range(stages):
+                    stride = 1 << stage
+                    for group in groups:
+                        for idx in range(k):
+                            src = group[idx]
+                            dst = group[idx ^ stride]
+                            traffic.append(_packet(src, dst, chunk, "allreduce_rs", offset + stage))
+                offset += stages
+                for stage in range(stages):
+                    stride = 1 << (stages - stage - 1)
+                    for group in groups:
+                        for idx in range(k):
+                            src = group[idx]
+                            dst = group[idx ^ stride]
+                            traffic.append(_packet(src, dst, chunk, "allreduce_ag", offset + stage))
+                offset += stages
+            else:
+                total_steps = 2 * (k - 1)
+                for step in range(total_steps):
+                    phase = "allreduce_rs" if step < k - 1 else "allreduce_ag"
+                    for group in groups:
+                        for idx in range(k):
+                            src = group[idx]
+                            dst = group[(idx + 1) % k]
+                            traffic.append(_packet(src, dst, chunk, phase, offset + step))
+                offset += total_steps
+    return traffic
+
+
+def _nd_dimension_exchange_allgather(
+    nodes: list[int], payload_bytes: int, num_experts: int, topology_hint: dict,
+) -> list[dict]:
+    if len(nodes) <= 1:
+        return []
+    k, n = _resolve_kn(topology_hint, len(nodes))
+    groups_by_dim = _groups_by_dimension(nodes, k, n)
+    chunk = max(1, ceil(payload_bytes / max(1, len(nodes))))
+    traffic: list[dict] = []
+    for expert_id in range(num_experts):
+        offset = expert_id * max(1, n * k)
+        for dim in range(n):
+            for group in groups_by_dim[dim]:
+                for src in group:
+                    for dst in group:
+                        if src == dst:
+                            continue
+                        traffic.append(_packet(src, dst, chunk, "allgather", offset))
+            offset += 1
+    return traffic
+
+
 def _hierarchical(
     nodes: list[int], payload_bytes: int, num_experts: int, cores_per_reticle: int
 ) -> list[dict]:
@@ -272,3 +357,50 @@ def _factor_near_square(value: int) -> tuple[int, int]:
         if value % rows == 0:
             return rows, value // rows
     return 1, max(1, value)
+
+
+def _resolve_kn(topology_hint: dict, node_count: int) -> tuple[int, int]:
+    k = int(topology_hint.get("k", 0))
+    n = int(topology_hint.get("n", 0))
+    if k > 1 and n > 0 and k ** n == node_count:
+        return k, n
+    # Fall back to square-ish decomposition for 64-node default.
+    if node_count == 64:
+        return 8, 2
+    k = max(2, int(round(node_count ** 0.5)))
+    n = 2
+    if k ** n != node_count:
+        n = 1
+        k = node_count
+    return k, n
+
+
+def _groups_by_dimension(nodes: list[int], k: int, n: int) -> dict[int, list[list[int]]]:
+    index_of = {node: idx for idx, node in enumerate(nodes)}
+    coords_of: dict[int, tuple[int, ...]] = {}
+    for idx, node in enumerate(nodes):
+        value = idx
+        coords = []
+        for _ in range(n):
+            coords.append(value % k)
+            value //= k
+        coords_of[node] = tuple(coords)
+
+    groups_by_dim: dict[int, dict[tuple[int, ...], list[int]]] = {dim: {} for dim in range(n)}
+    for node in nodes:
+        coords = coords_of[node]
+        for dim in range(n):
+            key = tuple(coords[axis] for axis in range(n) if axis != dim)
+            groups_by_dim[dim].setdefault(key, []).append(node)
+
+    result: dict[int, list[list[int]]] = {}
+    for dim in range(n):
+        groups: list[list[int]] = []
+        for key in sorted(groups_by_dim[dim].keys()):
+            group = sorted(groups_by_dim[dim][key], key=lambda n0: coords_of[n0][dim])
+            if len(group) != k:
+                # Keep behavior deterministic even for malformed hints.
+                group = sorted(group, key=lambda n0: index_of[n0])
+            groups.append(group)
+        result[dim] = groups
+    return result

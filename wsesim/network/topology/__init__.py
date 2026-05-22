@@ -6,5 +6,14 @@ from wsesim.network.topology.mesh2d import Mesh2D
 from wsesim.network.topology.butterfly import Butterfly
 from wsesim.network.topology.supermesh_alter import SuperMeshAlter
 from wsesim.network.topology.supermesh_bi import SuperMeshBi
+from wsesim.network.topology.tdm_flat_butterfly import TDMFlatButterfly
 
-__all__ = ["Topology", "Mesh2D", "FlatButterfly", "Butterfly", "SuperMeshBi", "SuperMeshAlter"]
+__all__ = [
+    "Topology",
+    "Mesh2D",
+    "FlatButterfly",
+    "Butterfly",
+    "SuperMeshBi",
+    "SuperMeshAlter",
+    "TDMFlatButterfly",
+]

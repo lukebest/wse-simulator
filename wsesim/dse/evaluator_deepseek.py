@@ -19,12 +19,14 @@ from wsesim.network.network import UnifiedNetwork
 from wsesim.network.packet import Packet
 from wsesim.network.routing.dimension_order import DimensionOrderRouting
 from wsesim.network.routing.table_based import TableBasedRouting
+from wsesim.network.routing.tdm_flat_butterfly import TDMFlatButterflyRouting
 from wsesim.network.routing.ugal import UGALRouting
 from wsesim.network.topology.butterfly import Butterfly
 from wsesim.network.topology.flat_butterfly import FlatButterfly
 from wsesim.network.topology.mesh2d import Mesh2D
 from wsesim.network.topology.supermesh_alter import SuperMeshAlter
 from wsesim.network.topology.supermesh_bi import SuperMeshBi
+from wsesim.network.topology.tdm_flat_butterfly import TDMFlatButterfly
 from wsesim.workload.generator import (
     DeepSeekV4ProFFNProfile,
     generate_deepseek_v4_pro_decode_ffn_workload,
@@ -693,6 +695,7 @@ def _build_network_domain(
 ) -> UnifiedNetwork:
     num_nodes = max(4, num_nodes)
     topology_name = domain_config.topology
+    topology_key = str(topology_name).strip().lower()
     if topology_name == "mesh2d":
         if rows is not None and cols is not None:
             num_nodes = max(4, rows * cols)
@@ -711,11 +714,21 @@ def _build_network_domain(
         topology = SuperMeshBi(rows=rows, cols=cols)
     elif topology_name == "supermesh_alter":
         topology = SuperMeshAlter(rows=rows, cols=cols)
+    elif topology_key.startswith("tdm_flat_butterfly"):
+        resolved_rows = max(1, rows or isqrt(num_nodes))
+        resolved_cols = max(1, cols or isqrt(num_nodes))
+        if resolved_rows * resolved_cols != num_nodes:
+            resolved_rows, resolved_cols = _factor_near_square(num_nodes)
+            num_nodes = resolved_rows * resolved_cols
+        k, n = _parse_tdm_kn(topology_key, node_count=num_nodes)
+        topology = TDMFlatButterfly(k=k, n=n, rows=resolved_rows, cols=resolved_cols)
     else:
         topology = Mesh2D()
 
     routing_name = domain_config.routing
-    if routing_name in {"xy", "dimension_order"}:
+    if isinstance(topology, TDMFlatButterfly):
+        routing = TDMFlatButterflyRouting(topology=topology)
+    elif routing_name in {"xy", "dimension_order"}:
         routing = DimensionOrderRouting()
     elif routing_name == "ugal":
         routing = UGALRouting(seed=random_seed)
@@ -746,7 +759,7 @@ def _build_network_domain(
         crossbar_bw_flits_per_cycle=domain_config.crossbar_bw_flits_per_cycle,
         flit_bytes=domain_config.link_width_bytes,
     )
-    if routing_name == "table_based":
+    if routing_name == "table_based" and not isinstance(topology, TDMFlatButterfly):
         network.routing = TableBasedRouting(network.graph)
     if hasattr(topology, "enhanced_edges"):
         _apply_enhanced_edge_bandwidth(network, topology.enhanced_edges(num_nodes))
@@ -769,6 +782,24 @@ def _factor_near_square(value: int) -> tuple[int, int]:
         if value % rows == 0:
             return rows, value // rows
     return 1, max(1, value)
+
+
+def _parse_tdm_kn(topology_name: str, node_count: int) -> tuple[int, int]:
+    k = int(round(node_count ** 0.5))
+    n = 2
+    parts = topology_name.split("_")
+    for idx, part in enumerate(parts):
+        if part.startswith("k") and part[1:].isdigit():
+            k = int(part[1:])
+        elif part == "k" and idx + 1 < len(parts) and parts[idx + 1].isdigit():
+            k = int(parts[idx + 1])
+        if part.startswith("n") and part[1:].isdigit():
+            n = int(part[1:])
+        elif part == "n" and idx + 1 < len(parts) and parts[idx + 1].isdigit():
+            n = int(parts[idx + 1])
+    if k ** n != node_count:
+        raise ValueError(f"Invalid tdm_flat_butterfly parameters: k={k}, n={n}, nodes={node_count}")
+    return k, n
 
 
 def _run_hierarchical_network_simulation(
