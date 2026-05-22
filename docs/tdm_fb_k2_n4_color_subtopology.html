@@ -1,0 +1,276 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>4×4 TDM FB — 2-ary, 4-flat · 2 Color 子拓扑</title>
+<style>
+  :root { --bg:#0f1419; --panel:#1a2332; --text:#e8edf4; --muted:#94a3b8; --border:#2d3a4f; --mesh:#334155; }
+  * { box-sizing:border-box; }
+  body { margin:0; font-family:"IBM Plex Sans","Segoe UI",system-ui,sans-serif; background:var(--bg); color:var(--text); line-height:1.6; }
+  header.hero { padding:2.5rem 2rem 2rem; background:linear-gradient(135deg,#1e293b 0%,#0f172a 55%,#1a2e1a 100%); border-bottom:1px solid var(--border); }
+  header.hero h1 { margin:0 0 .5rem; font-size:1.75rem; }
+  header.hero p { margin:.25rem 0; color:var(--muted); max-width:52rem; }
+  main { max-width:1200px; margin:0 auto; padding:2rem 1.5rem 4rem; }
+  section { margin-bottom:2.5rem; }
+  h2 { font-size:1.25rem; margin:0 0 1rem; }
+  .summary-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:1rem; margin:1.5rem 0; }
+  .stat { background:var(--panel); border:1px solid var(--border); border-radius:10px; padding:1rem 1.25rem; }
+  .stat .val { font-size:1.75rem; font-weight:700; }
+  .stat .lbl { color:var(--muted); font-size:.875rem; }
+  .node-ref { font-family:ui-monospace,monospace; background:var(--panel); border:1px solid var(--border); border-radius:8px; padding:1rem 1.25rem; white-space:pre; font-size:.9rem; }
+  .coord-ref { font-family:ui-monospace,monospace; background:var(--panel); border:1px solid var(--border); border-radius:8px; padding:1rem; font-size:.85rem; color:var(--muted); margin-top:.75rem; }
+  table { width:100%; border-collapse:collapse; font-size:.9rem; }
+  th,td { border:1px solid var(--border); padding:.6rem .75rem; text-align:left; }
+  th { background:#243044; }
+  .color-card,.merged-card { background:var(--panel); border:1px solid var(--border); border-radius:12px; padding:1.25rem 1.5rem 1.5rem; margin-bottom:2rem; }
+  .merged-card { border-top:3px solid #64748b; }
+  .color-card.c0 { border-top:3px solid #2563eb; }
+  .color-card.c1 { border-top:3px solid #ea580c; }
+  .color-card header h2,.merged-card header h2 { margin:0; }
+  .subtitle { color:var(--muted); margin:.25rem 0 1rem; font-size:.9rem; }
+  .svg-wrap { background:#111827; border-radius:8px; padding:.5rem; overflow:auto; }
+  .topo-svg { width:100%; max-width:640px; height:auto; display:block; margin:0 auto; }
+  .mesh-edge { stroke:var(--mesh); stroke-width:1.2; opacity:.35; pointer-events:none; }
+  .logic-link { fill:none; stroke-width:2; opacity:.78; cursor:pointer; transition:opacity .15s,stroke-width .15s; pointer-events:stroke; stroke-linecap:round; }
+  .logic-link:hover,.logic-link.hovered { opacity:1; stroke-width:3.5; }
+  .logic-link.dimmed { opacity:.1; }
+  .node { fill:#1e293b; stroke:#64748b; stroke-width:1.5; pointer-events:none; }
+  .node-label { fill:#e2e8f0; font-size:13px; font-family:ui-monospace,monospace; text-anchor:middle; pointer-events:none; }
+  .legend { margin-top:.75rem; font-size:.85rem; color:var(--muted); display:flex; align-items:center; gap:.5rem; }
+  .dot { width:10px; height:10px; border-radius:50%; display:inline-block; }
+  .samples { font-family:ui-monospace,monospace; font-size:.82rem; color:var(--muted); line-height:1.7; }
+  details summary { cursor:pointer; color:var(--muted); font-size:.875rem; margin-top:.5rem; }
+  .tdm-bar { display:flex; gap:6px; margin:1rem 0; max-width:400px; }
+  .tdm-slot { flex:1; text-align:center; padding:.75rem .5rem; border-radius:8px; font-size:.85rem; font-weight:600; }
+  .tdm-slot.s0 { background:rgba(37,99,235,.25); color:#93c5fd; }
+  .tdm-slot.s1 { background:rgba(234,88,12,.25); color:#fdba74; }
+  .filter-bar { display:flex; gap:.5rem; flex-wrap:wrap; margin-bottom:1rem; }
+  .filter-btn { border:1px solid var(--border); background:#243044; color:var(--text); padding:.4rem .85rem; border-radius:6px; font-size:.82rem; cursor:pointer; display:flex; align-items:center; gap:.4rem; }
+  .filter-btn.active { background:#334155; border-color:#64748b; }
+  .filter-btn.inactive { opacity:.45; }
+  .tooltip { position:fixed; z-index:1000; pointer-events:none; background:#0f172a; border:1px solid #475569; border-radius:6px; padding:.45rem .7rem; font-family:ui-monospace,monospace; font-size:.82rem; color:#f1f5f9; box-shadow:0 4px 16px rgba(0,0,0,.45); white-space:nowrap; display:none; }
+  .tooltip .tag { font-size:.75rem; color:#94a3b8; margin-left:.35rem; }
+  .hover-info { margin-top:.6rem; font-family:ui-monospace,monospace; font-size:.85rem; color:#cbd5e1; min-height:1.4em; }
+  .compare { display:grid; grid-template-columns:1fr 1fr; gap:1rem; }
+  .compare .stat { margin:0; }
+  code { background:#243044; padding:.15rem .4rem; border-radius:4px; font-size:.85em; }
+  footer { text-align:center; color:var(--muted); font-size:.8rem; padding:2rem; border-top:1px solid var(--border); }
+  @media (max-width:640px) { .compare { grid-template-columns:1fr; } }
+</style>
+</head>
+<body>
+<div class="tooltip" id="tooltip"></div>
+<header class="hero">
+  <h1>4×4 Mesh 上的 2-ary, 4-flat Flattened Butterfly</h1>
+  <p>物理层：4×4 2D Mesh（16 PE）。逻辑层：2-ary, 4-flat FB（64 有向逻辑链路，4 维每维 1 邻居）。</p>
+  <p>通过 <strong>2 个 Color 时分复用</strong>物理链路；TDM 周期 C=2 达到物理边负载下界。</p>
+</header>
+<main>
+  <section>
+    <h2>核心结论</h2>
+    <div class="summary-grid">
+      <div class="stat"><div class="val">2</div><div class="lbl">TDM Color 数（最优）</div></div>
+      <div class="stat"><div class="val">64</div><div class="lbl">有向逻辑链路</div></div>
+      <div class="stat"><div class="val">32+32</div><div class="lbl">C0 / C1 分配</div></div>
+      <div class="stat"><div class="val">≤4</div><div class="lbl">逻辑跳数上限</div></div>
+    </div>
+    <div class="compare">
+      <div class="stat"><div class="val" style="font-size:1.1rem">(4,2) vs (2,4)</div><div class="lbl">96 链路 / C=4 / ≤2 跳 ↔ 64 链路 / C=2 / ≤4 跳</div></div>
+    </div>
+  </section>
+  <section>
+    <h2>节点编号与逻辑坐标</h2>
+    <div class="node-ref"> 0   1   2   3     ← row 0
+ 4   5   6   7     ← row 1
+ 8   9  10  11     ← row 2
+12  13  14  15     ← row 3</div>
+    <div class="coord-ref">逻辑地址 (d₃,d₂,d₁,d₀)，node = d₀ + 2·d₁ + 4·d₂ + 8·d₃<br>
+    例：node 5 = (1,0,1,0) = 1 + 0 + 4 + 0</div>
+  </section>
+  <section>
+    <h2>TDM 调度周期</h2>
+    <div class="tdm-bar">
+      <div class="tdm-slot s0">t≡0 mod 2<br>Color 0</div>
+      <div class="tdm-slot s1">t≡1 mod 2<br>Color 1</div>
+    </div>
+  </section>
+  <section>
+    <h2>Color 分配规则</h2>
+    <table>
+      <thead><tr><th>维度 d</th><th>参考位 j</th><th>C0 条件</th><th>每 Color 链路数</th></tr></thead>
+      <tbody>
+        <tr><td>0 (偶)</td><td>d₁</td><td>d₁ = 1</td><td>8</td></tr>
+        <tr><td>1 (奇)</td><td>d₀</td><td>d₀ = 0</td><td>8</td></tr>
+        <tr><td>2 (偶)</td><td>d₃</td><td>d₃ = 1</td><td>8</td></tr>
+        <tr><td>3 (奇)</td><td>d₂</td><td>d₂ = 0</td><td>8</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section>
+    <h2>两 Color 合并预览</h2>
+    <p style="color:var(--muted);font-size:.9rem;margin-bottom:1rem;">64 条逻辑链路叠加；悬停显示 <code>src→dst</code>；可切换 C0/C1 可见性。</p>
+    <section class="merged-card">
+      <header><h2>完整 Flattened Butterfly（2 Color 合并）</h2>
+        <p class="subtitle">C0 蓝 · C1 橙</p></header>
+      <div class="filter-bar" id="color-filters"></div>
+      <div class="svg-wrap" data-topo="merged"></div>
+      <div class="hover-info" id="merged-hover-info">将鼠标移到链路上…</div>
+    </section>
+  </section>
+
+  <section>
+    <h2>两个 Color 逻辑子拓扑</h2>
+    
+    <section class="color-card c0" id="color-0">
+      <header><h2>Color 0</h2>
+        <p class="subtitle">偶数维 d1/d3=1 或奇数维 d0/d2=0 · 32 条有向逻辑链路</p></header>
+      <div class="svg-wrap" data-topo="single" data-color="0"></div>
+      <div class="legend"><span class="dot" style="background:#2563eb"></span>悬停链路查看 src→dst · dim · Color</div>
+      <details><summary>链路样例</summary><p class="samples">0→2 (dim1)<br>0→8 (dim3)<br>1→9 (dim3)<br>2→3 (dim0)<br>2→0 (dim1)<br>2→10 (dim3)<br>3→2 (dim0)<br>3→11 (dim3)<br>4→6 (dim1)<br>6→7 (dim0)<br>… 共 32 条</p></details>
+    </section>
+    <section class="color-card c1" id="color-1">
+      <header><h2>Color 1</h2>
+        <p class="subtitle">偶数维 d1/d3=0 或奇数维 d0/d2=1 · 32 条有向逻辑链路</p></header>
+      <div class="svg-wrap" data-topo="single" data-color="1"></div>
+      <div class="legend"><span class="dot" style="background:#ea580c"></span>悬停链路查看 src→dst · dim · Color</div>
+      <details><summary>链路样例</summary><p class="samples">0→1 (dim0)<br>0→4 (dim2)<br>1→0 (dim0)<br>1→3 (dim1)<br>1→5 (dim2)<br>2→6 (dim2)<br>3→1 (dim1)<br>3→7 (dim2)<br>4→5 (dim0)<br>4→0 (dim2)<br>… 共 32 条</p></details>
+    </section>
+  </section>
+
+  <section>
+    <h2>路由示例</h2>
+    <table>
+      <thead><tr><th>通信</th><th>维度序路由</th><th>Color</th></tr></thead>
+      <tbody>
+        <tr><td><code>0 → 5</code></td><td>0→1(C1) → 1→5(C1)</td><td>单 C1</td></tr>
+        <tr><td><code>0 → 10</code></td><td>0→2(C0) → 2→10(C0)</td><td>单 C0</td></tr>
+        <tr><td><code>0 → 6</code></td><td>0→2(C0) → 2→6(C1)</td><td>跨 C0+C1</td></tr>
+        <tr><td><code>0 → 15</code></td><td>0→1→3→7→15 (全 C1)</td><td>单 C1</td></tr>
+        <tr><td><code>1 → 14</code></td><td>1→0(C1) → 0→2(C0) → 2→6(C1) → 6→14(C1)</td><td>跨 C0+C1</td></tr>
+      </tbody>
+    </table>
+  </section>
+</main>
+<footer>docs/tdm_fb_k2_n4_color_subtopology.md · 2-ary, 4-flat TDM FB</footer>
+
+<script>
+const LINKS = [{"src":0,"dst":1,"dim":0,"color":1},{"src":0,"dst":2,"dim":1,"color":0},{"src":0,"dst":4,"dim":2,"color":1},{"src":0,"dst":8,"dim":3,"color":0},{"src":1,"dst":0,"dim":0,"color":1},{"src":1,"dst":3,"dim":1,"color":1},{"src":1,"dst":5,"dim":2,"color":1},{"src":1,"dst":9,"dim":3,"color":0},{"src":2,"dst":3,"dim":0,"color":0},{"src":2,"dst":0,"dim":1,"color":0},{"src":2,"dst":6,"dim":2,"color":1},{"src":2,"dst":10,"dim":3,"color":0},{"src":3,"dst":2,"dim":0,"color":0},{"src":3,"dst":1,"dim":1,"color":1},{"src":3,"dst":7,"dim":2,"color":1},{"src":3,"dst":11,"dim":3,"color":0},{"src":4,"dst":5,"dim":0,"color":1},{"src":4,"dst":6,"dim":1,"color":0},{"src":4,"dst":0,"dim":2,"color":1},{"src":4,"dst":12,"dim":3,"color":1},{"src":5,"dst":4,"dim":0,"color":1},{"src":5,"dst":7,"dim":1,"color":1},{"src":5,"dst":1,"dim":2,"color":1},{"src":5,"dst":13,"dim":3,"color":1},{"src":6,"dst":7,"dim":0,"color":0},{"src":6,"dst":4,"dim":1,"color":0},{"src":6,"dst":2,"dim":2,"color":1},{"src":6,"dst":14,"dim":3,"color":1},{"src":7,"dst":6,"dim":0,"color":0},{"src":7,"dst":5,"dim":1,"color":1},{"src":7,"dst":3,"dim":2,"color":1},{"src":7,"dst":15,"dim":3,"color":1},{"src":8,"dst":9,"dim":0,"color":1},{"src":8,"dst":10,"dim":1,"color":0},{"src":8,"dst":12,"dim":2,"color":0},{"src":8,"dst":0,"dim":3,"color":0},{"src":9,"dst":8,"dim":0,"color":1},{"src":9,"dst":11,"dim":1,"color":1},{"src":9,"dst":13,"dim":2,"color":0},{"src":9,"dst":1,"dim":3,"color":0},{"src":10,"dst":11,"dim":0,"color":0},{"src":10,"dst":8,"dim":1,"color":0},{"src":10,"dst":14,"dim":2,"color":0},{"src":10,"dst":2,"dim":3,"color":0},{"src":11,"dst":10,"dim":0,"color":0},{"src":11,"dst":9,"dim":1,"color":1},{"src":11,"dst":15,"dim":2,"color":0},{"src":11,"dst":3,"dim":3,"color":0},{"src":12,"dst":13,"dim":0,"color":1},{"src":12,"dst":14,"dim":1,"color":0},{"src":12,"dst":8,"dim":2,"color":0},{"src":12,"dst":4,"dim":3,"color":1},{"src":13,"dst":12,"dim":0,"color":1},{"src":13,"dst":15,"dim":1,"color":1},{"src":13,"dst":9,"dim":2,"color":0},{"src":13,"dst":5,"dim":3,"color":1},{"src":14,"dst":15,"dim":0,"color":0},{"src":14,"dst":12,"dim":1,"color":0},{"src":14,"dst":10,"dim":2,"color":0},{"src":14,"dst":6,"dim":3,"color":1},{"src":15,"dst":14,"dim":0,"color":0},{"src":15,"dst":13,"dim":1,"color":1},{"src":15,"dst":11,"dim":2,"color":0},{"src":15,"dst":7,"dim":3,"color":1}];
+const COLORS = [{"id":0,"name":"Color 0","hex":"#2563eb"},{"id":1,"name":"Color 1","hex":"#ea580c"}];
+const ROWS=4, COLS=4, CELL=110, MARGIN=70, W=470, H=470;
+
+function nodeXY(node) {
+  const r = Math.floor(node / COLS), c = node % COLS;
+  return [MARGIN + c * CELL, MARGIN + r * CELL];
+}
+
+function arcPath(src, dst, dim, idx) {
+  const [x0,y0] = nodeXY(src), [x1,y1] = nodeXY(dst);
+  const sr=Math.floor(src/COLS), sc=src%COLS, dr=Math.floor(dst/COLS), dc=dst%COLS;
+  const dist = dim===0 ? Math.abs(dc-sc) : Math.abs(dr-sr);
+  let cx, cy;
+  if (dim===0) {
+    const sign = src<dst ? -1 : 1;
+    const b = 14 + dist*10 + dim*4;
+    cx=(x0+x1)/2; cy=(y0+y1)/2 + sign*b*(idx%2===0?1:0.7);
+  } else {
+    const sign = src<dst ? -1 : 1;
+    const b = 14 + dist*10 + dim*4;
+    cx=(x0+x1)/2 + sign*b*(idx%2===0?1:0.7); cy=(y0+y1)/2;
+  }
+  return `M ${x0} ${y0} Q ${cx} ${cy} ${x1} ${y1}`;
+}
+
+function makeMarkers(ids) {
+  let s='<defs>';
+  for (const id of ids) {
+    s+=`<marker id="arrow-${id}" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="${COLORS[id].hex}"/></marker>`;
+  }
+  return s+'</defs>';
+}
+
+function meshNodes() {
+  let s='';
+  for (let n=0;n<ROWS*COLS;n++) {
+    const [x,y]=nodeXY(n);
+    s+=`<circle cx="${x}" cy="${y}" r="18" class="node"/><text x="${x}" y="${y+5}" class="node-label">${n}</text>`;
+  }
+  return s;
+}
+
+function meshSkeleton() {
+  let s='';
+  for (let n=0;n<ROWS*COLS;n++) {
+    const [x0,y0]=nodeXY(n); const r=Math.floor(n/COLS), c=n%COLS;
+    if (c+1<COLS) { const [x1,y1]=nodeXY(n+1); s+=`<line x1="${x0}" y1="${y0}" x2="${x1}" y2="${y1}" class="mesh-edge"/>`; }
+    if (r+1<ROWS) { const [x1,y1]=nodeXY(n+COLS); s+=`<line x1="${x0}" y1="${y0}" x2="${x1}" y2="${y1}" class="mesh-edge"/>`; }
+  }
+  return s;
+}
+
+function buildSvg(container, mode, filterColor, activeColors) {
+  const show = mode==='merged' ? activeColors : new Set([filterColor]);
+  let svg=`<svg viewBox="0 0 ${W} ${H}" class="topo-svg">`;
+  svg+=makeMarkers([...show]);
+  svg+=meshNodes()+meshSkeleton();
+  const cnt={0:0,1:0};
+  for (const link of LINKS) {
+    if (!show.has(link.color)) continue;
+    const hex=COLORS[link.color].hex;
+    const idx=cnt[link.color]++;
+    const d=arcPath(link.src,link.dst,link.dim,idx);
+    const label=`${link.src}→${link.dst} · dim${link.dim} · C${link.color}`;
+    svg+=`<path d="${d}" class="logic-link" stroke="${hex}" marker-end="url(#arrow-${link.color})" data-label="${label}"/>`;
+  }
+  svg+='</svg>';
+  container.innerHTML=svg;
+  attachHover(container.querySelector('svg'), mode==='merged'?document.getElementById('merged-hover-info'):null);
+}
+
+const tooltip=document.getElementById('tooltip');
+function attachHover(svg, infoEl) {
+  if (!svg) return;
+  const all=svg.querySelectorAll('.logic-link');
+  all.forEach(el=>{
+    el.addEventListener('mouseenter', e=>{
+      const label=el.dataset.label;
+      const p=label.split(' · ');
+      tooltip.innerHTML=`${p[0]} <span class="tag">${p.slice(1).join(' · ')}</span>`;
+      tooltip.style.display='block';
+      tooltip.style.left=(e.clientX+14)+'px';
+      tooltip.style.top=(e.clientY-10)+'px';
+      all.forEach(x=>x.classList.toggle('dimmed', x!==el));
+      el.classList.add('hovered');
+      if (infoEl) infoEl.textContent=label;
+    });
+    el.addEventListener('mousemove', e=>{
+      tooltip.style.left=(e.clientX+14)+'px';
+      tooltip.style.top=(e.clientY-10)+'px';
+    });
+    el.addEventListener('mouseleave', ()=>{
+      tooltip.style.display='none';
+      all.forEach(x=>x.classList.remove('dimmed','hovered'));
+      if (infoEl) infoEl.textContent='将鼠标移到链路上…';
+    });
+  });
+}
+
+document.querySelectorAll('[data-topo="single"]').forEach(w=>buildSvg(w,'single',+w.dataset.color,null));
+const mergedWrap=document.querySelector('[data-topo="merged"]');
+const filterBar=document.getElementById('color-filters');
+let activeColors=new Set([0,1]);
+COLORS.forEach(c=>{
+  const btn=document.createElement('button');
+  btn.className='filter-btn active';
+  btn.innerHTML=`<span class="dot" style="background:${c.hex}"></span>C${c.id}`;
+  btn.addEventListener('click',()=>{
+    if (activeColors.has(c.id)) { if(activeColors.size<=1)return; activeColors.delete(c.id); btn.classList.replace('active','inactive'); }
+    else { activeColors.add(c.id); btn.classList.replace('inactive','active'); }
+    buildSvg(mergedWrap,'merged',null,activeColors);
+  });
+  filterBar.appendChild(btn);
+});
+buildSvg(mergedWrap,'merged',null,activeColors);
+</script>
+</body></html>
