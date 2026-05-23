@@ -66,20 +66,8 @@
       <dd><strong>Router 侧</strong> TDM 等待：flit 从 per-color ingress buffer 取出后、进入 switch pipeline 之前，等待全局 TDM 时钟转到该 flit 的 Color 时隙。仅 TDM 拓扑非零；Mesh2D 恒为 0。全 router 累加。</dd>
 
       <dt>link_wait（link_wait_cycles）</dt>
-      <dd><strong>链路侧</strong> TDM 等待：flit 在 router pipeline 完成之后、占用物理链路传输之前，在 TDMLink 上再次等待。条件比 router 更严：
-        (1) 当前 TDM 时隙 == flit 的 Color；
-        (2) 该物理边上本时隙激活的逻辑链路 == 本 flit 的逻辑链路（<code>link_active</code> 表）；
-        (3) 链路带宽空闲（<code>resource.request</code> 排队）。
-        全链路累加，可大于 makespan。</dd>
-
-      <dt>为什么 color_wait 之后还要 link_wait？</dt>
-      <dd>建模的是<strong>两个串行关卡</strong>，同一 flit 每跳可能各等一次，统计也会叠加：
-        <ul style="margin:.3rem 0 0 1rem;padding:0">
-          <li><strong>Router（color_wait）</strong>：「本节点 switch 能否在该 Color 时隙把 flit 送出去？」——只检查 Color 编号。</li>
-          <li><strong>Link（link_wait）</strong>：「这条物理边在该 Color 时隙是否恰好分配给本 flit 的逻辑链路？」——还要查 compile 着色结果 <code>active_logical_per_color</code>，并等链路带宽。</li>
-        </ul>
-        类比：router 是「窗口叫号」（Color 时隙），link 是「车道放行」（物理边 + 逻辑链路绑定 + 带宽）。叫到了号，车道上还有别的逻辑链路占用或带宽冲突，仍要在 link 上等。
-        因此两者不是重复指标；报告里分开列是为了定位瓶颈在 switch 侧还是 physical link 侧。</dd>
+      <dd><strong>物理链路带宽争用</strong>：flit 在 Link 的 <code>resource.request()</code> 上排队等待（与 Mesh 相同机制）。
+        TDM Color 时隙<strong>不在 link 侧重检</strong>——router pipeline 已按 Color 放行。无其他 flit 争用同一链路时为 0。</dd>
 
       <dt>makespan（makespan_cycles）</dt>
       <dd>AllGather 流量全部完成时的仿真时间（cycles）。<strong>端到端延迟对比以这一列为准</strong>；TDM/Mesh 比值 = TDM makespan ÷ Mesh makespan。</dd>

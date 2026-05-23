@@ -39,7 +39,8 @@ def test_tdm_flat_butterfly_coloring_conflict_free() -> None:
                 used_edges.add(edge)
 
 
-def test_tdm_link_waits_for_color_slot() -> None:
+def test_tdm_link_does_not_spin_for_color_slot() -> None:
+    """Color gating is router-only; link should not add TDM slot spin."""
     env = simpy.Environment()
     link = TDMLink(
         env=env,
@@ -52,8 +53,8 @@ def test_tdm_link_waits_for_color_slot() -> None:
     )
     env.process(link.transfer(1, flit_color=1, logical_link=(0, 1)))
     env.run()
-    assert env.now >= 3
-    assert link.total_wait_cycles >= 1
+    assert env.now == 2
+    assert link.total_wait_cycles == 0
 
 
 def test_tdm_network_packet_delivery_and_wait_cycles() -> None:
@@ -74,7 +75,7 @@ def test_tdm_network_packet_delivery_and_wait_cycles() -> None:
     env.run()
     assert net.stats.packets_sent == 1
     assert net.stats.max_packet_latency > 0
-    assert net.stats.link_wait_cycles > 0
+    assert net.stats.color_buffer_wait_cycles > 0
 
 
 def test_k2n6_allreduce_not_far_worse_than_k8n2() -> None:
