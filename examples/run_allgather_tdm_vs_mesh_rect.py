@@ -350,6 +350,11 @@ def _render_report(rows: list[dict], out_html: Path) -> None:
   .good {{ color:var(--good); font-weight:600; }}
   .warn {{ color:var(--warn); font-weight:600; }}
   .hint {{ color:var(--muted); font-size:.9rem; }}
+  .glossary {{ font-size:.9rem; line-height:1.7; }}
+  .glossary dt {{ font-weight:600; color:#cbd5e1; margin-top:.75rem; }}
+  .glossary dd {{ margin:.25rem 0 0 0; color:var(--muted); }}
+  .callout {{ background:#0f172a; border-left:3px solid #3b82f6; padding:.75rem 1rem; margin:.75rem 0; font-size:.88rem; border-radius:0 6px 6px 0; }}
+  .callout strong {{ color:#93c5fd; }}
   ul {{ margin:.4rem 0 0 1.2rem; }}
 </style>
 </head>
@@ -360,7 +365,52 @@ def _render_report(rows: list[dict], out_html: Path) -> None:
 </header>
 <main>
   <section class="panel">
+    <h2>指标说明（读表前必读）</h2>
+
+    <div class="callout">
+      <strong>为什么 color_wait 可以远大于 makespan？</strong><br>
+      两者量纲不同，<em>不能直接比较大小</em>。<code>makespan</code> 是仿真时钟的<strong>墙钟时间</strong>（最后一个包完成时的 <code>env.now</code>，即关键路径长度）。
+      <code>color_wait</code> 是<strong>全网络累加计数</strong>：每个 router 上、每个 flit 在 per-color buffer 出口等待「当前 TDM 时隙 == 该 flit 的 Color」时，每 spin 1 cycle 就 +1，最后把所有 router 的等待<strong>求和</strong>。
+      大量包/ flit 在<strong>并行</strong>等待，累加值自然远大于墙钟。例：12×16 满 FB ND 1KB — makespan=9225，color_wait=1,104,889（≈120×），表示并行等待总量大，但不代表单包等了 120 万 cycle。
+    </div>
+
+    <div class="callout">
+      <strong>TDM/Mesh ≈ 0.03×、0.07× 的时延收益从哪来？</strong><br>
+      比值只看 <code>makespan</code>（端到端完成时间），与 color_wait 累加值无关。限制版 hypercube FB 的优势主要来自：
+      <ol style="margin:.4rem 0 0 1.2rem;padding:0">
+        <li><strong>Color 数 C 更少</strong>（5/10 vs 16/64/49）→ 每跳等正确 TDM 时隙的周期更短，关键路径上 color 相关等待更少。</li>
+        <li><strong>ND 流量模式不同</strong>：限制版按 (k=2, n) 超立方分组，每组仅 2 节点交换；Mesh/满 FB 按混合基 k_dims（如 16×12）分组，组内全对全通信，包数/flit 数多一个数量级（如 12×16 Mesh 342k flits vs 限制版 5k flits）。</li>
+        <li><strong>平均包延迟更低</strong>：限制版 avg_lat 约 39–118 cycles，Mesh 350–5585 cycles（见完整结果表）。</li>
+        <li><strong>逻辑跳数更少</strong>：稀疏 hypercube 链路 + 维度序路由，单包物理跳数通常短于 Mesh 分组交换在大组内的多跳转发。</li>
+      </ol>
+      注意：限制版用更少的逻辑链路换更少的 Color；满 FB 在 14×14 上 C=49 反而比 Mesh 慢（makespan 8×），说明<strong>Color 数过多</strong>的代价可以超过 FB 拓扑的带宽优势。
+    </div>
+
+    <dl class="glossary">
+      <dt>msg（msg_bytes）</dt>
+      <dd>实验配置的<strong>标称消息大小</strong>（字节），用于标识测试点，写入 CSV 的 <code>msg_bytes</code> 列。</dd>
+
+      <dt>simulated_msg（simulated_msg_bytes）</dt>
+      <dd>仿真中<strong>实际注入的 payload 大小</strong>。通常与 msg 相同。
+        若标注 <code>(scaled)</code>，表示 <code>direct_allgather</code> 在 256KB 点时按 <code>payload / N</code> 缩放（6×8 除以 48，12×16/14×14 除以 64），以降低 O(N²) 全对全流量的仿真成本；此时 msg=262144 但 simulated_msg 仅为几千字节。</dd>
+
+      <dt>color_wait（color_buffer_wait_cycles）</dt>
+      <dd><strong>Router 侧</strong> TDM 等待：flit 在 per-color ingress buffer 中，等待全局 TDM 时钟转到该 flit 所属 Color 时隙，才能进入 pipeline。仅 TDM 拓扑非零；Mesh2D 无 Color 机制，恒为 0。全 router 累加。</dd>
+
+      <dt>link_wait（link_wait_cycles）</dt>
+      <dd><strong>链路侧</strong> TDM 等待：flit 在 TDMLink 上等待当前 Color 时隙且该物理边上激活的逻辑链路匹配，才能占用链路带宽传输。与 color_wait 分工——前者在 router 入口，后者在 link 传输前。同样为全链路累加，可大于 makespan。</dd>
+
+      <dt>makespan（makespan_cycles）</dt>
+      <dd>AllGather 流量全部完成时的仿真时间（cycles）。<strong>端到端延迟对比以这一列为准</strong>；TDM/Mesh 比值 = TDM makespan ÷ Mesh makespan。</dd>
+
+      <dt>avg_lat</dt>
+      <dd>所有完成包的平均单包延迟（cycles），反映典型包的体验，与 makespan（最慢包决定）不同。</dd>
+    </dl>
+  </section>
+
+  <section class="panel">
     <h2>1) 两类 TDM 切分 vs Mesh（ND，slot=1）</h2>
+    <p class="hint">表中 color_wait 为累加统计，见上方说明；端到端对比看 TDM/Mesh 列（基于 makespan）。</p>
     <table>
       <thead><tr><th>Mesh</th><th>方案</th><th>msg</th><th>Mesh</th><th>TDM</th><th>TDM/Mesh</th><th>color_wait</th></tr></thead>
       <tbody>{"".join(compare_rows)}</tbody>
@@ -373,12 +423,14 @@ def _render_report(rows: list[dict], out_html: Path) -> None:
       <tbody>{"".join(cross_rows)}</tbody>
     </table>
     <ul>
-      <li>限制版 Color 数显著更少（6×8: 16→5，12×16/14×14: 64/49→10），但逻辑链路稀疏、节点度降低。</li>
-      <li>小消息下 color 等待占比低，限制版可能因更少 color 切换而更快；大消息下链路利用率与跳数成为主因。</li>
+      <li>限制版 Color 数显著更少（6×8: 16→5，12×16/14×14: 64/49→10），ND makespan 可降至 Mesh 的 <strong>0.03×–0.39×</strong>（见 makespan，非 color_wait）。</li>
+      <li>满 FB 在 6×8、12×16 上与 Mesh 接近或略优；14×14 满 FB 因 C=49 导致 makespan 约 <strong>8× Mesh</strong>（color_wait 累加亦极高）。</li>
+      <li>6×8 额外跑 direct_allgather；12×16/14×14 仅 ND（大 mesh direct 为 O(N²)）。</li>
     </ul>
   </section>
   <section>
     <h2>3) 完整结果</h2>
+    <p class="hint">列含义见顶部「指标说明」。Mesh2D 的 color_wait / link_wait 恒为 0（无 TDM 机制）。</p>
     <table>
       <thead><tr>
         <th>mesh</th><th>topology</th><th>scheme</th><th>C</th><th>algorithm</th><th>slot</th>
