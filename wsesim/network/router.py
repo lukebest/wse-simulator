@@ -7,6 +7,8 @@ from math import ceil
 
 import simpy
 
+from wsesim.network.tdm_clock import TDMClock
+
 
 @dataclass(slots=True)
 class Router:
@@ -21,7 +23,10 @@ class Router:
     switch_traversal_latency_cycles: int = 1
     crossbar_bw_flits_per_cycle: int = 1
     arbitration: str = "round_robin"
+    tdm_clock: TDMClock | None = None
+    color_count: int = 0
     input_buffer: simpy.Store = field(init=False)
+    per_color_buffers: dict[int, simpy.Store] = field(init=False, default_factory=dict)
     pipeline_unit: simpy.Resource = field(init=False)
     rc_unit: simpy.Resource = field(init=False)
     va_unit: simpy.Resource = field(init=False)
@@ -30,11 +35,20 @@ class Router:
     active_vc_packets: set[int] = field(init=False)
     vc_wait_cycles: int = 0
     buffer_wait_cycles: int = 0
+    color_buffer_wait_cycles: int = 0
+    color_wait_cycles: dict[int, int] = field(default_factory=dict)
     pipeline_cycles: int = 0
     flits_processed: int = 0
 
     def __post_init__(self) -> None:
-        self.input_buffer = simpy.Store(self.env, capacity=self.num_vcs * self.buffer_depth)
+        if self.color_count > 0:
+            self.input_buffer = simpy.Store(self.env, capacity=1)
+            self.per_color_buffers = {
+                color: simpy.Store(self.env, capacity=self.buffer_depth)
+                for color in range(self.color_count)
+            }
+        else:
+            self.input_buffer = simpy.Store(self.env, capacity=self.num_vcs * self.buffer_depth)
         self.pipeline_unit = simpy.Resource(self.env, capacity=1)
         self.rc_unit = simpy.Resource(self.env, capacity=1)
         self.va_unit = simpy.Resource(self.env, capacity=1)
@@ -42,10 +56,43 @@ class Router:
         self.st_unit = simpy.Resource(self.env, capacity=1)
         self.active_vc_packets = set()
 
+    def _resolve_color(self, color: int | None) -> int:
+        if self.color_count <= 0:
+            return 0
+        if color is None:
+            return 0
+        return int(color) % self.color_count
+
+    def can_admit(self, color: int | None = None) -> bool:
+        if self.color_count <= 0:
+            return len(self.input_buffer.items) < self.input_buffer.capacity
+        idx = self._resolve_color(color)
+        buf = self.per_color_buffers[idx]
+        return len(buf.items) < buf.capacity
+
+    def pending_for_color(self, color: int | None = None) -> int:
+        if self.color_count <= 0:
+            return len(self.input_buffer.items)
+        idx = self._resolve_color(color)
+        return len(self.per_color_buffers[idx].items)
+
+    def capacity_for_color(self, color: int | None = None) -> int:
+        if self.color_count <= 0:
+            return self.input_buffer.capacity
+        idx = self._resolve_color(color)
+        return self.per_color_buffers[idx].capacity
+
     def enqueue(self, item):
-        if len(self.input_buffer.items) >= self.input_buffer.capacity:
-            raise BufferError(f"Router {self.node_id} input buffer overflow.")
-        return self.input_buffer.put(item)
+        if self.color_count <= 0:
+            if len(self.input_buffer.items) >= self.input_buffer.capacity:
+                raise BufferError(f"Router {self.node_id} input buffer overflow.")
+            return self.input_buffer.put(item)
+
+        color = self._resolve_color(getattr(item, "color", None))
+        target = self.per_color_buffers[color]
+        if len(target.items) >= target.capacity:
+            raise BufferError(f"Router {self.node_id} color {color} buffer overflow.")
+        return target.put(item)
 
     def _route_compute(self):
         with self.rc_unit.request() as req:
@@ -70,10 +117,18 @@ class Router:
             )
             yield self.env.timeout(traversal_cycles)
 
-    def pipeline(self, flits: int):
+    def pipeline(self, flits: int, color: int | None = None):
         start = self.env.now
         # Model ingress dequeue from input buffer before entering pipeline stages.
-        yield self.input_buffer.get()
+        if self.color_count > 0:
+            color_idx = self._resolve_color(color)
+            yield self.per_color_buffers[color_idx].get()
+            while self.tdm_clock is not None and self.tdm_clock.current_color(self.env.now) != color_idx:
+                self.color_buffer_wait_cycles += 1
+                self.color_wait_cycles[color_idx] = self.color_wait_cycles.get(color_idx, 0) + 1
+                yield self.env.timeout(1)
+        else:
+            yield self.input_buffer.get()
 
         if self.pipeline_mode == "1_stage":
             # Compressed model: combine control stages into one stage.

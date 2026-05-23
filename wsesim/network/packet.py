@@ -21,6 +21,7 @@ class Flit:
     flit_id: int
     is_head: bool
     is_tail: bool
+    color: int | None = None
 
 
 def packet_to_num_flits(packet: Packet, flit_bytes: int = 32) -> int:

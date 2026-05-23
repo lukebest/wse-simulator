@@ -6,11 +6,14 @@ from dataclasses import dataclass
 from math import ceil
 
 from wsesim.network.link import Link
+from wsesim.network.tdm_clock import TDMClock
 
 
 @dataclass(slots=True)
 class TDMLink(Link):
     period: int = 1
+    slot_cycles: int = 1
+    tdm_clock: TDMClock | None = None
     active_logical_per_color: list[tuple[int, int] | None] | None = None
 
     def transfer(
@@ -29,8 +32,9 @@ class TDMLink(Link):
         start_wait = self.env.now
         spin_wait = 0
         while True:
-            period = max(1, self.period)
-            cur_color = int(self.env.now) % period
+            if self.tdm_clock is None:
+                self.tdm_clock = TDMClock(period=max(1, self.period), slot_cycles=max(1, self.slot_cycles))
+            cur_color = self.tdm_clock.current_color(self.env.now)
             active = self.active_logical_per_color[cur_color]
             color_match = cur_color == flit_color
             logical_match = logical_link is None or active == logical_link
