@@ -37,6 +37,17 @@
   .tag.ok { background:rgba(22,163,74,.25); color:#86efac; }
   .tag.warn { background:rgba(234,179,8,.2); color:#fde047; }
   .tag.bad { background:rgba(220,38,38,.2); color:#fca5a5; }
+  .config-block { background:var(--panel); border:1px solid var(--border); border-radius:10px; padding:1rem 1.2rem; margin-bottom:1.25rem; }
+  .config-block h3 { margin:0 0 .5rem; font-size:1.05rem; color:var(--text); }
+  .config-meta { color:var(--muted); font-size:.85rem; margin-bottom:.75rem; }
+  .config-meta a { color:#93c5fd; }
+  .color-table { font-size:.82rem; }
+  .color-table td:first-child { white-space:nowrap; font-weight:600; }
+  .chip { display:inline-block; width:.65rem; height:.65rem; border-radius:50%; margin-right:.35rem; vertical-align:middle; }
+  details.config-details { margin-bottom:1rem; }
+  details.config-details summary { cursor:pointer; font-weight:600; padding:.6rem 0; color:var(--text); }
+  details.config-details summary:hover { color:#93c5fd; }
+  .rule-box { font-family:ui-monospace,monospace; background:#111827; border-radius:6px; padding:.75rem 1rem; font-size:.82rem; margin:.5rem 0; overflow-x:auto; }
   footer { text-align:center; color:var(--muted); font-size:.75rem; padding:1.5rem; border-top:1px solid var(--border); }
   ul { color:var(--muted); }
   li { margin:.35rem 0; }
@@ -99,6 +110,137 @@
       <tr><td>8×8</td><td>(2,6)</td><td>64</td><td>384</td><td>5</td><td>7.8%</td><td>6</td></tr>
     </tbody>
   </table>
+</section>
+
+<section>
+  <h2>各 Color 逻辑子拓扑（已文档化配置）</h2>
+  <p style="color:var(--muted);font-size:.9rem;margin-bottom:1rem">
+    每个 Color 时隙激活一组<strong>物理边不冲突</strong>的逻辑长链路；合并全部 Color = 完整 FB。
+    下表汇总各 (k,n) 配置中每个 Color 承载的逻辑类型、物理跳距特征与链路数。
+    详细拓扑图见各配置独立文档。
+  </p>
+
+  <details class="config-details" open>
+    <summary>4×4 · (4,2) · C=4 · 96 有向链路</summary>
+    <div class="config-block">
+      <p class="config-meta">4-ary 2-flat，逻辑直径 2 跳。规则：每个 4 节点行/列组内按<strong>逻辑距离 + 源位置</strong>分配 Color。
+        <a href="tdm_fb_4x4_color_subtopology.html">交互图</a> ·
+        <a href="tdm_fb_4x4_color_subtopology.md">Markdown</a></p>
+      <table class="color-table">
+        <thead><tr><th>Color</th><th>逻辑类型</th><th>物理跳距</th><th>方向特征</th><th>链路数</th></tr></thead>
+        <tbody>
+          <tr><td><span class="chip" style="background:#2563eb"></span>C0</td><td>距离-1 邻接</td><td>1</td><td>组内相邻节点双向（= 物理 Mesh 边）</td><td>48</td></tr>
+          <tr><td><span class="chip" style="background:#ea580c"></span>C1</td><td>距离-2 端点出发</td><td>2</td><td>源在 pos 0 或 3：n₀→n₂、n₃→n₁（行/列内跳过 1 节点）</td><td>16</td></tr>
+          <tr><td><span class="chip" style="background:#16a34a"></span>C2</td><td>距离-2 中间出发</td><td>2</td><td>源在 pos 1 或 2：n₁→n₃、n₂→n₀（与 C1 反向互补）</td><td>16</td></tr>
+          <tr><td><span class="chip" style="background:#9333ea"></span>C3</td><td>距离-3 端到端</td><td>3</td><td>行首↔行尾 / 列首↔列尾，占满整行或整列物理边</td><td>16</td></tr>
+        </tbody>
+      </table>
+      <p class="config-meta" style="margin-top:.75rem">分配表（每组 4 节点 {n₀,n₁,n₂,n₃}）：C0=全部 ±1 邻接；C1=n₀→n₂ 与 n₃→n₁；C2=n₁→n₃ 与 n₂→n₀；C3=n₀↔n₃。</p>
+    </div>
+  </details>
+
+  <details class="config-details" open>
+    <summary>4×4 · (2,4) · C=2 · 64 有向链路</summary>
+    <div class="config-block">
+      <p class="config-meta">2-ary 4-flat，逻辑直径 4 跳，每维仅 1 个逻辑邻居（位翻转）。
+        <a href="tdm_fb_k2_n4_color_subtopology.html">交互图</a> ·
+        <a href="tdm_fb_k2_n4_color_subtopology.md">Markdown</a></p>
+      <div class="rule-box">j = (d+1) mod 4（d 偶）或 (d−1) mod 4（d 奇）→ C0 若参考位 d_j 满足：偶维 d_j=1，奇维 d_j=0；否则 C1</div>
+      <table class="color-table">
+        <thead><tr><th>Color</th><th>逻辑类型</th><th>物理跳距</th><th>包含链路（按维）</th><th>链路数</th></tr></thead>
+        <tbody>
+          <tr><td><span class="chip" style="background:#2563eb"></span>C0</td><td>参考位命中「偶维=1 / 奇维=0」</td><td>1 或 2</td><td>dim0: d₁=1 行内对；dim1: d₀=0 跨列；dim2: d₃=1 垂直对；dim3: d₂=0 跨行</td><td>32</td></tr>
+          <tr><td><span class="chip" style="background:#ea580c"></span>C1</td><td>互补另一半位翻转链路</td><td>1 或 2</td><td>dim0: d₁=0；dim1: d₀=1；dim2: d₃=0；dim3: d₂=1</td><td>32</td></tr>
+        </tbody>
+      </table>
+      <p class="config-meta" style="margin-top:.75rem">例：C0 含 2↔3、0↔2（dim1）、8↔12（dim2）、0↔8（dim3）；C1 含 0↔1、1↔3、0↔4、4↔12 等。</p>
+    </div>
+  </details>
+
+  <details class="config-details">
+    <summary>8×8 · (8,2) · C=16 · 896 有向链路</summary>
+    <div class="config-block">
+      <p class="config-meta">8-ary 2-flat，逻辑直径 2 跳，每维 7 个逻辑邻居。8 节点组 {n₀…n₇} 内将 4×4 的 4 节点规则推广至距离 1…7。
+        <a href="tdm_fb_8x8_k8_n2_color_subtopology.html">交互图</a> ·
+        <a href="tdm_fb_8x8_k8_n2_color_subtopology.md">Markdown</a></p>
+      <table class="color-table">
+        <thead><tr><th>结构类</th><th>逻辑距离</th><th>方向特征</th><th>每组链路数</th></tr></thead>
+        <tbody>
+          <tr><td>C0</td><td>1</td><td>邻接 ±1</td><td>14</td></tr>
+          <tr><td>C1 / C2</td><td>2</td><td>端点 n₀,n₇ / 中间</td><td>2+2</td></tr>
+          <tr><td>C3 / C4</td><td>3</td><td>端点 / 中间</td><td>2+2</td></tr>
+          <tr><td>C5 / C6</td><td>4</td><td>端点 / 中间</td><td>2+2</td></tr>
+          <tr><td>C7 / C8</td><td>5</td><td>端点 / 中间</td><td>2+2</td></tr>
+          <tr><td>C9 / C10</td><td>6</td><td>端点 / 中间</td><td>2+2</td></tr>
+          <tr><td>C11</td><td>7</td><td>端到端 n₀↔n₇</td><td>2</td></tr>
+        </tbody>
+      </table>
+      <p class="config-meta" style="margin-top:.5rem">物理跳距 1…7 均有链路（224/192/160/128/96/64/32 条）。compile 贪心着色将 12 结构类映射到 <strong>C0…C15</strong>（C=16=k 最优）：</p>
+      <table class="color-table">
+        <thead><tr><th>Color</th><th>链路数</th><th>Color</th><th>链路数</th><th>Color</th><th>链路数</th><th>Color</th><th>链路数</th></tr></thead>
+        <tbody>
+          <tr><td>C0</td><td>32</td><td>C4</td><td>32</td><td>C8</td><td>64</td><td>C12</td><td>64</td></tr>
+          <tr><td>C1</td><td>64</td><td>C5</td><td>64</td><td>C9</td><td>64</td><td>C13</td><td>64</td></tr>
+          <tr><td>C2</td><td>64</td><td>C6</td><td>64</td><td>C10</td><td>64</td><td>C14</td><td>64</td></tr>
+          <tr><td>C3</td><td>64</td><td>C7</td><td>64</td><td>C11</td><td>32</td><td>C15</td><td>32</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </details>
+
+  <details class="config-details">
+    <summary>8×8 · (4,3) · C=9 · 576 有向链路</summary>
+    <div class="config-block">
+      <p class="config-meta">4-ary 3-flat，逻辑直径 3 跳。每维 16 个 4 节点组，规则与 4×4 (4,2) 相同；三维叠加后物理边负载下界升至 9。
+        <a href="tdm_fb_8x8_k4_n3_color_subtopology.html">交互图</a> ·
+        <a href="tdm_fb_8x8_k4_n3_color_subtopology.md">Markdown</a></p>
+      <table class="color-table">
+        <thead><tr><th>结构类</th><th>逻辑距离</th><th>方向特征</th></tr></thead>
+        <tbody>
+          <tr><td>C0</td><td>1</td><td>邻接双向（物理 1 跳）</td></tr>
+          <tr><td>C1 / C2</td><td>2</td><td>端点出发 / 中间出发（物理 2 跳）</td></tr>
+          <tr><td>C3</td><td>3</td><td>端到端 n₀↔n₃（物理 3 或 4 跳）</td></tr>
+        </tbody>
+      </table>
+      <p class="config-meta" style="margin-top:.5rem">贪心扩展为 9 时隙，各 Color 链路数：</p>
+      <table class="color-table">
+        <thead><tr><th>C0</th><th>C1</th><th>C2</th><th>C3</th><th>C4</th><th>C5</th><th>C6</th><th>C7</th><th>C8</th></tr></thead>
+        <tbody><tr><td>60</td><td>76</td><td>76</td><td>64</td><td>60</td><td>48</td><td>64</td><td>64</td><td>64</td></tr></tbody>
+      </table>
+      <p class="config-meta">物理跳距分布：1(160) · 2(160) · 3(32) · 4(128) · 5(64) · 6(32)。</p>
+    </div>
+  </details>
+
+  <details class="config-details">
+    <summary>8×8 · (2,6) · C=5 · 384 有向链路</summary>
+    <div class="config-block">
+      <p class="config-meta">2-ary 6-flat，逻辑直径 6 跳。低 4 维与 4×4 (2,4) 规则一致；全局 C=5 因 8×8 跨维冲突需贪心补全。
+        <a href="tdm_fb_8x8_k2_n6_color_subtopology.html">交互图</a> ·
+        <a href="tdm_fb_8x8_k2_n6_color_subtopology.md">Markdown</a></p>
+      <div class="rule-box">j = (d+1) mod 6（d 偶）或 (d−1) mod 6（d 奇）→ 偶维 d_j=1 / 奇维 d_j=0 → 结构 C0，否则 C1（与 4×4 k2 同族）</div>
+      <table class="color-table">
+        <thead><tr><th>Color</th><th>链路数</th><th>逻辑含义（compile 分配）</th></tr></thead>
+        <tbody>
+          <tr><td><span class="chip" style="background:#2563eb"></span>C0</td><td>96</td><td>短物理跳（1 跳）+ 部分位翻转链路；dim 内相邻对、低维跨列/跨行</td></tr>
+          <tr><td><span class="chip" style="background:#ea580c"></span>C1</td><td>96</td><td>互补位翻转 + 物理 2 跳链路（如 dim0 的 0→2、dim1 的跨 1 列）</td></tr>
+          <tr><td><span class="chip" style="background:#16a34a"></span>C2</td><td>64</td><td>物理 2 跳：跨 1 列/行的中距离链路</td></tr>
+          <tr><td><span class="chip" style="background:#9333ea"></span>C3</td><td>64</td><td>物理 2 跳：另一组中距离 / 高维翻转链路</td></tr>
+          <tr><td><span class="chip" style="background:#dc2626"></span>C4</td><td>64</td><td>物理 4 跳：翻转 d₂ 或 d₅ 位（跨 2 行/2 列），最长单链路物理路径</td></tr>
+        </tbody>
+      </table>
+      <p class="config-meta">物理跳距仅 1、2、4 三种（各 128 条）；无 3 跳——k=2 位翻距离恒为 2 的幂。</p>
+    </div>
+  </details>
+
+  <div class="panel highlight" style="margin-top:1rem">
+    <h2>跨配置 Color 规律</h2>
+    <ul>
+      <li><strong>k-ary, n=2（2-flat）</strong>：Color 类由 k 节点组内<strong>逻辑距离</strong>决定——C0=邻接，奇数距离拆为端点/中间两 Color，最大距离单独一 Color；C ≈ k（8×8 为 16）。</li>
+      <li><strong>k=2（binary hypercube）</strong>：基础 2-Color 由坐标参考位奇偶决定；mesh 变大时跨维路径冲突增加，C 从 2 扩展至 5（8×8）或更高。</li>
+      <li><strong>4 节点组规则</strong>：4×4 (4,2) 与 8×8 (4,3) 共享同一距离—Color 映射；后者因 3 维叠加 + 更大 mesh，C 从 4 升至 9。</li>
+      <li><strong>单 Color 内</strong>：同一时隙所有链路物理边互不冲突；<strong>跨 Color 合并</strong> = 完整 FB 逻辑拓扑。</li>
+    </ul>
+  </div>
 </section>
 
 <section>
