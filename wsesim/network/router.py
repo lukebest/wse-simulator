@@ -59,9 +59,12 @@ class Router:
     def _resolve_color(self, color: int | None) -> int:
         if self.color_count <= 0:
             return 0
-        if color is None:
+        if color is None or color < 0:
             return 0
         return int(color) % self.color_count
+
+    def _uses_tdm_color(self, color: int | None) -> bool:
+        return self.color_count > 0 and color is not None and color >= 0
 
     def can_admit(self, color: int | None = None) -> bool:
         if self.color_count <= 0:
@@ -89,7 +92,10 @@ class Router:
             return self.input_buffer.put(item)
 
         color = self._resolve_color(getattr(item, "color", None))
-        target = self.per_color_buffers[color]
+        raw = getattr(item, "color", None)
+        if self.color_count > 0 and (raw is None or raw < 0):
+            color = 0
+        target = self.per_color_buffers[color] if self.color_count > 0 else self.input_buffer
         if len(target.items) >= target.capacity:
             raise BufferError(f"Router {self.node_id} color {color} buffer overflow.")
         return target.put(item)
@@ -123,10 +129,11 @@ class Router:
         if self.color_count > 0:
             color_idx = self._resolve_color(color)
             yield self.per_color_buffers[color_idx].get()
-            while self.tdm_clock is not None and self.tdm_clock.current_color(self.env.now) != color_idx:
-                self.color_buffer_wait_cycles += 1
-                self.color_wait_cycles[color_idx] = self.color_wait_cycles.get(color_idx, 0) + 1
-                yield self.env.timeout(1)
+            if self._uses_tdm_color(color) and self.tdm_clock is not None:
+                while self.tdm_clock.current_color(self.env.now) != color_idx:
+                    self.color_buffer_wait_cycles += 1
+                    self.color_wait_cycles[color_idx] = self.color_wait_cycles.get(color_idx, 0) + 1
+                    yield self.env.timeout(1)
         else:
             yield self.input_buffer.get()
 

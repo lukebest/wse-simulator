@@ -15,7 +15,15 @@ from wsesim.network.routing.base import RoutingAlgorithm
 from wsesim.network.tdm_clock import TDMClock
 from wsesim.network.tdm_link import TDMLink
 from wsesim.network.topology.base import Topology
+from wsesim.network.topology.rect_flat_butterfly import RectFlatButterfly
+from wsesim.network.topology.restricted_hypercube_fb import RestrictedHypercubeFB
 from wsesim.network.topology.tdm_flat_butterfly import TDMFlatButterfly
+
+
+def _topology_color_plan(topology: Topology):
+    if isinstance(topology, (TDMFlatButterfly, RectFlatButterfly, RestrictedHypercubeFB)):
+        return topology.coloring()
+    return None
 
 
 @dataclass(slots=True)
@@ -65,7 +73,7 @@ class UnifiedNetwork:
 
     def __post_init__(self) -> None:
         self.graph = self.topology.build(self.num_nodes)
-        color_plan = self.topology.coloring() if isinstance(self.topology, TDMFlatButterfly) else None
+        color_plan = _topology_color_plan(self.topology)
         tdm_clock = (
             TDMClock(period=color_plan.C, slot_cycles=max(1, self.slot_cycles))
             if color_plan is not None
