@@ -326,7 +326,6 @@ def _render_report(rows: list[dict], out_html: Path) -> None:
             f"<td>{row['makespan_cycles']}</td>"
             f"<td>{float(row['avg_latency']):.2f}</td>"
             f"<td>{row['color_buffer_wait_cycles']}</td>"
-            f"<td>{row['link_wait_cycles']}</td>"
             "</tr>"
         )
 
@@ -419,10 +418,6 @@ def _render_report(rows: list[dict], out_html: Path) -> None:
       <dt>color_wait（color_buffer_wait_cycles）</dt>
       <dd><strong>Router 侧</strong> TDM 等待：flit 从 per-color ingress buffer 取出后、进入 switch pipeline 之前，等待全局 TDM 时钟转到该 flit 的 Color 时隙。仅 TDM 拓扑非零；Mesh2D 恒为 0。全 router 累加。</dd>
 
-      <dt>link_wait（link_wait_cycles）</dt>
-      <dd><strong>物理链路带宽争用</strong>：flit 在 Link 的 <code>resource.request()</code> 上排队等待（与 Mesh 相同机制）。
-        TDM Color 时隙<strong>不在 link 侧重检</strong>——router pipeline 已按 Color 放行。无其他 flit 争用同一链路时为 0。</dd>
-
       <dt>makespan（makespan_cycles）</dt>
       <dd>AllGather 流量全部完成时的仿真时间（cycles）。<strong>端到端延迟对比以这一列为准</strong>；TDM/Mesh 比值 = TDM makespan ÷ Mesh makespan。</dd>
 
@@ -448,17 +443,17 @@ def _render_report(rows: list[dict], out_html: Path) -> None:
     <ul>
       <li>限制版 Color 数更少（C=5/10），ND makespan 相对 Mesh：6×8 {r6}，12×16 {r12}，14×14 {r14}。</li>
       <li>满 FB vs Mesh（1KB ND）：6×8 {r6_full}，12×16 {r12_full}，14×14 {r14_full}（C=49 时 color_wait 累加高但 makespan 仍受 C 拖累）。</li>
-      <li>TDM Color 门控仅在 router（color_wait）；link_wait 仅为带宽争用，本报告 TDM 场景下均为 0。</li>
+      <li>TDM Color 门控仅在 router（color_wait）。</li>
       <li>6×8 含 direct_allgather；12×16/14×14 仅 ND（大 mesh direct 为 O(N²)）。</li>
     </ul>
   </section>
   <section>
     <h2>3) 完整结果</h2>
-    <p class="hint">列含义见顶部「指标说明」。Mesh2D 的 color_wait / link_wait 恒为 0（无 TDM 机制）。</p>
+    <p class="hint">列含义见顶部「指标说明」。Mesh2D 的 color_wait 恒为 0（无 TDM 机制）。</p>
     <table>
       <thead><tr>
         <th>mesh</th><th>topology</th><th>scheme</th><th>C</th><th>algorithm</th><th>slot</th>
-        <th>msg</th><th>simulated_msg</th><th>makespan</th><th>avg_lat</th><th>color_wait</th><th>link_wait</th>
+        <th>msg</th><th>simulated_msg</th><th>makespan</th><th>avg_lat</th><th>color_wait</th>
       </tr></thead>
       <tbody>{"".join(table_rows)}</tbody>
     </table>
