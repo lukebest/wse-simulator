@@ -48,6 +48,10 @@
   details.config-details summary { cursor:pointer; font-weight:600; padding:.6rem 0; color:var(--text); }
   details.config-details summary:hover { color:#93c5fd; }
   .rule-box { font-family:ui-monospace,monospace; background:#111827; border-radius:6px; padding:.75rem 1rem; font-size:.82rem; margin:.5rem 0; overflow-x:auto; }
+  .flow { background:#111827; border-radius:8px; padding:1rem 1.25rem; font-size:.84rem; line-height:1.7; margin:.75rem 0; overflow-x:auto; }
+  .flow .step { margin:.5rem 0; padding-left:1rem; border-left:2px solid var(--accent); }
+  .flow .step strong { color:#93c5fd; }
+  pre.src { background:#111827; border:1px solid var(--border); border-radius:6px; padding:.75rem 1rem; font-size:.78rem; overflow-x:auto; margin:.5rem 0; }
   footer { text-align:center; color:var(--muted); font-size:.75rem; padding:1.5rem; border-top:1px solid var(--border); }
   ul { color:var(--muted); }
   li { margin:.35rem 0; }
@@ -56,7 +60,7 @@
 <body>
 <header>
   <h1>TDM Flattened Butterfly：Color 数 × Mesh 规模 × FB 规模</h1>
-  <p>基于 <code>wsesim</code> 物理 max-load 扫描（= 贪心着色下界 C）。约束：<code>kⁿ = S²</code>（S×S mesh，N=S² PE）。</p>
+  <p>基于 <code>wsesim</code> 物理 max-load 扫描（= 贪心着色下界 C）。约束：<code>kⁿ = S²</code>（S×S mesh，N=S² PE）。<a href="#color-subtopology-gen" style="color:#93c5fd">↓ Color 子拓扑生成过程</a></p>
 </header>
 <main>
 
@@ -86,6 +90,175 @@
     <li>约束：<code>N = S² = kⁿ</code>，L = N·n·(k−1)。</li>
     <li>同 N 下：<strong>k↑ n↓</strong> → L↑ 且 C↑（长组内链路多）；<strong>k=2 n↑</strong> → C 缓增，可撑更大 mesh。</li>
   </ul>
+</section>
+
+<section id="color-subtopology-gen">
+  <h2>Color 子拓扑：生成过程（源码路径）</h2>
+  <p style="color:var(--muted);font-size:.9rem;margin-bottom:1rem">
+    「Color 子拓扑」<strong>不是</strong>在物理 mesh 上再建一张独立图，而是：枚举 FB 逻辑长链路 → 映射 XY 物理路径 → 全局贪心着色 →
+    每个 color id 对应一组<strong>物理边互不冲突</strong>的逻辑链路。实现见
+    <code>wsesim/network/tdm_coloring.py</code>、<code>topology/tdm_flat_butterfly.py</code>。
+  </p>
+
+  <div class="panel highlight">
+    <h3 style="margin-top:0;color:var(--text)">定义</h3>
+    <p style="margin:.25rem 0;color:var(--muted);font-size:.9rem">
+      在 cycle <code>t</code>，仅 <code>color = t mod C</code> 的逻辑链路可在 router 出口前进（Color 门控在 router，不在 link）。
+      <strong>Color c 的子拓扑</strong> = 所有 <code>color_of_logical[(u,v)] = c</code> 的有向逻辑弧；约束为同 color 内任意两条逻辑链路
+      <strong>不得共享同一条物理有向边</strong> <code>(p_src, p_dst)</code>。
+    </p>
+    <div class="formula">link_active[(p_src,p_dst)][c] → 该物理边在 color c 时隙由哪条逻辑链路占用（或 None）</div>
+  </div>
+
+  <h3>四层流水线</h3>
+  <div class="flow">
+    <div class="step"><strong>Layer 0 · 物理 Mesh2D</strong> — 4 邻接图，节点 id 行优先；仿真中 link 带宽 / latency / VC 均在此层。</div>
+    <div class="step"><strong>Layer 1 · 逻辑 FB 长链路</strong> — <code>logical_links()</code>：每维上节点与同维其余 k−1 个坐标不同的节点建立有向逻辑弧 (u,v,dim)。</div>
+    <div class="step"><strong>Layer 2 · XY 物理路径</strong> — <code>physical_path(u,v)</code>：每条逻辑弧映射为 mesh 上有向边序列（先列后行 DOR）。</div>
+    <div class="step"><strong>Layer 3 · 着色 + 子拓扑</strong> — <code>assign_colors()</code> → <code>ColorPlan</code>；<code>_build_link_active()</code> 导出各 color 的激活表。</div>
+    <div class="step"><strong>Layer 4 · 运行时 TDM</strong> — <code>TDMClock(period=C)</code> + router per-color buffer；flit 等待 <code>current_color(t) == flit.color</code>。</div>
+  </div>
+
+  <h3>Step 1 — 枚举逻辑 FB 长链路</h3>
+  <p style="color:var(--muted);font-size:.88rem">
+    入口：<code>TDMFlatButterfly.coloring()</code> 调用 <code>logical_links()</code>。对 k<sup>n</sup> 配置，节点 id 与超立方坐标互转（<code>to_coords</code> / <code>to_node</code>）。
+  </p>
+<pre class="src">for node in range(N):
+    for dim, peers in logical_neighbors(node).items():
+        for peer in peers:
+            links.append((node, peer, dim))   # 有向逻辑长链路 + 所属维</pre>
+  <table style="margin:.75rem 0">
+    <thead><tr><th>配置</th><th>逻辑链路 L</th><th>含义</th></tr></thead>
+    <tbody>
+      <tr><td>4×4 (4,2)</td><td>96</td><td>16×2×3，每维 3 个逻辑邻居</td></tr>
+      <tr><td>4×4 (2,4)</td><td>64</td><td>16×4×1，每维 1 个逻辑邻居（位翻转）</td></tr>
+      <tr><td>8×8 (2,6)</td><td>384</td><td>64×6×1</td></tr>
+    </tbody>
+  </table>
+  <p style="color:var(--muted);font-size:.88rem">
+    <strong>矩形 mesh（非 k<sup>n</sup>）</strong>：见 <code>RectFlatButterfly</code> / <code>scripts/generate_tdm_fb_rect_docs.py</code> —
+    dim0 = 同行全连（radix=cols），dim1 = 同列全连（radix=rows）；逻辑链路数 = N(cols−1) + N(rows−1)。
+  </p>
+
+  <h3>Step 2 — 逻辑链路 → XY 物理路径</h3>
+  <p style="color:var(--muted);font-size:.88rem">
+    对每条出现在 <code>logical_links</code> 中的 (u,v)，计算 mesh 最短路式的 XY 有向边序列（非 BFS，固定先水平后垂直）：
+  </p>
+<pre class="src">physical_path(src, dst):
+    先沿列从 sc → dc（每步一条有向 mesh 边）
+    再沿行从 sr → dr</pre>
+  <p style="color:var(--muted);font-size:.88rem">
+    同时收集 <code>physical_links()</code>：mesh 上全部双向有向边（4×4 → 48 条）。着色只关心逻辑链路的路径是否经过这些边。
+  </p>
+
+  <h3>Step 3 — 物理边负载与 Color 下界</h3>
+  <p style="color:var(--muted);font-size:.88rem">着色前扫描：统计每条物理有向边被多少条逻辑链路的 XY 路径穿过。</p>
+<pre class="src">for logical_link in logical_links:
+    for edge in physical_paths[logical_link]:
+        load_per_link[edge] += 1
+
+color_lower_bound = max(load_per_link.values())   # 至少 C ≥ 此值</pre>
+  <p style="color:var(--muted);font-size:.88rem">
+    直觉：同一时刻一条物理边只能承载一条逻辑长链路的数据；若某边被 L 条逻辑路径共享，TDM 至少需要 L 个 color 轮转。
+    这与上文「核心规律」公式一致；下文贪心初始 <code>color_count = lower_bound</code>。
+  </p>
+
+  <h3>Step 4 — 贪心着色 <code>assign_colors</code></h3>
+  <ol style="color:var(--muted);font-size:.88rem">
+    <li><strong>排序</strong>：物理路径<strong>更长</strong>的逻辑链路优先分配（longest-path-first，提高装箱质量）。</li>
+    <li><strong>尝试</strong>：对链路 ℓ，从小到大试 color c；当且仅当 ℓ 的 XY 路径上<strong>每条物理边</strong>在 color c 上仍为 <code>free</code>，才将 ℓ 放入 c。</li>
+    <li><strong>扩容</strong>：若现有 color 均放不下，则 <code>C += 1</code>，为新链路独占新 color。</li>
+    <li><strong>输出</strong>：<code>color_of_logical[(u,v)]</code>、<code>logical_dims</code>、<code>load_per_physical_link</code>。</li>
+  </ol>
+<pre class="src">for logical_link, dim in ordered_by_path_length_desc:
+    for color in range(color_count):
+        if all(path_edges_free_at[color] for edge in path):
+            assign logical_link → color; mark edges busy; break
+    else:
+        color_count += 1; assign to new color</pre>
+  <p style="color:var(--muted);font-size:.88rem">
+    已文档化 square-mesh 配置中，贪心结果<strong>均达到下界</strong>（无额外扩容）：4×4 (2,4) C=2，(4,2) C=4；8×8 (2,6) C=5 等。
+  </p>
+
+  <h3>Step 5 — 构建 <code>link_active</code>（各 Color 子拓扑的数据结构）</h3>
+  <p style="color:var(--muted);font-size:.88rem">
+    着色完成后，对每个 color c 汇总其全部逻辑弧，并登记每条物理边在 c 下的占用者；若同一边上两条不同逻辑链路争用同一 c，则抛 <code>ValueError</code>（验证器见 <code>visualize_tdm_coloring_4x4.py</code>）。
+  </p>
+<pre class="src">for logical_link, color in color_of_logical.items():
+    for edge in physical_paths[logical_link]:
+        link_active[edge][color] = logical_link   # 该 color 子拓扑在 edge 上的激活链路</pre>
+  <p style="color:var(--muted);font-size:.88rem">
+    <strong>可视化 HTML</strong>（如 <a href="tdm_fb_k2_n4_color_subtopology.html">k2_n4</a>）即：对每个 c，在物理 mesh 上绘制 color c 的全部逻辑弧；
+    overview 图边标签 <code>load(e)</code> 是<strong>争用次数</strong>，不是 color 编号。
+  </p>
+
+  <h3>三种拓扑变体的输入差异</h3>
+  <table>
+    <thead><tr><th>变体</th><th>逻辑链路来源</th><th>路径</th><th>着色</th></tr></thead>
+    <tbody>
+      <tr>
+        <td><strong>k<sup>n</sup> TDM FB</strong><br><span style="color:var(--muted)">4×4, 8×8</span></td>
+        <td><code>TDMFlatButterfly.logical_links()</code></td>
+        <td><code>physical_path</code> XY</td>
+        <td><code>assign_colors</code></td>
+      </tr>
+      <tr>
+        <td><strong>矩形 2-flat 混合基</strong><br><span style="color:var(--muted)">6×8, 12×16, 14×14</span></td>
+        <td>行 K<sub>cols</sub> + 列 K<sub>rows</sub></td>
+        <td>行内仅水平 / 列内仅垂直段</td>
+        <td>同一 <code>assign_colors</code></td>
+      </tr>
+      <tr>
+        <td><strong>限制版 Hypercube FB</strong><br><span style="color:var(--muted)">restricted 文档</span></td>
+        <td>从大 parent (k=2,n=…) 裁剪：端点 + 整条 XY 均在子矩形内</td>
+        <td>子 mesh 物理边</td>
+        <td>对裁剪集<strong>重新</strong> <code>assign_colors</code>（C 通常 ≪ 满 FB）</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h3>运行时：子拓扑如何「开门」</h3>
+  <ul style="color:var(--muted);font-size:.88rem">
+    <li><code>UnifiedNetwork</code> 读取 <code>topology.coloring()</code>，设 <code>Router.color_count = C</code>，创建 <code>TDMClock(period=C, slot_cycles=…)</code>。</li>
+    <li><code>TDMFlatButterflyRouting</code> 为每个逻辑 hop 查 <code>color_of_logical[(u,v)]</code>，flit 携带 color tag。</li>
+    <li>Router pipeline 入口：若 <code>tdm_clock.current_color(t) ≠ flit.color</code>，自旋等待（累加 <code>color_buffer_wait_cycles</code>）。</li>
+    <li>含义：cycle t 只有 color <code>t mod C</code> 对应的那张子图在 router 侧可转发；其余 color 的逻辑链路排队。</li>
+  </ul>
+
+  <div class="panel highlight" style="margin-top:1rem">
+    <h3 style="margin-top:0;color:var(--text)">进阶：多跳路由与路径单色约束</h3>
+    <p style="color:var(--muted);font-size:.88rem;margin:.25rem 0">
+      默认贪心按<strong>单条逻辑链路</strong>着色。维序路由（如 k2_n4 的 0→6 = 0→2→6）含两条逻辑 hop，可能被分到不同 color → 单 flit 无法保持单色。
+      此时需 <code>assign_colors_for_routes</code>：对 <code>force_monochrome_paths</code> 强制同一路径所有 hop 共用一个 color，放不下则增大 C 重试
+      （见 <code>visualize_tdm_coloring_4x4.py</code> 0→6 示例）。
+      AllGather ND 在 k=2 组内通信为单逻辑 hop，不受此影响；多 hop 端到端路由才需 path-aware 着色。
+    </p>
+  </div>
+
+  <h3>实例：4×4 (2,4) 的两个 Color 子拓扑</h3>
+  <table>
+    <thead><tr><th>量</th><th>值</th></tr></thead>
+    <tbody>
+      <tr><td>逻辑链路</td><td>64</td></tr>
+      <tr><td>物理有向边</td><td>48</td></tr>
+      <tr><td>max load → 下界 C</td><td>2 → <strong>C=2</strong>（贪心达下界）</td></tr>
+      <tr><td>Color 0 / Color 1 各含链路</td><td>32 / 32</td></tr>
+      <tr><td>TDM 周期</td><td>t 偶 → C0 子图激活；t 奇 → C1 子图激活</td></tr>
+    </tbody>
+  </table>
+  <p style="color:var(--muted);font-size:.88rem">
+    Color 0 样例逻辑弧（非物理边）：(0→2), (0→8), (1→9), (2→0), … — 参考位规则见下文 k2_n4 配置块。
+    对比 (4,2)：C=4，同一物理边最多 4 条逻辑路径争用，必须 4 路 TDM。
+  </p>
+
+  <div class="panel" style="margin-top:1rem">
+    <h3 style="margin-top:0">一句话</h3>
+    <p style="margin:0;color:var(--muted);font-size:.9rem">
+      <strong>Color 子拓扑生成</strong> = 在物理 mesh 上列出全部 FB 逻辑长链路 → 为每条算 XY 物理路径 → 用 max-load 定 C 下界 →
+      贪心装箱（长路径优先，同 color 不共享物理边）→ 得到 <code>color_of_logical</code> 与 <code>link_active</code>；
+      每个 color id 即一张可同时激活、物理无冲突的逻辑通信子图。
+    </p>
+  </div>
 </section>
 
 <section>
