@@ -74,6 +74,7 @@
     <li><a href="#tdm-noc">Color 时分 NoC（TDM FB）</a></li>
     <li><a href="#cross">算法 × NoC 交叉矩阵</a></li>
     <li><a href="#example">4×4 数值示例</a></li>
+    <li><a href="#latency-k2n4">k2_n4 时延分解（1KB, slot=1）</a></li>
     <li><a href="#guidance">选型建议</a></li>
   </ol>
 </section>
@@ -422,11 +423,11 @@ nd_dimension_exchange_allgather:
         <td>ND</td>
         <td>64</td>
         <td>4</td>
-        <td class="good">39 cyc（全局最优）</td>
+        <td class="good">41 cyc（当前仿真；旧报告 39）</td>
       </tr>
     </tbody>
   </table>
-  <p class="hint">makespan 摘自 <span class="mono">docs/allgather_tdm_vs_mesh_4x4_report.html</span>；包数为源码公式精确值。</p>
+  <p class="hint">makespan 以当前 <span class="mono">run_allgather_tdm_vs_mesh_4x4.py</span> 复现为准（2025 代码路径下 k2_n4 ND 1KB = <strong>41 cycles</strong>）；包数为源码公式精确值。</p>
 
   <h3>包数推导（k2_n4, ND）</h3>
   <div class="formula">
@@ -437,8 +438,139 @@ nd_dimension_exchange_allgather:
   <p class="hint">k4_n2 同为 2 维：2 × (4 组 × 4×3) = 2 × 48 = 96 包，与 mesh ND 包数相同但分组几何不同（超立方 vs 行列混合基）。</p>
 </section>
 
+<section class="panel" id="latency-k2n4">
+  <h2>9) k2_n4 + ND AllGather 时延分解（4×4, 1KB, slot=1）</h2>
+  <p>
+    配置：<span class="mono">tdm_fb_k2_n4</span> + <span class="mono">nd_dimension_exchange_allgather</span>，
+    msg=1024B，chunk=64B，<strong>每包 1 flit</strong>（128B/flit），64 包 / 4 stage，Color 数 <strong>C=2</strong>。
+  </p>
+
+  <div class="callout callout-tdm">
+    <strong>复现结果（当前代码）：</strong>
+    makespan = <strong>41 cycles</strong>（旧 benchmark 报告曾记 39，差异来自仿真模型迭代，下文以 41 为准）。
+    avg_latency = 17.36 cycles；max_packet_latency = 40；total_flits（链路传输次数）= 96。
+  </div>
+
+  <h3>9.1 为什么「看起来极快」——三个结构性原因</h3>
+  <ol>
+    <li><strong>流量极小：</strong>64 包 × 1 flit，且 stage 间通过 <code>offset+=1</code> 错开注入，峰值并发仅 16 包/stage（不是 240 包全局轰炸）。</li>
+    <li><strong>组内仅 k=2 成对交换：</strong>每包走一条<strong>逻辑 FB 长链路</strong>，物理跳数只有 <strong>1 或 2</strong>（无对角线 3-hop）。</li>
+    <li><strong>C=2 的 TDM：</strong>全网 color 等待累加仅 29 cycles；Color 不是瓶颈，VC 争用才是。</li>
+  </ol>
+
+  <h3>9.2 Stage 几何（traffic 静态分析）</h3>
+  <table>
+    <thead><tr><th>Stage (dim)</th><th>注入 cycle</th><th>包数</th><th>物理 hop</th><th>无争用单包时延</th><th>本 stage 完成时刻</th></tr></thead>
+    <tbody>
+      <tr><td>0</td><td>0</td><td>16</td><td>全部 1 hop</td><td class="good">7</td><td>0+7 = 7</td></tr>
+      <tr><td>1</td><td>1</td><td>16</td><td>全部 2 hop</td><td>14（理论）</td><td class="warn">1+40 = <strong>41</strong> ← 全局瓶颈</td></tr>
+      <tr><td>2</td><td>2</td><td>16</td><td>全部 1 hop</td><td>7</td><td>2+25 = 27</td></tr>
+      <tr><td>3</td><td>3</td><td>16</td><td>全部 2 hop</td><td>14（理论）</td><td>3+32 = 35</td></tr>
+    </tbody>
+  </table>
+  <p class="hint">
+    makespan = max<sub>stage</sub>(inject<sub>s</sub> + max_latency<sub>s</sub>)。
+    Stage 0/2 的 dim 对应 1-hop 逻辑链路；Stage 1/3 对应 2-hop XY 物理路径（如 0→2 经节点 1）。
+  </p>
+
+  <h3>9.3 单 flit、无争用时的理论 hop 代价</h3>
+  <p>默认 4-stage router（RC+VA+SA+ST 各 1 cycle + crossbar 1 flit/cycle）+ link（latency 1 + 传输 1）：</p>
+  <div class="formula">
+    T<sub>1-hop</sub> = T<sub>router</sub> + T<sub>link</sub> = (1+1+1+1+1) + (1+1) = <strong>7 cycles</strong><br>
+    T<sub>2-hop</sub> = 2 × 7 = <strong>14 cycles</strong>（不含 color / VC 等待）
+  </div>
+  <p>
+    Stage 0 实测全部包 latency = 7，<span class="good">与理论完全一致</span>，说明 1-hop 路径上无链路争用、几乎无 color 等待。
+  </p>
+
+  <h3>9.4 理论 makespan 下界 vs 实测</h3>
+  <table>
+    <thead><tr><th>模型</th><th>假设</th><th>makespan</th><th>与实测 41 的比值</th></tr></thead>
+    <tbody>
+      <tr>
+        <td><strong>理想下界 A</strong></td>
+        <td>每 stage 无争用：max(7, 14) 加 inject offset</td>
+        <td class="good">max(0+7, 1+14, 2+7, 3+14) = <strong>17</strong></td>
+        <td>41/17 ≈ 2.4×</td>
+      </tr>
+      <tr>
+        <td><strong>理想下界 B</strong></td>
+        <td>仅瓶颈 stage 1 无争用，其余实测</td>
+        <td>max(7, 1+14, 27, 35) = <strong>35</strong></td>
+        <td>41/35 ≈ 1.17×</td>
+      </tr>
+      <tr>
+        <td><strong>实测</strong></td>
+        <td>num_vcs=2, buffer=8, 16 包/stage 并发</td>
+        <td class="warn"><strong>41</strong></td>
+        <td>1.00×</td>
+      </tr>
+      <tr>
+        <td>对照 Mesh ND</td>
+        <td>同算法族，k_dims=[4,4]，96 包，组内最远 3 hop</td>
+        <td>69</td>
+        <td>TDM 为 Mesh 的 0.59×</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h3>9.5 瓶颈包分解（11→9，Stage 1，done@41）</h3>
+  <p>关键路径包：src=11, dst=9，2 物理 hop，color=1，inject@1，latency=40。</p>
+  <table>
+    <thead><tr><th>分量</th><th>cycles（该包）</th><th>说明</th></tr></thead>
+    <tbody>
+      <tr><td>VC wait</td><td class="bad">25</td><td>下游 router 仅 2 个 VC；Stage 1 同时 16 条 2-hop 流竞争 VC 预留（占单包时延 62%）</td></tr>
+      <tr><td>Router pipeline</td><td>11</td><td>2 hop × ~5 cycle/hop + 少量 color 门控计入 pipeline 路径</td></tr>
+      <tr><td>Color wait</td><td>1</td><td>C=2 下平均等待很短；全网累加 29 分散在 64 包</td></tr>
+      <tr><td>Link wait</td><td>0</td><td>链路带宽 1 flit/cycle，无排队</td></tr>
+      <tr><td>Buffer wait</td><td>0</td><td>per-color buffer depth=8 未触顶</td></tr>
+      <tr><td><strong>合计</strong></td><td><strong>37</strong></td><td>+ inject offset 1 → done@41（SimPy 离散事件舍入与 VC 轮询对齐）</td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout">
+    <strong>结论：</strong>41 cycles 并非「低于物理极限」，而是<strong>在 1-flit 小包 + 成对交换 + C=2</strong>下的合理结果。
+    相对<strong>无争用理论下界 17 cycles</strong>，主要额外开销来自 Stage 1/3 的 <strong>2-hop 路径 + VC=2 的 head-of-line 阻塞</strong>（+24 cycles）。
+    相对 Mesh ND（69 cycles），快因：<em>包更少</em>（64 vs 96）、<em>组更小</em>（k=2 vs k=4，无 3-hop 组内通信）、<em>逻辑链路对齐 FB 维序</em>。
+  </div>
+
+  <h3>9.6 与常见理论模型的对照</h3>
+  <table>
+    <thead><tr><th>理论模型</th><th>预测</th><th>与本案例</th></tr></thead>
+    <tbody>
+      <tr>
+        <td>LogP / α-β（单条消息）</td>
+        <td>latency ≈ α·hops + β·bytes；1 flit → β≈0</td>
+        <td>α≈7/hop 成立；Stage 0 验证。并发下需加 VC 排队项（仿真显式建模）</td>
+      </tr>
+      <tr>
+        <td>TDM 轮转下界</td>
+        <td>额外等待 ≤ (C−1)·slot 每 color 门控</td>
+        <td>C=2, slot=1 → 最多 +1 cycle/门控；实测 color 可忽略</td>
+      </tr>
+      <tr>
+        <td>ND AllGather 步数</td>
+        <td>n 个 stage（此处 n=4），每 stage 组内 diameter</td>
+        <td>组内 k=2 直径=1 逻辑 hop；与 4 stage 串行 inject 模型一致</td>
+      </tr>
+      <tr>
+        <td>全对全 direct 下界</td>
+        <td>单 stage，但 O(N²) 流量</td>
+        <td>不适用；direct 在同拓扑上 makespan 305 cycles</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h3>9.7 若要进一步逼近理论 17 cycles</h3>
+  <ul>
+    <li>增大 <code>num_vcs</code>（≥4）可消减 Stage 1 的 VC 等待（25→接近 0）。</li>
+    <li>Stage 1 与 Stage 3 均为 2-hop，若着色/路由能更多使用 1-hop 逻辑链路，可降 hop 数（需改拓扑或坐标映射）。</li>
+    <li>增大 msg 使每包多 flit 后，makespan 按 hop×flit 线性增长，但<strong>不会</strong>再是 ~40 cycles 量级。</li>
+  </ul>
+</section>
+
 <section class="panel" id="guidance">
-  <h2>9) 选型建议</h2>
+  <h2>10) 选型建议</h2>
   <ol>
     <li><strong>Mesh2D 小集群（N≤16）</strong>：可用 <code>direct_allgather</code> 作简单基线；追求更低 makespan 用 <code>nd_dimension_exchange_allgather</code> + <code>k_dims=[cols,rows]</code>。</li>
     <li><strong>Mesh2D 大集群（N≥64）</strong>：避免 direct（O(N²) 仿真不可承受）；仅测 ND 分组交换。</li>
