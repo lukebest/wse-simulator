@@ -1,0 +1,462 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AllGather 算法对比：direct vs ND 分组交换</title>
+<style>
+  :root {
+    --bg:#0f1419; --panel:#1a2332; --panel2:#243044; --text:#e8edf4; --muted:#94a3b8;
+    --border:#2d3a4f; --good:#4ade80; --warn:#f59e0b; --bad:#f87171; --accent:#60a5fa;
+    --mesh:#34d399; --tdm:#a78bfa;
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; font-family:"IBM Plex Sans",system-ui,sans-serif; background:var(--bg); color:var(--text); line-height:1.65; }
+  header { padding:2rem 1.5rem; background:linear-gradient(135deg,#1e293b 0%,#0f172a 60%,#1a1033 100%); border-bottom:1px solid var(--border); }
+  header h1 { margin:0 0 .5rem; font-size:1.55rem; }
+  main { max-width:1180px; margin:0 auto; padding:1.5rem; }
+  section { margin-bottom:1.75rem; }
+  h2 { font-size:1.15rem; margin:0 0 .75rem; color:#f1f5f9; }
+  h3 { font-size:1rem; margin:1rem 0 .5rem; color:#cbd5e1; }
+  .panel { background:var(--panel); border:1px solid var(--border); border-radius:10px; padding:1.1rem 1.25rem; }
+  .hint { color:var(--muted); font-size:.9rem; }
+  .mono { font-family:"IBM Plex Mono",ui-monospace,monospace; font-size:.88em; }
+  .tag { display:inline-block; padding:.15rem .5rem; border-radius:4px; font-size:.78rem; font-weight:600; margin-right:.35rem; }
+  .tag-mesh { background:#064e3b; color:var(--mesh); }
+  .tag-tdm { background:#4c1d95; color:var(--tdm); }
+  .tag-algo { background:#1e3a5f; color:var(--accent); }
+  table { width:100%; border-collapse:collapse; font-size:.86rem; margin:.75rem 0; }
+  th,td { border:1px solid var(--border); padding:.45rem .6rem; text-align:left; vertical-align:top; }
+  th { background:var(--panel2); }
+  .good { color:var(--good); font-weight:600; }
+  .warn { color:var(--warn); font-weight:600; }
+  .bad { color:var(--bad); font-weight:600; }
+  .callout { background:#0f172a; border-left:3px solid var(--accent); padding:.75rem 1rem; margin:.75rem 0; font-size:.88rem; border-radius:0 6px 6px 0; }
+  .callout-mesh { border-left-color:var(--mesh); }
+  .callout-tdm { border-left-color:var(--tdm); }
+  .callout strong { color:#93c5fd; }
+  .callout-mesh strong { color:var(--mesh); }
+  .callout-tdm strong { color:var(--tdm); }
+  ul,ol { margin:.35rem 0 .35rem 1.25rem; }
+  li { margin:.25rem 0; }
+  pre { background:#0f172a; border:1px solid var(--border); border-radius:6px; padding:.75rem 1rem; overflow-x:auto; font-size:.82rem; line-height:1.5; }
+  code { font-family:"IBM Plex Mono",ui-monospace,monospace; }
+  .grid2 { display:grid; grid-template-columns:1fr 1fr; gap:1rem; }
+  @media (max-width:860px) { .grid2 { grid-template-columns:1fr; } }
+  .compare-card { background:#0f172a; border:1px solid var(--border); border-radius:8px; padding:1rem; }
+  .compare-card h3 { margin-top:0; }
+  .formula { background:#172033; padding:.5rem .75rem; border-radius:6px; font-family:"IBM Plex Mono",monospace; font-size:.85rem; margin:.5rem 0; }
+  .toc a { color:var(--accent); text-decoration:none; }
+  .toc a:hover { text-decoration:underline; }
+  .toc li { margin:.2rem 0; }
+  mermaid { display:block; margin:1rem 0; }
+</style>
+</head>
+<body>
+<header>
+  <h1>AllGather 算法详解：<code>direct_allgather</code> vs <code>nd_dimension_exchange_allgather</code></h1>
+  <p class="hint">
+    基于 wse-simulator 源码（<span class="mono">wsesim/network/collective.py</span>）与仿真配置。
+    分别说明两种算法在<strong>分组交换 NoC</strong>（Mesh2D 物理路由）与<strong>Color 时分 NoC</strong>（TDM Flat Butterfly 逻辑 overlay）上的行为差异。
+  </p>
+</header>
+
+<main>
+
+<section class="panel">
+  <h2>目录</h2>
+  <ol class="toc">
+    <li><a href="#overview">总览：两种算法的本质区别</a></li>
+    <li><a href="#direct">direct_allgather 算法</a></li>
+    <li><a href="#nd">nd_dimension_exchange_allgather 算法</a></li>
+    <li><a href="#compare">算法层面对比表</a></li>
+    <li><a href="#mesh-noc">分组交换 NoC（Mesh2D）</a></li>
+    <li><a href="#tdm-noc">Color 时分 NoC（TDM FB）</a></li>
+    <li><a href="#cross">算法 × NoC 交叉矩阵</a></li>
+    <li><a href="#example">4×4 数值示例</a></li>
+    <li><a href="#guidance">选型建议</a></li>
+  </ol>
+</section>
+
+<section class="panel" id="overview">
+  <h2>1) 总览：两种算法的本质区别</h2>
+  <p>
+    二者都是 <strong>AllGather</strong>（每个节点最终持有全部专家的 payload 片段），但<strong>流量调度策略</strong>完全不同：
+  </p>
+  <div class="grid2">
+    <div class="compare-card">
+      <h3><span class="tag tag-algo">direct</span> direct_allgather</h3>
+      <p><strong>单阶段、全局全对全。</strong>每个源节点在同一时刻向<strong>所有其他</strong>节点发送自己的 chunk。无维度分组、无 stage 串行。</p>
+      <div class="formula">包数 ≈ N × (N−1) × num_experts</div>
+      <p class="hint">复杂度 O(N²)，适合小规模（源码默认 shards≤8 时自动选用）。</p>
+    </div>
+    <div class="compare-card">
+      <h3><span class="tag tag-algo">ND</span> nd_dimension_exchange_allgather</h3>
+      <p><strong>多 stage、组内全对全。</strong>按拓扑维度串行：每个 stage 仅在<strong>同维同组</strong>的 k 个节点内做 direct allgather，组间通过多 stage 间接传播。</p>
+      <div class="formula">包数 ≈ Σ<sub>dim</sub> G<sub>dim</sub> × k<sub>dim</sub>(k<sub>dim</sub>−1) × num_experts</div>
+      <p class="hint">流量通常远小于 direct；TDM FB 拓扑的默认 AllGather 算法。</p>
+    </div>
+  </div>
+
+  <div class="callout">
+    <strong>关键洞察：</strong>算法决定<strong>谁向谁、何时、发多少</strong>；NoC 类型决定<strong>这些包如何在物理网络上路由、是否受 Color 门控</strong>。
+    同一算法在不同 NoC 上表现可以天差地别——尤其是 <code>direct_allgather</code> 在 TDM 上会因 O(N²) 流量与 Color 等待叠加而急剧恶化。
+  </div>
+</section>
+
+<section class="panel" id="direct">
+  <h2>2) direct_allgather 算法</h2>
+
+  <h3>源码逻辑</h3>
+<pre><code>def _direct_allgather(nodes, payload_bytes, num_experts):
+    s = len(nodes)
+    chunk = ceil(payload_bytes / s)          # 每节点持有 1/s 的 payload
+    for expert_id in range(num_experts):
+        base = expert_id * s                 # 同一 expert 内所有包同 delay
+        for src in nodes:
+            for dst in nodes:
+                if src != dst:
+                    traffic.append(packet(src, dst, chunk, "allgather", base))</code></pre>
+
+  <h3>行为特征</h3>
+  <ul>
+    <li><strong>Chunk 划分：</strong><code>chunk = ⌈payload / N⌉</code>。每个节点只广播自己负责的那一份，接收方在仿真中通过多包汇聚得到完整 tensor（仿真层不建模本地 concat，只建模网络流量）。</li>
+    <li><strong>时间模型：</strong>同一 expert 内所有 N(N−1) 个包共享同一 <code>delay_cycles = expert_id × N</code>，即<strong>完全并发注入</strong>，无 stage 屏障。</li>
+    <li><strong>正确性直觉：</strong>经过一轮，每个节点从其余 N−1 个节点各收到 1 份 chunk，本地已有自己的 chunk → 凑齐 N 份，AllGather 完成。</li>
+    <li><strong>流量规模：</strong>随 N² 增长。64 节点、1 expert 即 4032 个包；256KB 消息在 8×8 仿真中产生 ~24 万 flit 量级（见 benchmark 报告）。</li>
+  </ul>
+
+  <h3>与 Mesh / TDM 文档的映射</h3>
+  <p class="hint">
+    项目文档规定：Mesh2D 基线的 AllGather 默认算法为 <code>direct_allgather</code>；
+    TDM FB 基线为 <code>nd_dimension_exchange_allgather</code>（见 <span class="mono">docs/tdm_flat_butterfly_4x4.md</span>）。
+  </p>
+</section>
+
+<section class="panel" id="nd">
+  <h2>3) nd_dimension_exchange_allgather 算法</h2>
+
+  <h3>源码逻辑</h3>
+<pre><code>def _nd_dimension_exchange_allgather(nodes, payload_bytes, num_experts, topology_hint):
+    groups_by_dim = _resolve_groups_by_dimension(nodes, topology_hint)
+    n = len(groups_by_dim)                   # 维度数
+    chunk = ceil(payload_bytes / len(nodes))
+    for expert_id in range(num_experts):
+        offset = expert_id * n
+        for dim in range(n):                 # 按维度串行 stage
+            for group in groups_by_dim[dim]:
+                for src in group:
+                    for dst in group:
+                        if src != dst:
+                            traffic.append(packet(src, dst, chunk, "allgather", offset))
+            offset += 1                      # 下一维 stage delay +1</code></pre>
+
+  <h3>分组解析（topology_hint 驱动）</h3>
+  <table>
+    <thead><tr><th>拓扑类型</th><th>hint 字段</th><th>分组方式</th><th>示例（16 节点 4×4）</th></tr></thead>
+    <tbody>
+      <tr>
+        <td>Mesh2D / 矩形 Mesh</td>
+        <td><code>k_dims=[cols, rows]</code>, <code>cols</code></td>
+        <td>混合基坐标：dim0=列方向同行组，dim1=行方向同列组</td>
+        <td>k_dims=[4,4] → 每维 4 组 × 每组 4 节点</td>
+      </tr>
+      <tr>
+        <td>TDM FB（k<sup>n</sup>）</td>
+        <td><code>k</code>, <code>n</code> 或 <code>hypercube_coords</code></td>
+        <td>超立方坐标：固定某一维、其余维相同者为同组</td>
+        <td>k2_n4 → 4 维，每维 8 组 × 每组 2 节点</td>
+      </tr>
+      <tr>
+        <td>限制版 Hypercube FB</td>
+        <td><code>k=2</code>, <code>n</code></td>
+        <td>同上，但仅保留子矩形内完整 XY 路径的逻辑链路</td>
+        <td>12×16 限制版 → 组大小仍为 2，组数更少</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h3>Stage 语义</h3>
+  <p>
+    第 <code>dim</code> 个 stage 完成后，<strong>在该维度的每个 k-节点组内</strong>，所有成员已持有组内全部 chunk。
+    经过全部 n 个 stage，信息沿各维扩散，最终每个节点持有全局 N 份 chunk（与 direct 目标相同，但路径分 stage、组内全对全）。
+  </p>
+  <p>
+    <strong>与 AllReduce 版 ND 的区别：</strong><code>nd_dimension_exchange_allreduce</code> 在组内用 recursive halving-doubling 或 ring；
+    AllGather 版则在<strong>每个 stage 的每个组内直接做 mini direct allgather</strong>（组内 k(k−1) 条边），不做 reduce。
+  </p>
+
+  <h3>Delay / 并发模型</h3>
+  <ul>
+    <li>同一 stage（同一 <code>offset</code>）内：所有组的组内包<strong>并发</strong>注入。</li>
+    <li>不同 stage：通过 <code>offset += 1</code> 错开 1 cycle（极简 barrier 模型），形成 n 个逻辑阶段。</li>
+    <li>不同 expert：<code>offset</code> 基址为 <code>expert_id × n</code>，专家间也按 n 个 cycle 错开。</li>
+  </ul>
+</section>
+
+<section class="panel" id="compare">
+  <h2>4) 算法层面对比表</h2>
+  <table>
+    <thead>
+      <tr>
+        <th>维度</th>
+        <th>direct_allgather</th>
+        <th>nd_dimension_exchange_allgather</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr><td>Stage 数</td><td>1（逻辑单阶段）</td><td>n（= 拓扑维度数）</td></tr>
+      <tr><td>每 stage 通信模式</td><td>全局 N 节点全对全</td><td>每组 k 节点内全对全</td></tr>
+      <tr><td>包数（单 expert）</td><td>N(N−1)</td><td>Σ<sub>d</sub> G<sub>d</sub>·k<sub>d</sub>(k<sub>d</sub>−1)，G<sub>d</sub>=N/k<sub>d</sub></td></tr>
+      <tr><td>渐近流量</td><td class="bad">O(N²)</td><td class="good">O(Σ k<sub>d</sub>·N) ≈ O(n·N·k̄)</td></tr>
+      <tr><td>chunk 大小</td><td>⌈payload/N⌉</td><td>⌈payload/N⌉（相同）</td></tr>
+      <tr><td>注入 delay</td><td>同 expert 内全部相同</td><td>按维递增（每维 +1）</td></tr>
+      <tr><td>依赖 topology_hint</td><td>否</td><td class="warn">是（决定分组）</td></tr>
+      <tr><td>Mesh 默认</td><td class="good">是（小集群）</td><td>可选（大 mesh 主测项）</td></tr>
+      <tr><td>TDM FB 默认</td><td>仅作对比参考</td><td class="good">是（推荐）</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section class="panel" id="mesh-noc">
+  <h2>5) 分组交换 NoC（Mesh2D 物理 mesh）</h2>
+  <p>
+    <span class="tag tag-mesh">Mesh2D</span>
+    「分组交换 NoC」指<strong>物理层为 2D mesh 邻接图</strong>、路由为 <strong>DimensionOrderRouting（BFS 最短路）</strong>、<strong>无 Color / 无 TDM 时隙</strong> 的网络。
+    算法层面的「分组」体现在 ND 的 stage 划分；网络层<strong>不感知</strong>逻辑分组，只按 src/dst 做 packet 路由。
+  </p>
+
+  <h3>物理与路由</h3>
+  <ul>
+    <li><strong>拓扑：</strong>4 邻接 mesh，节点 id 行优先编号（见 4×4 文档）。</li>
+    <li><strong>路由：</strong><code>DimensionOrderRouting</code> → BFS 在 mesh 图上求下一跳，等价于曼哈顿最短路径（非严格 XY，但 hop 数最优）。</li>
+    <li><strong>链路：</strong>普通 <code>Link</code>，无 color 字段；router <code>color_count=0</code>，<code>color_buffer_wait_cycles=0</code>。</li>
+    <li><strong>争用：</strong>仅来自 VC/ buffer / link 带宽，无 TDM 旋转等待。</li>
+  </ul>
+
+  <div class="callout callout-mesh">
+    <strong>direct_allgather @ Mesh：</strong>
+    N(N−1) 个包同时注入，全部走 mesh 最短路。远距离节点对（如 0→15）需 ~6 hop，瞬时链路负载高。
+    优点：无 color 等待；缺点：O(N²) 包数导致 buffer/link 争用随 N 急剧上升。
+  </div>
+
+  <div class="callout callout-mesh">
+    <strong>nd_dimension_exchange @ Mesh：</strong>
+    使用 <code>k_dims=[cols, rows]</code>（矩形 mesh）分组。以 4×4 为例：
+    <ul>
+      <li>Stage 0（列维）：4 条「行」组，每组 4 节点，组内 4×3=12 包/组 → 48 包</li>
+      <li>Stage 1（行维）：4 条「列」组 → 再 48 包</li>
+      <li>合计 96 包 vs direct 的 240 包（<span class="good">2.5× 更少</span>）</li>
+    </ul>
+    组内通信多为同行/同列相邻或短距，<strong>物理 hop 更短、争用更局部</strong>；stage 串行使峰值并发低于 direct。
+    仿真中 4×4 mesh ND 的 makespan 约为 direct 的 <strong>1/3~1/6</strong>（见 4×4 报告）。
+  </div>
+
+  <h3>Mesh 上 ND 分组与物理坐标的对应（4×4）</h3>
+<pre>
+节点布局（行优先）:
+ 0  1  2  3
+ 4  5  6  7
+ 8  9 10 11
+12 13 14 15
+
+dim0 (k=4, 同行组): {0,1,2,3}, {4,5,6,7}, {8,9,10,11}, {12,13,14,15}
+dim1 (k=4, 同列组): {0,4,8,12}, {1,5,9,13}, {2,6,10,14}, {3,7,11,15}
+</pre>
+</section>
+
+<section class="panel" id="tdm-noc">
+  <h2>6) Color 时分 NoC（TDM Flat Butterfly overlay）</h2>
+  <p>
+    <span class="tag tag-tdm">TDM FB</span>
+    物理层仍是同一 mesh，但在其上叠加 <strong>k<sup>n</sup> 逻辑 FB</strong>：每维上节点与同维其余 k−1 个节点有<strong>逻辑长链路</strong>，
+    映射为 XY 物理路径；全局边着色得到 <code>ColorPlan</code>（C 个 color，周期 TDM 轮转）。
+  </p>
+
+  <h3>Color 调度机制</h3>
+  <ul>
+    <li><strong>着色：</strong>每条逻辑链路 (u→v) 分配固定 color；同一 color 内逻辑链路不共享物理有向边（见 <code>assign_colors</code>）。</li>
+    <li><strong>时钟：</strong><code>TDMClock</code>，cycle t 上仅 color = t mod C 的逻辑链路可前进。</li>
+    <li><strong>Router 门控：</strong>flit 进入 per-color ingress buffer 后，在 pipeline 入口<strong>自旋等待</strong>直到 <code>current_color == flit.color</code>（累加 <code>color_buffer_wait_cycles</code>）。</li>
+    <li><strong>路由：</strong><code>TDMFlatButterflyRouting</code> 按逻辑维序逐段跳转：每段绑定一条逻辑链路的 color 与 XY 物理 hop 序列。</li>
+    <li><strong>Link 层：</strong><code>TDMLink</code> 不在链路上二次检查 color（门控仅在 router）。</li>
+  </ul>
+
+  <div class="callout callout-tdm">
+    <strong>direct_allgather @ TDM FB：</strong>
+    <span class="bad">强烈不推荐。</span>
+    仍产生 N(N−1) 个包，但每个包可能跨多条逻辑链路、多个 color。
+    大量包错过当前 color 时隙 → router 侧 color 等待爆炸（4×4 k4_n2 上 color_wait 可达 10<sup>5</sup> 量级，makespan 为 Mesh direct 的数倍）。
+    O(N²) 流量与 C 周期 TDM 叠加，64 节点下 TDM 全面慢于 Mesh（8×8 报告结论）。
+  </div>
+
+  <div class="callout callout-tdm">
+    <strong>nd_dimension_exchange @ TDM FB：</strong>
+    <span class="good">推荐组合。</span>
+    分组与逻辑 FB 维度对齐（<code>k, n</code> 来自 topology_hint）。
+    每个 stage 只激活<strong>某一逻辑维</strong>的组内交换，且组内 k 较小时（如 k=2 仅 1 对包/组）流量极低。
+    例：k2_n4 在 4×4 上 n=4 stage，每 stage 8 组 × 2×1 = 16 包，四 stage 共 64 包（vs direct 240 包）。
+    逻辑链路 color 与 stage 天然部分对齐，color 等待可控；k2_n4 + slot=1 在 4×4 上 makespan 约为 Mesh ND 的 <strong>0.55×</strong>。
+  </div>
+
+  <h3>TDM 上 ND 分组（k2_n4, 16 节点）</h3>
+  <p class="hint">
+    节点 id 与超立方坐标：node = Σ coord[i]·2<sup>i</sup>。每维 8 个二元组 {0,1}、{2,3}、…、{14,15}。
+    Stage 0~3 各做 8 组 × 2 节点组内 direct allgather。
+  </p>
+
+  <h3>Color 数 C 的影响</h3>
+  <table>
+    <thead><tr><th>(k,n) 示例</th><th>节点</th><th>典型 C</th><th>对 ND AllGather 的影响</th></tr></thead>
+    <tbody>
+      <tr><td>k2_n4</td><td>16</td><td>较小</td><td>4 stage × 小组交换，color 等待低，<span class="good">最优 TDM 组合之一</span></td></tr>
+      <tr><td>k4_n2</td><td>16</td><td>≈4</td><td>2 stage 但组内 k=4 全对全，单 stage 包更多</td></tr>
+      <tr><td>k2_n6</td><td>64</td><td>中等</td><td>6 stage、每组仅 2 节点，8×8 报告最优（makespan ≈ Mesh ND 的 0.39×）</td></tr>
+      <tr><td>k8_n2</td><td>64</td><td>高</td><td>C 大 → 平均 color 等待长，<span class="bad">ND 仍可能很慢</span></td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section class="panel" id="cross">
+  <h2>7) 算法 × NoC 交叉矩阵</h2>
+  <table>
+    <thead>
+      <tr>
+        <th></th>
+        <th><span class="tag tag-mesh">分组交换 NoC</span> Mesh2D</th>
+        <th><span class="tag tag-tdm">Color 时分 NoC</span> TDM FB</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><strong>direct_allgather</strong></td>
+        <td>
+          Mesh 基线默认算法（小 N）。<br>
+          无 color 等待；O(N²) mesh 路由争用是主瓶颈。<br>
+          6×8 / 8×8 尚可；N≥64 时 flit 数过大。
+        </td>
+        <td>
+          <span class="bad">最差组合</span>：O(N²) × Color 等待。<br>
+          仅适合对照实验；不应作为 TDM 性能评估指标。
+        </td>
+      </tr>
+      <tr>
+        <td><strong>nd_dimension_exchange_allgather</strong></td>
+        <td>
+          流量 O(n·N·k̄)，stage 降低峰值并发。<br>
+          k_dims 与 mesh 行列对齐，组内多为短路径。<br>
+          大矩形 mesh 主测算法（12×16 等）。
+        </td>
+        <td>
+          <span class="good">TDM 推荐</span>：stage 与逻辑维/color 协同。<br>
+          优选小 k 多 n（如 k2_n6）；避免高 radix 导致 C 过大。<br>
+          关注 makespan，勿用 color_wait 累加值与 makespan 直接比大小。
+        </td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h3>数据流对比（概念）</h3>
+<pre>
+direct_allgather:
+  [所有节点] ──同时──► 全对全 unicast ──► Mesh/TDM 物理路径
+
+nd_dimension_exchange_allgather:
+  for dim in 0..n-1:
+      for each k-node group in dim:
+          组内 direct allgather (k×(k-1) 包)
+      ──► 每包走 Mesh 最短路 或 TDM 逻辑维序路由 + Color 门控
+</pre>
+</section>
+
+<section class="panel" id="example">
+  <h2>8) 4×4 数值示例（1 expert, payload 任意, chunk=⌈P/16⌉）</h2>
+  <table>
+    <thead>
+      <tr>
+        <th>配置</th>
+        <th>算法</th>
+        <th>包数</th>
+        <th>Stage</th>
+        <th>仿真 makespan 趋势（slot=1, 1KB）</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>mesh2d_4x4_ps</td>
+        <td>direct</td>
+        <td>240</td>
+        <td>1</td>
+        <td>249 cyc（基准）</td>
+      </tr>
+      <tr>
+        <td>mesh2d_4x4_ps</td>
+        <td>ND</td>
+        <td>96</td>
+        <td>2</td>
+        <td class="good">69 cyc（0.28× direct）</td>
+      </tr>
+      <tr>
+        <td>tdm_fb_k4_n2</td>
+        <td>direct</td>
+        <td>240</td>
+        <td>1</td>
+        <td class="bad">335 cyc + 高 color_wait</td>
+      </tr>
+      <tr>
+        <td>tdm_fb_k4_n2</td>
+        <td>ND</td>
+        <td>96</td>
+        <td>2</td>
+        <td>91 cyc</td>
+      </tr>
+      <tr>
+        <td>tdm_fb_k2_n4</td>
+        <td>direct</td>
+        <td>240</td>
+        <td>1</td>
+        <td class="bad">305 cyc</td>
+      </tr>
+      <tr>
+        <td>tdm_fb_k2_n4</td>
+        <td>ND</td>
+        <td>64</td>
+        <td>4</td>
+        <td class="good">39 cyc（全局最优）</td>
+      </tr>
+    </tbody>
+  </table>
+  <p class="hint">makespan 摘自 <span class="mono">docs/allgather_tdm_vs_mesh_4x4_report.html</span>；包数为源码公式精确值。</p>
+
+  <h3>包数推导（k2_n4, ND）</h3>
+  <div class="formula">
+    G<sub>d</sub> = N / k = 16/2 = 8 组/维 &nbsp;|&nbsp;
+    每维包数 = G<sub>d</sub> × k(k−1) = 8 × 2 = 16 &nbsp;|&nbsp;
+    n = 4 维合计 = 4 × 16 = <strong>64 包</strong>
+  </div>
+  <p class="hint">k4_n2 同为 2 维：2 × (4 组 × 4×3) = 2 × 48 = 96 包，与 mesh ND 包数相同但分组几何不同（超立方 vs 行列混合基）。</p>
+</section>
+
+<section class="panel" id="guidance">
+  <h2>9) 选型建议</h2>
+  <ol>
+    <li><strong>Mesh2D 小集群（N≤16）</strong>：可用 <code>direct_allgather</code> 作简单基线；追求更低 makespan 用 <code>nd_dimension_exchange_allgather</code> + <code>k_dims=[cols,rows]</code>。</li>
+    <li><strong>Mesh2D 大集群（N≥64）</strong>：避免 direct（O(N²) 仿真不可承受）；仅测 ND 分组交换。</li>
+    <li><strong>TDM Flat Butterfly</strong>：始终用 <code>nd_dimension_exchange_allgather</code>；优选小 k、多 n（如 k2_n6 on 8×8）。</li>
+    <li><strong>评估指标</strong>：端到端对比看 <code>makespan_cycles</code>；<code>color_buffer_wait_cycles</code> 是全网累加，仅用于分析 TDM 调度压力，不能与 makespan 比绝对值大小。</li>
+    <li><strong>算法与 NoC 配对</strong>：Mesh 文档配 direct/2d_ring；TDM 文档配 nd_dimension_exchange——这是<strong>有意为之</strong>的公平对比基线，跨 NoC 比较算法时需固定拓扑与 hint。</li>
+  </ol>
+
+  <h3>相关源码与文档</h3>
+  <ul>
+    <li><span class="mono">wsesim/network/collective.py</span> — 流量生成</li>
+    <li><span class="mono">wsesim/network/routing/dimension_order.py</span> — Mesh 路由</li>
+    <li><span class="mono">wsesim/network/routing/tdm_flat_butterfly.py</span> — TDM 逻辑路由 + color</li>
+    <li><span class="mono">wsesim/network/router.py</span> — Color buffer 等待</li>
+    <li><span class="mono">docs/tdm_flat_butterfly_4x4.md</span>、<span class="mono">docs/allgather_tdm_vs_mesh_4x4_report.html</span></li>
+  </ul>
+</section>
+
+</main>
+</body>
+</html>
