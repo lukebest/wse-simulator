@@ -23,6 +23,7 @@ import matplotlib.pyplot as plt
 from matplotlib import cm
 from matplotlib.patches import FancyArrowPatch
 
+from wsesim.network.color_planners import ColorPlannerConfig, PLANNER_GREEDY_BEST_FIT
 from wsesim.network.topology.tdm_flat_butterfly import TDMFlatButterfly
 
 ROWS = 4
@@ -462,7 +463,16 @@ def _write_summary(topo: TDMFlatButterfly, out_path: Path) -> None:
 
 
 def _render_case(k: int, n: int, out_dir: Path) -> None:
-    topo = TDMFlatButterfly(k=k, n=n, rows=ROWS, cols=COLS)
+    topo = TDMFlatButterfly(
+        k=k,
+        n=n,
+        rows=ROWS,
+        cols=COLS,
+        color_planner_config=ColorPlannerConfig(
+            planner=PLANNER_GREEDY_BEST_FIT,
+            topology_hint={"k": k, "n": n},
+        ),
+    )
     violations = _validate_color_plan(topo)
     if violations:
         print(f"[WARN] k={k}, n={n}, violations={len(violations)}")

@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""Generate TDM FB color sub-topology markdown + HTML for 8×8 mesh configs."""
+"""Generate TDM FB color sub-topology markdown + HTML (ILP min-C coloring).
+
+Covers hypercube FB configs on square meshes:
+  4×4: k4_n2, k2_n4
+  8×8: k8_n2 (2-flat analogue of k4_n2), k2_n6 (binary multi-flat analogue of k2_n4)
+"""
 
 from __future__ import annotations
 
@@ -7,13 +12,13 @@ import json
 from collections import Counter
 from pathlib import Path
 
-from wsesim.network.color_planners import PLANNER_ILP_MIN_C, ColorPlannerConfig, build_color_plan
+from wsesim.network.color_planners import (
+    PLANNER_ILP_MIN_C,
+    ColorPlannerConfig,
+    build_color_plan,
+    plan_stats,
+)
 from wsesim.network.topology.tdm_flat_butterfly import TDMFlatButterfly
-
-ROWS, COLS = 8, 8
-CELL, MARGIN = 72, 50
-W = MARGIN * 2 + CELL * (COLS - 1)
-H = MARGIN * 2 + CELL * (ROWS - 1)
 
 PALETTE = [
     "#2563eb", "#ea580c", "#16a34a", "#9333ea", "#dc2626",
@@ -23,86 +28,74 @@ PALETTE = [
 
 CONFIGS = [
     {
-        "k": 2,
-        "n": 6,
-        "slug": "k2_n6",
-        "title": "2-ary, 6-flat",
-        "logic_hops": 6,
-        "neighbors_per_dim": 1,
-        "structural_rule": """
-### 2.2 结构规则（k=2 每维 2 节点翻转）
-
-对维度 `d`，源坐标 `(d₅,…,d₀)`，参考位：
-
-```
-j = (d+1) mod 6   当 d 为偶数
-j = (d-1) mod 6   当 d 为奇数
-```
-
-| d 奇偶 | C0 条件 |
-|--------|---------|
-| 偶 | d_j = 1 |
-| 奇 | d_j = 0 |
-
-低 4 维（d=0..3）在局部嵌入上与 4×4 (2,4) 方案一致；**全局 C=5** 因 8×8 mesh 上
-跨维物理路径冲突增加，需 compile 阶段贪心着色补全（非简单 2-Color 扩展）。""",
-        "compare_note": "64 链路/dim × 6 dim = 384 有向链路；C=5（非 4×4 的 C=2）",
-    },
-    {
+        "rows": 4,
+        "cols": 4,
         "k": 4,
-        "n": 3,
-        "slug": "k4_n3",
-        "title": "4-ary, 3-flat",
-        "logic_hops": 3,
+        "n": 2,
+        "slug": "tdm_fb_4x4_color_subtopology",
+        "title": "4-ary, 2-flat",
+        "logic_hops": 2,
         "neighbors_per_dim": 3,
-        "structural_rule": """
-### 2.2 结构规则（4 节点组内，与 4×4 (4,2) 相同）
-
-每个维度上 16 个 4 节点组 `{n₀,n₁,n₂,n₃}`，12 条有向链路的**逻辑距离—Color 映射**：
-
-| 逻辑距离 | Color（结构类） | 方向特征 |
-|---------|----------------|---------|
-| 1 | C0 | 邻接双向 |
-| 2 | C1 / C2 | 端点出发 / 中间出发 |
-| 3 | C3 | 端到端双向 |
-
-8×8 mesh 上三维叠加后物理边负载下界升至 **9**，compile 贪心扩展为 **C=9**（结构 4 类映射到 9 个时隙）。""",
-        "compare_note": "192 链路/dim × 3 dim = 576 有向链路；C=9（4×4 同 (4,2) 为 C=4）",
+        "route_pairs": [(0, 9), (0, 15), (0, 8), (7, 8)],
+        "compare_note": "4×4 mesh · kⁿ=16 · C=lb=4",
     },
     {
+        "rows": 4,
+        "cols": 4,
+        "k": 2,
+        "n": 4,
+        "slug": "tdm_fb_k2_n4_color_subtopology",
+        "title": "2-ary, 4-flat",
+        "logic_hops": 4,
+        "neighbors_per_dim": 1,
+        "route_pairs": [(0, 5), (0, 6), (0, 15), (3, 12)],
+        "compare_note": "4×4 mesh · kⁿ=16 · C=lb=2",
+    },
+    {
+        "rows": 8,
+        "cols": 8,
         "k": 8,
         "n": 2,
-        "slug": "k8_n2",
+        "slug": "tdm_fb_8x8_k8_n2_color_subtopology",
         "title": "8-ary, 2-flat",
         "logic_hops": 2,
         "neighbors_per_dim": 7,
-        "structural_rule": """
-### 2.2 结构规则（8 节点组内，(4,2) 的 4 节点规则推广）
-
-每个维度 16 个 8 节点组 `{n₀,…,n₇}`，56 条有向链路/组。**逻辑距离—Color 概念映射**：
-
-| 逻辑距离 | 结构 Color 类 | 方向特征 |
-|---------|-------------|---------|
-| 1 | C0 | 邻接（14 条/组） |
-| 2 | C1 / C2 | 端点 n₀,n₇ / 中间 |
-| 3 | C3 / C4 | 端点 / 中间 |
-| 4 | C5 / C6 | 端点 / 中间 |
-| 5 | C7 / C8 | 端点 / 中间 |
-| 6 | C9 / C10 | 端点 / 中间 |
-| 7 | C11 | 端到端双向 |
-
-8×8 mesh 物理负载下界 **16 = k**，compile 贪心着色 **C=16** 达到最优。""",
-        "compare_note": "448 链路/dim × 2 dim = 896 有向链路；C=16=k（4×4 (4,2) 为 C=4=k/2）",
+        "route_pairs": [(0, 9), (0, 63), (0, 27), (7, 56)],
+        "compare_note": "8×8 mesh · 64 PE · 2-flat 高 radix（4×4 k4_n2 的扩展）",
+    },
+    {
+        "rows": 8,
+        "cols": 8,
+        "k": 2,
+        "n": 6,
+        "slug": "tdm_fb_8x8_k2_n6_color_subtopology",
+        "title": "2-ary, 6-flat",
+        "logic_hops": 6,
+        "neighbors_per_dim": 1,
+        "route_pairs": [(0, 63), (0, 7), (0, 56), (15, 48)],
+        "compare_note": "8×8 mesh · 64 PE · binary 多 flat（4×4 k2_n4 的扩展）",
     },
 ]
 
+ILP_TIME_LIMIT_S = 120.0
 
-def build_links(topo: TDMFlatButterfly) -> list[dict]:
+
+def _cell_size(rows: int, cols: int) -> tuple[int, int, int, int, int]:
+    cell = 72 if rows <= 4 else 72
+    margin = 50
+    w = margin * 2 + cell * (cols - 1)
+    h = margin * 2 + cell * (rows - 1)
+    nr = 14 if rows <= 4 else 14
+    return cell, margin, w, h, nr
+
+
+def build_links(topo: TDMFlatButterfly) -> tuple[list[dict], object, object]:
     config = ColorPlannerConfig(
         planner=PLANNER_ILP_MIN_C,
         topology_hint={"k": topo.k, "n": topo.n},
+        time_limit_s=ILP_TIME_LIMIT_S,
     )
-    plan, _ = build_color_plan(topo, config)
+    plan, stats = build_color_plan(topo, config)
     links = []
     for u, v, dim in topo.logical_links():
         links.append({
@@ -112,11 +105,14 @@ def build_links(topo: TDMFlatButterfly) -> list[dict]:
             "color": plan.color_of_logical[(u, v)],
             "phys": len(topo.physical_path(u, v)),
         })
-    return links, plan
+    return links, plan, stats
 
 
-def route_examples(topo: TDMFlatButterfly, plan) -> list[tuple[str, str, str]]:
-    pairs = [(0, 9), (0, 63), (0, 27), (7, 56)]
+def route_examples(
+    topo: TDMFlatButterfly,
+    plan,
+    pairs: list[tuple[int, int]],
+) -> list[tuple[str, str, str]]:
     rows = []
     for src, dst in pairs:
         hops = topo.dim_order_route(src, dst)
@@ -133,75 +129,67 @@ def route_examples(topo: TDMFlatButterfly, plan) -> list[tuple[str, str, str]]:
     return rows
 
 
-def node_ref_8x8() -> str:
+def node_ref(rows: int, cols: int) -> str:
     lines = []
-    for r in range(8):
-        row = [f"{r*8+c:2d}" for c in range(8)]
+    for r in range(rows):
+        row = [f"{r * cols + c:2d}" for c in range(cols)]
         lines.append(" ".join(row) + f"   ← row {r}")
     return "\n".join(lines)
 
 
-def write_markdown(cfg: dict, topo: TDMFlatButterfly, plan, links: list[dict]) -> None:
-    k, n = cfg["k"], cfg["n"]
+def write_markdown(cfg: dict, topo: TDMFlatButterfly, plan, stats, links: list[dict]) -> None:
+    rows, cols, k, n = cfg["rows"], cfg["cols"], cfg["k"], cfg["n"]
     by_color = Counter(l["color"] for l in links)
     phys_dist = Counter(l["phys"] for l in links)
-    routes = route_examples(topo, plan)
+    routes = route_examples(topo, plan, cfg["route_pairs"])
+    mesh = f"{rows}×{cols}"
 
-    color_table = "\n".join(
-        f"| C{c} | {by_color[c]} |" for c in sorted(by_color)
-    )
-    route_table = "\n".join(
-        f"| `{r}` | {p} | {note} |" for r, p, note in routes
-    )
-    phys_rows = "\n".join(
-        f"| {d} | {phys_dist[d]} |" for d in sorted(phys_dist)
-    )
+    color_table = "\n".join(f"| C{c} | {by_color[c]} |" for c in sorted(by_color))
+    route_table = "\n".join(f"| `{r}` | {p} | {note} |" for r, p, note in routes)
+    phys_rows = "\n".join(f"| {d} | {phys_dist[d]} |" for d in sorted(phys_dist))
 
-    md = f"""# 8×8 Mesh 上 {cfg['title']} Flattened Butterfly 的 Color 子拓扑分解
+    md = f"""# {mesh} Mesh 上 {cfg['title']} Flattened Butterfly 的 Color 子拓扑分解
 
-> **目标**：在 8×8 物理 2D Mesh（64 PE）上，通过 **{plan.C} 个 Color** 时分复用实现完整
-> {cfg['title']} FB 逻辑拓扑。
+> **着色策略**：`ilp_min_C`（[`color_planners.py`](../wsesim/network/color_planners.py) · OR-Tools CP-SAT）  
+> **目标**：在 {mesh} 物理 2D Mesh 上，通过 **{plan.C} 个 Color** 时分复用实现完整 FB 逻辑拓扑。
 
 ---
 
 ## 1. 基本定义
 
-### 1.1 节点编号（行优先 8×8）
+### 1.1 节点编号（行优先 {mesh}）
 
 ```
-{node_ref_8x8()}
+{node_ref(rows, cols)}
 ```
 
-`node = row × 8 + col`
+`node = row × {cols} + col`
 
-### 1.2 逻辑拓扑：{cfg['title']}
+### 1.2 逻辑拓扑：{cfg['title']} (k={k}, n={n})
 
-- 逻辑坐标：{n} 维，每维 {k} 进制 → `node_id = Σ d_i · {k}^i`
-- 每维逻辑邻居数：**{cfg['neighbors_per_dim']}**（k−1）
-- 有向逻辑链路总数：**{len(links)}**（{k-1}×{n}×64）
-- 逻辑直径：**{cfg['logic_hops']} 跳**（维度序路由）
+- 有向逻辑链路：**{len(links)}**
+- 逻辑直径：**≤ {cfg['logic_hops']} 跳**
+- 每维邻居数：**{cfg['neighbors_per_dim']}**
 
 ---
 
-## 2. Color 分解方案
-
-### 2.1 核心结论
+## 2. Color 分解（ILP min C）
 
 | 指标 | 值 |
 |------|-----|
 | TDM Color 数 C | **{plan.C}** |
 | 物理边负载下界 | {plan.color_lower_bound} |
-| 有向逻辑链路 | {len(links)} |
-{cfg['structural_rule']}
+| 负载均衡 max/min | {stats.balance_ratio:.2f} |
+| 每 Color 链路数范围 | {stats.min_links_per_color} – {stats.max_links_per_color} |
 
-### 2.3 各 Color 链路分配（compile 贪心着色）
+### 各 Color 链路分配
 
 | Color | 有向链路数 |
 |-------|----------|
 {color_table}
 | **合计** | **{len(links)}** |
 
-### 2.4 物理跳距分布
+### 物理跳数分布
 
 | 物理跳数 | 链路数 |
 |---------|--------|
@@ -225,7 +213,7 @@ def write_markdown(cfg: dict, topo: TDMFlatButterfly, plan, links: list[dict]) -
 
 ---
 
-## 5. 与 4×4 对比
+## 5. 说明
 
 {cfg['compare_note']}
 
@@ -233,48 +221,57 @@ def write_markdown(cfg: dict, topo: TDMFlatButterfly, plan, links: list[dict]) -
 
 ## 6. 可视化
 
-交互式 Color 时分图：`docs/tdm_fb_8x8_{cfg['slug']}_color_subtopology.html`
+交互式 Color 时分图：`{cfg['slug']}.html`
 
 ---
 
-*Color 分配来源：`color_planners.py` · planner={PLANNER_ILP_MIN_C}。*
+*生成：`scripts/generate_tdm_fb_hypercube_color_docs.py` · planner={PLANNER_ILP_MIN_C}*
 """
-    path = Path(f"docs/tdm_fb_8x8_{cfg['slug']}_color_subtopology.md")
+    path = Path(f"docs/{cfg['slug']}.md")
     path.write_text(md, encoding="utf-8")
     print(f"Wrote {path}")
 
 
-def write_html(cfg: dict, links: list[dict], plan) -> None:
-    k, n = cfg["k"], cfg["n"]
-    C = plan.C
+def write_html(cfg: dict, links: list[dict], plan, stats) -> None:
+    rows, cols, k, n = cfg["rows"], cfg["cols"], cfg["k"], cfg["n"]
+    cell, margin, w, h, nr = _cell_size(rows, cols)
+    num_nodes = rows * cols
+    c_count = plan.C
     by_color = Counter(l["color"] for l in links)
     colors_meta = [
-        {"id": c, "name": f"Color {c}", "hex": PALETTE[c % len(PALETTE)], "count": by_color[c]}
-        for c in range(C)
+        {
+            "id": c,
+            "name": f"Color {c}",
+            "hex": PALETTE[c % len(PALETTE)],
+            "count": by_color[c],
+        }
+        for c in range(c_count)
     ]
     links_json = json.dumps(links, separators=(",", ":"))
-    colors_json = json.dumps(
-        [{"id": c["id"], "name": c["name"], "hex": c["hex"]} for c in colors_meta],
-        separators=(",", ":"),
-    )
-    routes = route_examples(
-        TDMFlatButterfly(k=k, n=n, rows=ROWS, cols=COLS), plan
-    )
+    colors_json = json.dumps(colors_meta, separators=(",", ":"))
+    topo = TDMFlatButterfly(k=k, n=n, rows=rows, cols=cols)
+    routes = route_examples(topo, plan, cfg["route_pairs"])
     route_rows = "".join(
         f"<tr><td><code>{r}</code></td><td>{p}</td><td>{note}</td></tr>"
         for r, p, note in routes
     )
     color_table_rows = "".join(
-        f"<tr><td>C{c['id']}</td><td><span class='dot' style='background:{c['hex']}'></span></td><td>{c['count']}</td></tr>"
+        f"<tr><td>C{c['id']}</td><td><span class='dot' style='background:{c['hex']}'></span></td>"
+        f"<td>{c['count']}</td></tr>"
         for c in colors_meta
     )
+    select_opts = "".join(
+        f'<option value="{c["id"]}">C{c["id"]} ({c["count"]} links)</option>'
+        for c in colors_meta
+    )
+    mesh = f"{rows}×{cols}"
 
     html = f"""<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>8×8 TDM FB — {cfg['title']}</title>
+<title>{mesh} TDM FB — {cfg['title']}</title>
 <style>
   :root {{ --bg:#0f1419; --panel:#1a2332; --text:#e8edf4; --muted:#94a3b8; --border:#2d3a4f; --mesh:#334155; }}
   * {{ box-sizing:border-box; }}
@@ -301,7 +298,7 @@ def write_html(cfg: dict, links: list[dict], plan) -> None:
   .logic-link.dimmed {{ opacity:.06; }}
   .node {{ fill:#1e293b; stroke:#64748b; stroke-width:1.2; pointer-events:none; }}
   .node-label {{ fill:#e2e8f0; font-size:10px; font-family:ui-monospace,monospace; text-anchor:middle; pointer-events:none; }}
-  .filter-bar {{ display:flex; flex-wrap:wrap; gap:.35rem; margin-bottom:.75rem; }}
+  .filter-bar {{ display:flex; flex-wrap:wrap; gap:.35rem; margin-bottom:.75rem; max-height:140px; overflow-y:auto; }}
   .filter-btn {{ border:1px solid var(--border); background:#243044; color:var(--text); padding:.3rem .55rem; border-radius:5px; font-size:.75rem; cursor:pointer; display:flex; align-items:center; gap:.3rem; }}
   .filter-btn.active {{ background:#334155; }}
   .filter-btn.inactive {{ opacity:.4; }}
@@ -318,15 +315,15 @@ def write_html(cfg: dict, links: list[dict], plan) -> None:
 <body>
 <div class="tooltip" id="tooltip"></div>
 <header class="hero">
-  <h1>8×8 Mesh · {cfg['title']} Flattened Butterfly</h1>
-  <p>64 PE · {len(links)} 有向逻辑链路 · TDM C={C} · 逻辑直径 ≤{cfg['logic_hops']} 跳</p>
-  <p>悬停链路显示 <code>src→dst · dim · Color</code>；合并预览可切换 Color 可见性。</p>
+  <h1>{mesh} Mesh · {cfg['title']} Flattened Butterfly (k={k}, n={n})</h1>
+  <p>{num_nodes} PE · {len(links)} 有向逻辑链路 · TDM C={c_count} · 着色：<code>{PLANNER_ILP_MIN_C}</code></p>
+  <p>负载均衡 max/min = {stats.balance_ratio:.2f}（{stats.min_links_per_color}–{stats.max_links_per_color} links/color）</p>
 </header>
 <main>
   <section>
     <h2>核心指标</h2>
     <div class="summary-grid">
-      <div class="stat"><div class="val">{C}</div><div class="lbl">TDM Color 数</div></div>
+      <div class="stat"><div class="val">{c_count}</div><div class="lbl">TDM Color 数</div></div>
       <div class="stat"><div class="val">{len(links)}</div><div class="lbl">有向逻辑链路</div></div>
       <div class="stat"><div class="val">{plan.color_lower_bound}</div><div class="lbl">物理负载下界</div></div>
       <div class="stat"><div class="val">≤{cfg['logic_hops']}</div><div class="lbl">逻辑跳数</div></div>
@@ -334,7 +331,7 @@ def write_html(cfg: dict, links: list[dict], plan) -> None:
   </section>
 
   <section class="panel">
-    <h2>{C} Color 合并预览</h2>
+    <h2>{c_count} Color 合并预览</h2>
     <div class="filter-bar" id="filters"></div>
     <div class="svg-wrap" id="merged"></div>
     <div class="hover-info" id="hover-info">将鼠标移到链路上…</div>
@@ -342,7 +339,7 @@ def write_html(cfg: dict, links: list[dict], plan) -> None:
 
   <section class="panel color-viewer">
     <h2>单 Color 子拓扑</h2>
-    <label>选择 Color：<select id="single-color">{"".join(f'<option value="{c["id"]}">C{c["id"]} ({c["count"]} links)</option>' for c in colors_meta)}</select></label>
+    <label>选择 Color：<select id="single-color">{select_opts}</select></label>
     <div class="svg-wrap" id="single" style="margin-top:.75rem"></div>
   </section>
 
@@ -356,12 +353,12 @@ def write_html(cfg: dict, links: list[dict], plan) -> None:
     <table><thead><tr><th>通信</th><th>维度序路由</th><th>Color</th></tr></thead><tbody>{route_rows}</tbody></table>
   </section>
 </main>
-<footer>docs/tdm_fb_8x8_{cfg['slug']}_color_subtopology.html</footer>
+<footer>docs/{cfg['slug']}.html · ILP min-C · scripts/generate_tdm_fb_hypercube_color_docs.py</footer>
 
 <script>
 const LINKS = {links_json};
 const COLORS = {colors_json};
-const ROWS={ROWS}, COLS={COLS}, CELL={CELL}, MARGIN={MARGIN}, W={W}, H={H};
+const ROWS={rows}, COLS={cols}, CELL={cell}, MARGIN={margin}, W={w}, H={h}, NR={nr};
 
 function nodeXY(n) {{ const r=Math.floor(n/COLS), c=n%COLS; return [MARGIN+c*CELL, MARGIN+r*CELL]; }}
 
@@ -379,8 +376,8 @@ function markers(ids) {{
   let s='<defs>'; for (const id of ids) s+=`<marker id="a${{id}}" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="4" markerHeight="4" orient="auto"><path d="M0 0 L10 5 L0 10z" fill="${{COLORS[id].hex}}"/></marker>`;
   return s+'</defs>';
 }}
-function nodes() {{ let s=''; for(let n=0;n<64;n++){{const[x,y]=nodeXY(n); s+=`<circle cx="${{x}}" cy="${{y}}" r="14" class="node"/><text x="${{x}}" y="${{y+4}}" class="node-label">${{n}}</text>`;}} return s; }}
-function skeleton() {{ let s=''; for(let n=0;n<64;n++){{const[x0,y0]=nodeXY(n); const r=Math.floor(n/COLS),c=n%COLS; if(c+1<COLS){{const[x1,y1]=nodeXY(n+1); s+=`<line x1="${{x0}}" y1="${{y0}}" x2="${{x1}}" y2="${{y1}}" class="mesh-edge"/>`;}} if(r+1<ROWS){{const[x1,y1]=nodeXY(n+COLS); s+=`<line x1="${{x0}}" y1="${{y0}}" x2="${{x1}}" y2="${{y1}}" class="mesh-edge"/>`;}} }} return s; }}
+function nodes() {{ let s=''; for(let n=0;n<ROWS*COLS;n++){{const[x,y]=nodeXY(n); s+=`<circle cx="${{x}}" cy="${{y}}" r="${{NR}}" class="node"/><text x="${{x}}" y="${{y+4}}" class="node-label">${{n}}</text>`;}} return s; }}
+function skeleton() {{ let s=''; for(let n=0;n<ROWS*COLS;n++){{const[x0,y0]=nodeXY(n); const r=Math.floor(n/COLS),c=n%COLS; if(c+1<COLS){{const[x1,y1]=nodeXY(n+1); s+=`<line x1="${{x0}}" y1="${{y0}}" x2="${{x1}}" y2="${{y1}}" class="mesh-edge"/>`;}} if(r+1<ROWS){{const[x1,y1]=nodeXY(n+COLS); s+=`<line x1="${{x0}}" y1="${{y0}}" x2="${{x1}}" y2="${{y1}}" class="mesh-edge"/>`;}} }} return s; }}
 
 function render(container, activeSet, infoEl) {{
   let svg=`<svg viewBox="0 0 ${{W}} ${{H}}" class="topo-svg">${{markers([...activeSet])}}${{nodes()}}${{skeleton()}}`;
@@ -411,7 +408,7 @@ const filters=document.getElementById('filters');
 let active=new Set(COLORS.map(c=>c.id));
 COLORS.forEach(c=>{{
   const b=document.createElement('button'); b.className='filter-btn active';
-  b.innerHTML=`<span class="dot" style="background:${{c.hex}}"></span>C${{c.id}}`;
+  b.innerHTML=`<span class="dot" style="background:${{c.hex}}"></span>C${{c.id}} (${{c.count}})`;
   b.onclick=()=>{{ if(active.has(c.id)){{if(active.size<=1)return; active.delete(c.id); b.classList.replace('active','inactive');}} else{{active.add(c.id); b.classList.replace('inactive','active');}} render(merged,active,document.getElementById('hover-info')); }};
   filters.appendChild(b);
 }});
@@ -423,18 +420,21 @@ function renderSingle(){{ render(single, new Set([+sel.value]), null); }}
 sel.onchange=renderSingle; renderSingle();
 </script>
 </body></html>"""
-    path = Path(f"docs/tdm_fb_8x8_{cfg['slug']}_color_subtopology.html")
+    path = Path(f"docs/{cfg['slug']}.html")
     path.write_text(html, encoding="utf-8")
     print(f"Wrote {path}")
 
 
 def main() -> None:
     for cfg in CONFIGS:
-        topo = TDMFlatButterfly(k=cfg["k"], n=cfg["n"], rows=ROWS, cols=COLS)
-        links, plan = build_links(topo)
-        write_markdown(cfg, topo, plan, links)
-        write_html(cfg, links, plan)
-        print(f"  k={cfg['k']}, n={cfg['n']}: C={plan.C}, links={len(links)}")
+        topo = TDMFlatButterfly(k=cfg["k"], n=cfg["n"], rows=cfg["rows"], cols=cfg["cols"])
+        links, plan, stats = build_links(topo)
+        write_markdown(cfg, topo, plan, stats, links)
+        write_html(cfg, links, plan, stats)
+        print(
+            f"  {cfg['rows']}x{cfg['cols']} k={cfg['k']} n={cfg['n']}: "
+            f"C={plan.C} balance={stats.balance_ratio:.2f} links={len(links)}"
+        )
 
 
 if __name__ == "__main__":

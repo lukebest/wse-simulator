@@ -3,373 +3,152 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>4×4 TDM Flattened Butterfly — 4 Color 子拓扑</title>
+<title>4×4 TDM FB — 4-ary, 2-flat</title>
 <style>
   :root { --bg:#0f1419; --panel:#1a2332; --text:#e8edf4; --muted:#94a3b8; --border:#2d3a4f; --mesh:#334155; }
   * { box-sizing:border-box; }
   body { margin:0; font-family:"IBM Plex Sans","Segoe UI",system-ui,sans-serif; background:var(--bg); color:var(--text); line-height:1.6; }
-  header.hero { padding:2.5rem 2rem 2rem; background:linear-gradient(135deg,#1e293b 0%,#0f172a 60%,#1a1a2e 100%); border-bottom:1px solid var(--border); }
-  header.hero h1 { margin:0 0 .5rem; font-size:1.75rem; }
-  header.hero p { margin:.25rem 0; color:var(--muted); max-width:52rem; }
-  main { max-width:1200px; margin:0 auto; padding:2rem 1.5rem 4rem; }
-  section { margin-bottom:2.5rem; }
-  h2 { font-size:1.25rem; margin:0 0 1rem; }
-  .summary-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(200px,1fr)); gap:1rem; margin:1.5rem 0; }
-  .stat { background:var(--panel); border:1px solid var(--border); border-radius:10px; padding:1rem 1.25rem; }
-  .stat .val { font-size:1.75rem; font-weight:700; }
-  .stat .lbl { color:var(--muted); font-size:.875rem; }
-  .node-ref { font-family:ui-monospace,monospace; background:var(--panel); border:1px solid var(--border); border-radius:8px; padding:1rem 1.25rem; white-space:pre; font-size:.9rem; }
-  table { width:100%; border-collapse:collapse; font-size:.9rem; }
-  th,td { border:1px solid var(--border); padding:.6rem .75rem; text-align:left; }
+  header.hero { padding:2rem; background:linear-gradient(135deg,#1e293b,#0f172a); border-bottom:1px solid var(--border); }
+  header.hero h1 { margin:0 0 .5rem; font-size:1.6rem; }
+  header.hero p { margin:.25rem 0; color:var(--muted); max-width:54rem; }
+  main { max-width:1200px; margin:0 auto; padding:2rem 1.5rem 3rem; }
+  section { margin-bottom:2rem; }
+  h2 { font-size:1.2rem; margin:0 0 .75rem; }
+  .summary-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(160px,1fr)); gap:.75rem; }
+  .stat { background:var(--panel); border:1px solid var(--border); border-radius:8px; padding:.85rem 1rem; }
+  .stat .val { font-size:1.5rem; font-weight:700; }
+  .stat .lbl { color:var(--muted); font-size:.8rem; }
+  .panel { background:var(--panel); border:1px solid var(--border); border-radius:10px; padding:1rem 1.25rem; margin-bottom:1.25rem; }
+  table { width:100%; border-collapse:collapse; font-size:.85rem; }
+  th,td { border:1px solid var(--border); padding:.5rem .65rem; text-align:left; }
   th { background:#243044; }
-  .lookup td.hi { text-align:center; font-family:ui-monospace,monospace; font-weight:600; }
-  .lookup th:first-child,.lookup td:first-child { text-align:center; }
-  .color-card,.merged-card { background:var(--panel); border:1px solid var(--border); border-radius:12px; padding:1.25rem 1.5rem 1.5rem; margin-bottom:2rem; }
-  .merged-card { border-top:3px solid #64748b; }
-  .color-card.c0 { border-top:3px solid #2563eb; }
-  .color-card.c1 { border-top:3px solid #ea580c; }
-  .color-card.c2 { border-top:3px solid #16a34a; }
-  .color-card.c3 { border-top:3px solid #9333ea; }
-  .color-card header h2,.merged-card header h2 { margin:0; }
-  .color-card .subtitle,.merged-card .subtitle { color:var(--muted); margin:.25rem 0 1rem; font-size:.9rem; }
-  .svg-wrap { background:#111827; border-radius:8px; padding:.5rem; overflow:auto; position:relative; }
-  .topo-svg { width:100%; max-width:640px; height:auto; display:block; margin:0 auto; }
-  .mesh-edge { stroke:var(--mesh); stroke-width:1.2; opacity:.35; pointer-events:none; }
-  .c0-link { stroke-width:3; opacity:.75; stroke-linecap:round; cursor:pointer; transition:opacity .15s,stroke-width .15s; pointer-events:stroke; stroke-width:8; stroke-opacity:0; }
-  .c0-link.visible { stroke-opacity:.75; stroke-width:3; }
-  .c0-link.visible:hover,.c0-link.visible.hovered { stroke-opacity:1; stroke-width:5; }
-  .c0-link.visible.dimmed { stroke-opacity:.1; }
-  .logic-link { fill:none; stroke-width:2; opacity:.78; cursor:pointer; transition:opacity .15s,stroke-width .15s; pointer-events:stroke; stroke-linecap:round; }
-  .logic-link:hover,.logic-link.hovered { opacity:1; stroke-width:3.5; }
-  .logic-link.dimmed { opacity:.1; }
-  .node { fill:#1e293b; stroke:#64748b; stroke-width:1.5; pointer-events:none; }
-  .node-label { fill:#e2e8f0; font-size:13px; font-family:ui-monospace,monospace; text-anchor:middle; pointer-events:none; }
-  .legend { margin-top:.75rem; font-size:.85rem; color:var(--muted); display:flex; align-items:center; gap:.5rem; flex-wrap:wrap; }
-  .dot { width:10px; height:10px; border-radius:50%; display:inline-block; flex-shrink:0; }
-  .samples { font-family:ui-monospace,monospace; font-size:.82rem; color:var(--muted); line-height:1.7; }
-  details summary { cursor:pointer; color:var(--muted); font-size:.875rem; margin-top:.5rem; }
-  .tdm-bar { display:flex; gap:4px; margin:1rem 0; }
-  .tdm-slot { flex:1; text-align:center; padding:.75rem .5rem; border-radius:8px; font-size:.85rem; font-weight:600; }
-  .tdm-slot.s0 { background:rgba(37,99,235,.25); color:#93c5fd; }
-  .tdm-slot.s1 { background:rgba(234,88,12,.25); color:#fdba74; }
-  .tdm-slot.s2 { background:rgba(22,163,74,.25); color:#86efac; }
-  .tdm-slot.s3 { background:rgba(147,51,234,.25); color:#d8b4fe; }
-  .filter-bar { display:flex; gap:.5rem; flex-wrap:wrap; margin-bottom:1rem; }
-  .filter-btn {
-    border:1px solid var(--border); background:#243044; color:var(--text);
-    padding:.4rem .85rem; border-radius:6px; font-size:.82rem; cursor:pointer;
-    display:flex; align-items:center; gap:.4rem; transition:background .15s,opacity .15s;
-  }
-  .filter-btn .dot { width:8px; height:8px; }
-  .filter-btn.active { background:#334155; border-color:#64748b; }
-  .filter-btn.inactive { opacity:.45; }
-  .tooltip {
-    position:fixed; z-index:1000; pointer-events:none;
-    background:#0f172a; border:1px solid #475569; border-radius:6px;
-    padding:.45rem .7rem; font-family:ui-monospace,monospace; font-size:.82rem;
-    color:#f1f5f9; box-shadow:0 4px 16px rgba(0,0,0,.45);
-    white-space:nowrap; display:none;
-  }
-  .tooltip .color-tag { font-size:.75rem; color:#94a3b8; margin-left:.35rem; }
-  .hover-info {
-    margin-top:.6rem; font-family:ui-monospace,monospace; font-size:.85rem;
-    color:#cbd5e1; min-height:1.4em;
-  }
-  code { background:#243044; padding:.15rem .4rem; border-radius:4px; font-size:.85em; }
-  footer { text-align:center; color:var(--muted); font-size:.8rem; padding:2rem; border-top:1px solid var(--border); }
+  .svg-wrap { background:#111827; border-radius:8px; padding:.35rem; overflow:auto; }
+  .topo-svg { width:100%; max-width:720px; height:auto; display:block; margin:0 auto; }
+  .mesh-edge { stroke:var(--mesh); stroke-width:1; opacity:.25; pointer-events:none; }
+  .logic-link { fill:none; stroke-width:1.4; opacity:.72; cursor:pointer; pointer-events:stroke; stroke-linecap:round; transition:opacity .12s,stroke-width .12s; }
+  .logic-link:hover,.logic-link.hovered { opacity:1; stroke-width:2.8; }
+  .logic-link.dimmed { opacity:.06; }
+  .node { fill:#1e293b; stroke:#64748b; stroke-width:1.2; pointer-events:none; }
+  .node-label { fill:#e2e8f0; font-size:10px; font-family:ui-monospace,monospace; text-anchor:middle; pointer-events:none; }
+  .filter-bar { display:flex; flex-wrap:wrap; gap:.35rem; margin-bottom:.75rem; max-height:140px; overflow-y:auto; }
+  .filter-btn { border:1px solid var(--border); background:#243044; color:var(--text); padding:.3rem .55rem; border-radius:5px; font-size:.75rem; cursor:pointer; display:flex; align-items:center; gap:.3rem; }
+  .filter-btn.active { background:#334155; }
+  .filter-btn.inactive { opacity:.4; }
+  .dot { width:8px; height:8px; border-radius:50%; display:inline-block; }
+  .tooltip { position:fixed; z-index:999; pointer-events:none; background:#0f172a; border:1px solid #475569; border-radius:5px; padding:.35rem .55rem; font-family:ui-monospace,monospace; font-size:.78rem; display:none; box-shadow:0 4px 12px rgba(0,0,0,.4); white-space:nowrap; }
+  .tooltip .tag { color:#94a3b8; margin-left:.3rem; font-size:.72rem; }
+  .hover-info { margin-top:.5rem; font-family:ui-monospace,monospace; font-size:.8rem; color:#cbd5e1; min-height:1.2em; }
+  .color-viewer { margin-top:1rem; }
+  .color-viewer select { background:#243044; color:var(--text); border:1px solid var(--border); border-radius:6px; padding:.4rem .6rem; font-size:.85rem; }
+  code { background:#243044; padding:.1rem .35rem; border-radius:3px; font-size:.85em; }
+  footer { text-align:center; color:var(--muted); font-size:.75rem; padding:1.5rem; border-top:1px solid var(--border); }
 </style>
 </head>
 <body>
 <div class="tooltip" id="tooltip"></div>
 <header class="hero">
-  <h1>4×4 Mesh 上的 4-ary, 2-flat Flattened Butterfly</h1>
-  <p>物理层：4×4 2D Mesh（16 PE）。逻辑层：4-ary, 2-flat FB（96 有向逻辑链路）。</p>
-  <p>通过 <strong>4 个 Color 时分复用</strong>物理链路；每个 Color 是一个静态路由、物理边不冲突的逻辑子拓扑，合并后构成完整 FB。</p>
+  <h1>4×4 Mesh · 4-ary, 2-flat Flattened Butterfly (k=4, n=2)</h1>
+  <p>16 PE · 96 有向逻辑链路 · TDM C=4 · 着色：<code>ilp_min_C</code></p>
+  <p>负载均衡 max/min = 2.75（16–44 links/color）</p>
 </header>
 <main>
   <section>
-    <h2>核心结论</h2>
+    <h2>核心指标</h2>
     <div class="summary-grid">
-      <div class="stat"><div class="val">4</div><div class="lbl">TDM Color 数（物理边负载下界）</div></div>
-      <div class="stat"><div class="val">96</div><div class="lbl">有向逻辑链路总数</div></div>
-      <div class="stat"><div class="val">48+16+16+16</div><div class="lbl">C0 / C1 / C2 / C3 分配</div></div>
-      <div class="stat"><div class="val">≤2</div><div class="lbl">逻辑跳数上限</div></div>
+      <div class="stat"><div class="val">4</div><div class="lbl">TDM Color 数</div></div>
+      <div class="stat"><div class="val">96</div><div class="lbl">有向逻辑链路</div></div>
+      <div class="stat"><div class="val">4</div><div class="lbl">物理负载下界</div></div>
+      <div class="stat"><div class="val">≤2</div><div class="lbl">逻辑跳数</div></div>
     </div>
   </section>
-  <section>
-    <h2>节点编号（行优先）</h2>
-    <div class="node-ref"> 0   1   2   3     ← row 0
- 4   5   6   7     ← row 1
- 8   9  10  11     ← row 2
-12  13  14  15     ← row 3</div>
+
+  <section class="panel">
+    <h2>4 Color 合并预览</h2>
+    <div class="filter-bar" id="filters"></div>
+    <div class="svg-wrap" id="merged"></div>
+    <div class="hover-info" id="hover-info">将鼠标移到链路上…</div>
   </section>
-  <section>
-    <h2>TDM 调度周期</h2>
-    <div class="tdm-bar">
-      <div class="tdm-slot s0">t≡0 mod 4<br>Color 0</div>
-      <div class="tdm-slot s1">t≡1 mod 4<br>Color 1</div>
-      <div class="tdm-slot s2">t≡2 mod 4<br>Color 2</div>
-      <div class="tdm-slot s3">t≡3 mod 4<br>Color 3</div>
-    </div>
-  </section>
-  <section>
-    <h2>Color 分配规则</h2>
-    <table>
-      <thead><tr><th>Color</th><th>跳距</th><th>特征</th><th>每组链路数</th></tr></thead>
-      <tbody>
-        <tr><td>C0</td><td>1</td><td>邻接双向</td><td>6</td></tr>
-        <tr><td>C1</td><td>2</td><td>端点出发</td><td>2</td></tr>
-        <tr><td>C2</td><td>2</td><td>中间出发</td><td>2</td></tr>
-        <tr><td>C3</td><td>3</td><td>端到端双向</td><td>2</td></tr>
-      </tbody>
-    </table>
+
+  <section class="panel color-viewer">
+    <h2>单 Color 子拓扑</h2>
+    <label>选择 Color：<select id="single-color"><option value="0">C0 (44 links)</option><option value="1">C1 (17 links)</option><option value="2">C2 (16 links)</option><option value="3">C3 (19 links)</option></select></label>
+    <div class="svg-wrap" id="single" style="margin-top:.75rem"></div>
   </section>
 
   <section>
-    <h2>四 Color 合并预览</h2>
-    <p style="color:var(--muted);font-size:.9rem;margin-bottom:1rem;">96 条逻辑链路叠加在同一物理 mesh 上。点击按钮切换 Color 可见性；悬停任意链路显示 <code>src→dst</code> 标签。</p>
-    <section class="merged-card" id="merged-preview">
-      <header><h2>完整 Flattened Butterfly（4 Color 合并）</h2>
-        <p class="subtitle">C0 蓝 · C1 橙 · C2 绿 · C3 紫</p></header>
-      <div class="filter-bar" id="color-filters"></div>
-      <div class="svg-wrap" data-topo="merged"></div>
-      <div class="hover-info" id="merged-hover-info">将鼠标移到链路上…</div>
-    </section>
+    <h2>Color 链路分配</h2>
+    <table><thead><tr><th>Color</th><th></th><th>链路数</th></tr></thead><tbody><tr><td>C0</td><td><span class='dot' style='background:#2563eb'></span></td><td>44</td></tr><tr><td>C1</td><td><span class='dot' style='background:#ea580c'></span></td><td>17</td></tr><tr><td>C2</td><td><span class='dot' style='background:#16a34a'></span></td><td>16</td></tr><tr><td>C3</td><td><span class='dot' style='background:#9333ea'></span></td><td>19</td></tr></tbody></table>
   </section>
 
-  <section>
-    <h2>四个 Color 逻辑子拓扑</h2>
-    <p style="color:var(--muted);font-size:.9rem;margin-bottom:1.5rem;">悬停链路显示 src→dst、维度和 Color。</p>
-    
-    <section class="color-card c0" id="color-0">
-      <header><h2>Color 0</h2>
-        <p class="subtitle">距离-1 邻接双向 (= 物理 Mesh) · 48 条有向逻辑链路</p></header>
-      <div class="svg-wrap" data-topo="single" data-color="0"></div>
-      <div class="legend"><span class="dot" style="background:#2563eb"></span>粗蓝线 = 双向邻接逻辑链路 · 悬停链路查看 src→dst</div>
-      <details><summary>链路样例</summary><p class="samples">0→1 (dim0)<br>0→4 (dim1)<br>1→0 (dim0)<br>1→2 (dim0)<br>1→5 (dim1)<br>2→1 (dim0)<br>2→3 (dim0)<br>2→6 (dim1)<br>… 共 48 条</p></details>
-    </section>
-    <section class="color-card c1" id="color-1">
-      <header><h2>Color 1</h2>
-        <p class="subtitle">距离-2 端点出发 · 16 条有向逻辑链路</p></header>
-      <div class="svg-wrap" data-topo="single" data-color="1"></div>
-      <div class="legend"><span class="dot" style="background:#ea580c"></span>弯曲箭头 = 该 Color 时隙内激活的逻辑 FB 长链路 · 悬停链路查看 src→dst</div>
-      <details><summary>链路样例</summary><p class="samples">0→2 (dim0)<br>0→8 (dim1)<br>1→9 (dim1)<br>2→10 (dim1)<br>3→1 (dim0)<br>3→11 (dim1)<br>4→6 (dim0)<br>7→5 (dim0)<br>… 共 16 条</p></details>
-    </section>
-    <section class="color-card c2" id="color-2">
-      <header><h2>Color 2</h2>
-        <p class="subtitle">距离-2 中间出发 · 16 条有向逻辑链路</p></header>
-      <div class="svg-wrap" data-topo="single" data-color="2"></div>
-      <div class="legend"><span class="dot" style="background:#16a34a"></span>弯曲箭头 = 该 Color 时隙内激活的逻辑 FB 长链路 · 悬停链路查看 src→dst</div>
-      <details><summary>链路样例</summary><p class="samples">1→3 (dim0)<br>2→0 (dim0)<br>4→12 (dim1)<br>5→7 (dim0)<br>5→13 (dim1)<br>6→4 (dim0)<br>6→14 (dim1)<br>7→15 (dim1)<br>… 共 16 条</p></details>
-    </section>
-    <section class="color-card c3" id="color-3">
-      <header><h2>Color 3</h2>
-        <p class="subtitle">距离-3 端到端双向 · 16 条有向逻辑链路</p></header>
-      <div class="svg-wrap" data-topo="single" data-color="3"></div>
-      <div class="legend"><span class="dot" style="background:#9333ea"></span>弯曲箭头 = 该 Color 时隙内激活的逻辑 FB 长链路 · 悬停链路查看 src→dst</div>
-      <details><summary>链路样例</summary><p class="samples">0→3 (dim0)<br>0→12 (dim1)<br>1→13 (dim1)<br>2→14 (dim1)<br>3→0 (dim0)<br>3→15 (dim1)<br>4→7 (dim0)<br>7→4 (dim0)<br>… 共 16 条</p></details>
-    </section>
-  </section>
-
-  <section>
-    <h2>Color 查找表</h2>
-    <table class='lookup'><thead><tr><th>ps＼pd</th><th>0</th><th>1</th><th>2</th><th>3</th></tr></thead><tbody>
-      <tr><th>0</th><td>—</td><td class='hi'>C0</td><td class='hi'>C1</td><td class='hi'>C3</td></tr>
-      <tr><th>1</th><td class='hi'>C0</td><td>—</td><td class='hi'>C0</td><td class='hi'>C2</td></tr>
-      <tr><th>2</th><td class='hi'>C2</td><td class='hi'>C0</td><td>—</td><td class='hi'>C0</td></tr>
-      <tr><th>3</th><td class='hi'>C3</td><td class='hi'>C1</td><td class='hi'>C0</td><td>—</td></tr>
-    </tbody></table>
-  </section>
   <section>
     <h2>路由示例</h2>
-    <table>
-      <thead><tr><th>通信</th><th>距离</th><th>维度序路由</th><th>Color</th></tr></thead>
-      <tbody>
-        <tr><td><code>0 → 5</code></td><td>行差1 + 列差1</td><td>0→1(C0) → 1→5(C0)</td><td>单 Color C0</td></tr>
-        <tr><td><code>0 → 10</code></td><td>行差2 + 列差2</td><td>0→2(C1) → 2→10(C1)</td><td>单 Color C1</td></tr>
-        <tr><td><code>0 → 6</code></td><td>行差1 + 列差2</td><td>0→4(C0) → 4→6(C1)</td><td>跨 C0 + C1</td></tr>
-        <tr><td><code>0 → 15</code></td><td>行差3 + 列差3</td><td>0→3(C3) → 3→15(C3)</td><td>单 Color C3</td></tr>
-      </tbody>
-    </table>
+    <table><thead><tr><th>通信</th><th>维度序路由</th><th>Color</th></tr></thead><tbody><tr><td><code>0 → 9</code></td><td>0→1(C1) → 1→9(C3)</td><td>跨 2 Color</td></tr><tr><td><code>0 → 15</code></td><td>0→3(C2) → 3→15(C2)</td><td>单 C2</td></tr><tr><td><code>0 → 8</code></td><td>0→8(C3)</td><td>单 C3</td></tr><tr><td><code>7 → 8</code></td><td>7→4(C2) → 4→8(C0)</td><td>跨 2 Color</td></tr></tbody></table>
   </section>
 </main>
-<footer>docs/tdm_fb_4x4_color_subtopology.html · 4×4 TDM Flattened Butterfly</footer>
+<footer>docs/tdm_fb_4x4_color_subtopology.html · ILP min-C · scripts/generate_tdm_fb_hypercube_color_docs.py</footer>
 
 <script>
-const LINKS = [{"src":0,"dst":1,"dim":0,"color":0},{"src":0,"dst":2,"dim":0,"color":1},{"src":0,"dst":3,"dim":0,"color":3},{"src":0,"dst":4,"dim":1,"color":0},{"src":0,"dst":8,"dim":1,"color":1},{"src":0,"dst":12,"dim":1,"color":3},{"src":1,"dst":0,"dim":0,"color":0},{"src":1,"dst":2,"dim":0,"color":0},{"src":1,"dst":3,"dim":0,"color":2},{"src":1,"dst":5,"dim":1,"color":0},{"src":1,"dst":9,"dim":1,"color":1},{"src":1,"dst":13,"dim":1,"color":3},{"src":2,"dst":0,"dim":0,"color":2},{"src":2,"dst":1,"dim":0,"color":0},{"src":2,"dst":3,"dim":0,"color":0},{"src":2,"dst":6,"dim":1,"color":0},{"src":2,"dst":10,"dim":1,"color":1},{"src":2,"dst":14,"dim":1,"color":3},{"src":3,"dst":0,"dim":0,"color":3},{"src":3,"dst":1,"dim":0,"color":1},{"src":3,"dst":2,"dim":0,"color":0},{"src":3,"dst":7,"dim":1,"color":0},{"src":3,"dst":11,"dim":1,"color":1},{"src":3,"dst":15,"dim":1,"color":3},{"src":4,"dst":5,"dim":0,"color":0},{"src":4,"dst":6,"dim":0,"color":1},{"src":4,"dst":7,"dim":0,"color":3},{"src":4,"dst":0,"dim":1,"color":0},{"src":4,"dst":8,"dim":1,"color":0},{"src":4,"dst":12,"dim":1,"color":2},{"src":5,"dst":4,"dim":0,"color":0},{"src":5,"dst":6,"dim":0,"color":0},{"src":5,"dst":7,"dim":0,"color":2},{"src":5,"dst":1,"dim":1,"color":0},{"src":5,"dst":9,"dim":1,"color":0},{"src":5,"dst":13,"dim":1,"color":2},{"src":6,"dst":4,"dim":0,"color":2},{"src":6,"dst":5,"dim":0,"color":0},{"src":6,"dst":7,"dim":0,"color":0},{"src":6,"dst":2,"dim":1,"color":0},{"src":6,"dst":10,"dim":1,"color":0},{"src":6,"dst":14,"dim":1,"color":2},{"src":7,"dst":4,"dim":0,"color":3},{"src":7,"dst":5,"dim":0,"color":1},{"src":7,"dst":6,"dim":0,"color":0},{"src":7,"dst":3,"dim":1,"color":0},{"src":7,"dst":11,"dim":1,"color":0},{"src":7,"dst":15,"dim":1,"color":2},{"src":8,"dst":9,"dim":0,"color":0},{"src":8,"dst":10,"dim":0,"color":1},{"src":8,"dst":11,"dim":0,"color":3},{"src":8,"dst":0,"dim":1,"color":2},{"src":8,"dst":4,"dim":1,"color":0},{"src":8,"dst":12,"dim":1,"color":0},{"src":9,"dst":8,"dim":0,"color":0},{"src":9,"dst":10,"dim":0,"color":0},{"src":9,"dst":11,"dim":0,"color":2},{"src":9,"dst":1,"dim":1,"color":2},{"src":9,"dst":5,"dim":1,"color":0},{"src":9,"dst":13,"dim":1,"color":0},{"src":10,"dst":8,"dim":0,"color":2},{"src":10,"dst":9,"dim":0,"color":0},{"src":10,"dst":11,"dim":0,"color":0},{"src":10,"dst":2,"dim":1,"color":2},{"src":10,"dst":6,"dim":1,"color":0},{"src":10,"dst":14,"dim":1,"color":0},{"src":11,"dst":8,"dim":0,"color":3},{"src":11,"dst":9,"dim":0,"color":1},{"src":11,"dst":10,"dim":0,"color":0},{"src":11,"dst":3,"dim":1,"color":2},{"src":11,"dst":7,"dim":1,"color":0},{"src":11,"dst":15,"dim":1,"color":0},{"src":12,"dst":13,"dim":0,"color":0},{"src":12,"dst":14,"dim":0,"color":1},{"src":12,"dst":15,"dim":0,"color":3},{"src":12,"dst":0,"dim":1,"color":3},{"src":12,"dst":4,"dim":1,"color":1},{"src":12,"dst":8,"dim":1,"color":0},{"src":13,"dst":12,"dim":0,"color":0},{"src":13,"dst":14,"dim":0,"color":0},{"src":13,"dst":15,"dim":0,"color":2},{"src":13,"dst":1,"dim":1,"color":3},{"src":13,"dst":5,"dim":1,"color":1},{"src":13,"dst":9,"dim":1,"color":0},{"src":14,"dst":12,"dim":0,"color":2},{"src":14,"dst":13,"dim":0,"color":0},{"src":14,"dst":15,"dim":0,"color":0},{"src":14,"dst":2,"dim":1,"color":3},{"src":14,"dst":6,"dim":1,"color":1},{"src":14,"dst":10,"dim":1,"color":0},{"src":15,"dst":12,"dim":0,"color":3},{"src":15,"dst":13,"dim":0,"color":1},{"src":15,"dst":14,"dim":0,"color":0},{"src":15,"dst":3,"dim":1,"color":3},{"src":15,"dst":7,"dim":1,"color":1},{"src":15,"dst":11,"dim":1,"color":0}];
-const COLORS = [{"id":0,"name":"Color 0","hex":"#2563eb"},{"id":1,"name":"Color 1","hex":"#ea580c"},{"id":2,"name":"Color 2","hex":"#16a34a"},{"id":3,"name":"Color 3","hex":"#9333ea"}];
-const ROWS=4, COLS=4, CELL=110, MARGIN=70, W=470, H=470;
+const LINKS = [{"src":0,"dst":1,"dim":0,"color":1,"phys":1},{"src":0,"dst":2,"dim":0,"color":3,"phys":2},{"src":0,"dst":3,"dim":0,"color":2,"phys":3},{"src":0,"dst":4,"dim":1,"color":0,"phys":1},{"src":0,"dst":8,"dim":1,"color":3,"phys":2},{"src":0,"dst":12,"dim":1,"color":2,"phys":3},{"src":1,"dst":0,"dim":0,"color":0,"phys":1},{"src":1,"dst":2,"dim":0,"color":0,"phys":1},{"src":1,"dst":3,"dim":0,"color":1,"phys":2},{"src":1,"dst":5,"dim":1,"color":0,"phys":1},{"src":1,"dst":9,"dim":1,"color":3,"phys":2},{"src":1,"dst":13,"dim":1,"color":2,"phys":3},{"src":2,"dst":0,"dim":0,"color":3,"phys":2},{"src":2,"dst":1,"dim":0,"color":0,"phys":1},{"src":2,"dst":3,"dim":0,"color":0,"phys":1},{"src":2,"dst":6,"dim":1,"color":0,"phys":1},{"src":2,"dst":10,"dim":1,"color":3,"phys":2},{"src":2,"dst":14,"dim":1,"color":2,"phys":3},{"src":3,"dst":0,"dim":0,"color":2,"phys":3},{"src":3,"dst":1,"dim":0,"color":1,"phys":2},{"src":3,"dst":2,"dim":0,"color":0,"phys":1},{"src":3,"dst":7,"dim":1,"color":0,"phys":1},{"src":3,"dst":11,"dim":1,"color":3,"phys":2},{"src":3,"dst":15,"dim":1,"color":2,"phys":3},{"src":4,"dst":5,"dim":0,"color":0,"phys":1},{"src":4,"dst":6,"dim":0,"color":3,"phys":2},{"src":4,"dst":7,"dim":0,"color":2,"phys":3},{"src":4,"dst":0,"dim":1,"color":0,"phys":1},{"src":4,"dst":8,"dim":1,"color":0,"phys":1},{"src":4,"dst":12,"dim":1,"color":1,"phys":2},{"src":5,"dst":4,"dim":0,"color":0,"phys":1},{"src":5,"dst":6,"dim":0,"color":0,"phys":1},{"src":5,"dst":7,"dim":0,"color":1,"phys":2},{"src":5,"dst":1,"dim":1,"color":0,"phys":1},{"src":5,"dst":9,"dim":1,"color":0,"phys":1},{"src":5,"dst":13,"dim":1,"color":1,"phys":2},{"src":6,"dst":4,"dim":0,"color":3,"phys":2},{"src":6,"dst":5,"dim":0,"color":0,"phys":1},{"src":6,"dst":7,"dim":0,"color":0,"phys":1},{"src":6,"dst":2,"dim":1,"color":3,"phys":1},{"src":6,"dst":10,"dim":1,"color":0,"phys":1},{"src":6,"dst":14,"dim":1,"color":1,"phys":2},{"src":7,"dst":4,"dim":0,"color":2,"phys":3},{"src":7,"dst":5,"dim":0,"color":1,"phys":2},{"src":7,"dst":6,"dim":0,"color":0,"phys":1},{"src":7,"dst":3,"dim":1,"color":3,"phys":1},{"src":7,"dst":11,"dim":1,"color":0,"phys":1},{"src":7,"dst":15,"dim":1,"color":1,"phys":2},{"src":8,"dst":9,"dim":0,"color":0,"phys":1},{"src":8,"dst":10,"dim":0,"color":3,"phys":2},{"src":8,"dst":11,"dim":0,"color":2,"phys":3},{"src":8,"dst":0,"dim":1,"color":3,"phys":2},{"src":8,"dst":4,"dim":1,"color":0,"phys":1},{"src":8,"dst":12,"dim":1,"color":0,"phys":1},{"src":9,"dst":8,"dim":0,"color":0,"phys":1},{"src":9,"dst":10,"dim":0,"color":0,"phys":1},{"src":9,"dst":11,"dim":0,"color":1,"phys":2},{"src":9,"dst":1,"dim":1,"color":3,"phys":2},{"src":9,"dst":5,"dim":1,"color":0,"phys":1},{"src":9,"dst":13,"dim":1,"color":0,"phys":1},{"src":10,"dst":8,"dim":0,"color":3,"phys":2},{"src":10,"dst":9,"dim":0,"color":0,"phys":1},{"src":10,"dst":11,"dim":0,"color":0,"phys":1},{"src":10,"dst":2,"dim":1,"color":2,"phys":2},{"src":10,"dst":6,"dim":1,"color":0,"phys":1},{"src":10,"dst":14,"dim":1,"color":0,"phys":1},{"src":11,"dst":8,"dim":0,"color":2,"phys":3},{"src":11,"dst":9,"dim":0,"color":1,"phys":2},{"src":11,"dst":10,"dim":0,"color":0,"phys":1},{"src":11,"dst":3,"dim":1,"color":2,"phys":2},{"src":11,"dst":7,"dim":1,"color":0,"phys":1},{"src":11,"dst":15,"dim":1,"color":0,"phys":1},{"src":12,"dst":13,"dim":0,"color":0,"phys":1},{"src":12,"dst":14,"dim":0,"color":3,"phys":2},{"src":12,"dst":15,"dim":0,"color":2,"phys":3},{"src":12,"dst":0,"dim":1,"color":2,"phys":3},{"src":12,"dst":4,"dim":1,"color":1,"phys":2},{"src":12,"dst":8,"dim":1,"color":0,"phys":1},{"src":13,"dst":12,"dim":0,"color":3,"phys":1},{"src":13,"dst":14,"dim":0,"color":0,"phys":1},{"src":13,"dst":15,"dim":0,"color":1,"phys":2},{"src":13,"dst":1,"dim":1,"color":2,"phys":3},{"src":13,"dst":5,"dim":1,"color":1,"phys":2},{"src":13,"dst":9,"dim":1,"color":0,"phys":1},{"src":14,"dst":12,"dim":0,"color":2,"phys":2},{"src":14,"dst":13,"dim":0,"color":0,"phys":1},{"src":14,"dst":15,"dim":0,"color":0,"phys":1},{"src":14,"dst":2,"dim":1,"color":1,"phys":3},{"src":14,"dst":6,"dim":1,"color":3,"phys":2},{"src":14,"dst":10,"dim":1,"color":0,"phys":1},{"src":15,"dst":12,"dim":0,"color":1,"phys":3},{"src":15,"dst":13,"dim":0,"color":3,"phys":2},{"src":15,"dst":14,"dim":0,"color":0,"phys":1},{"src":15,"dst":3,"dim":1,"color":1,"phys":3},{"src":15,"dst":7,"dim":1,"color":3,"phys":2},{"src":15,"dst":11,"dim":1,"color":0,"phys":1}];
+const COLORS = [{"id":0,"name":"Color 0","hex":"#2563eb","count":44},{"id":1,"name":"Color 1","hex":"#ea580c","count":17},{"id":2,"name":"Color 2","hex":"#16a34a","count":16},{"id":3,"name":"Color 3","hex":"#9333ea","count":19}];
+const ROWS=4, COLS=4, CELL=72, MARGIN=50, W=316, H=316, NR=14;
 
-function nodeXY(node) {
-  const r = Math.floor(node / COLS), c = node % COLS;
-  return [MARGIN + c * CELL, MARGIN + r * CELL];
-}
+function nodeXY(n) { const r=Math.floor(n/COLS), c=n%COLS; return [MARGIN+c*CELL, MARGIN+r*CELL]; }
 
-function arcPath(src, dst, dim, idx) {
-  const [x0, y0] = nodeXY(src), [x1, y1] = nodeXY(dst);
-  const sr = Math.floor(src/COLS), sc = src%COLS;
-  const dr = Math.floor(dst/COLS), dc = dst%COLS;
-  const dist = dim === 0 ? Math.abs(dc-sc) : Math.abs(dr-sr);
-  let cx, cy;
-  if (dim === 0) {
-    const sign = src < dst ? -1 : 1;
-    const bulge = 16 + dist * 12;
-    cx = (x0+x1)/2; cy = (y0+y1)/2 + sign * bulge * (idx%2===0 ? 1 : 0.7);
-  } else {
-    const sign = src < dst ? -1 : 1;
-    const bulge = 16 + dist * 12;
-    cx = (x0+x1)/2 + sign * bulge * (idx%2===0 ? 1 : 0.7); cy = (y0+y1)/2;
-  }
+function arcPath(src,dst,dim,idx) {
+  const [x0,y0]=nodeXY(src), [x1,y1]=nodeXY(dst);
+  const sc=src%COLS, dc=dst%COLS, sr=Math.floor(src/COLS), dr=Math.floor(dst/COLS);
+  const dist = dim===0 ? Math.abs(dc-sc) : Math.abs(dr-sr);
+  let cx,cy;
+  if (dim===0) { const s=src<dst?-1:1; cx=(x0+x1)/2; cy=(y0+y1)/2+s*(10+dist*6)*(idx%2?0.7:1); }
+  else { const s=src<dst?-1:1; cx=(x0+x1)/2+s*(10+dist*6)*(idx%2?0.7:1); cy=(y0+y1)/2; }
   return `M ${x0} ${y0} Q ${cx} ${cy} ${x1} ${y1}`;
 }
 
-function makeMarkers(ids) {
-  let s = '<defs>';
-  for (const id of ids) {
-    const hex = COLORS[id].hex;
-    s += `<marker id="arrow-${id}" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse">
-      <path d="M 0 0 L 10 5 L 0 10 z" fill="${hex}"/></marker>`;
+function markers(ids) {
+  let s='<defs>'; for (const id of ids) s+=`<marker id="a${id}" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="4" markerHeight="4" orient="auto"><path d="M0 0 L10 5 L0 10z" fill="${COLORS[id].hex}"/></marker>`;
+  return s+'</defs>';
+}
+function nodes() { let s=''; for(let n=0;n<ROWS*COLS;n++){const[x,y]=nodeXY(n); s+=`<circle cx="${x}" cy="${y}" r="${NR}" class="node"/><text x="${x}" y="${y+4}" class="node-label">${n}</text>`;} return s; }
+function skeleton() { let s=''; for(let n=0;n<ROWS*COLS;n++){const[x0,y0]=nodeXY(n); const r=Math.floor(n/COLS),c=n%COLS; if(c+1<COLS){const[x1,y1]=nodeXY(n+1); s+=`<line x1="${x0}" y1="${y0}" x2="${x1}" y2="${y1}" class="mesh-edge"/>`;} if(r+1<ROWS){const[x1,y1]=nodeXY(n+COLS); s+=`<line x1="${x0}" y1="${y0}" x2="${x1}" y2="${y1}" class="mesh-edge"/>`;} } return s; }
+
+function render(container, activeSet, infoEl) {
+  let svg=`<svg viewBox="0 0 ${W} ${H}" class="topo-svg">${markers([...activeSet])}${nodes()}${skeleton()}`;
+  const cnt={}; activeSet.forEach(c=>cnt[c]=0);
+  for (const l of LINKS) {
+    if (!activeSet.has(l.color)) continue;
+    const i=cnt[l.color]++; const d=arcPath(l.src,l.dst,l.dim,i);
+    const label=`${l.src}→${l.dst} · dim${l.dim} · C${l.color} · phys${l.phys}`;
+    svg+=`<path d="${d}" class="logic-link" stroke="${COLORS[l.color].hex}" marker-end="url(#a${l.color})" data-label="${label}"/>`;
   }
-  s += '</defs>';
-  return s;
+  svg+='</svg>'; container.innerHTML=svg;
+  attachHover(container.querySelector('svg'), infoEl);
 }
 
-function meshNodes() {
-  let s = '';
-  for (let n=0; n<ROWS*COLS; n++) {
-    const [x,y] = nodeXY(n);
-    s += `<circle cx="${x}" cy="${y}" r="18" class="node"/>`;
-    s += `<text x="${x}" y="${y+5}" class="node-label">${n}</text>`;
-  }
-  return s;
-}
-
-function meshSkeleton() {
-  let s = '';
-  for (let n=0; n<ROWS*COLS; n++) {
-    const [x0,y0] = nodeXY(n);
-    const r=Math.floor(n/COLS), c=n%COLS;
-    if (c+1<COLS) { const [x1,y1]=nodeXY(n+1); s+=`<line x1="${x0}" y1="${y0}" x2="${x1}" y2="${y1}" class="mesh-edge"/>`; }
-    if (r+1<ROWS) { const [x1,y1]=nodeXY(n+COLS); s+=`<line x1="${x0}" y1="${y0}" x2="${x1}" y2="${y1}" class="mesh-edge"/>`; }
-  }
-  return s;
-}
-
-function c0UndirectedEdges() {
-  const seen = new Set(), edges = [];
-  for (const l of LINKS.filter(x => x.color === 0)) {
-    const a = Math.min(l.src, l.dst), b = Math.max(l.src, l.dst);
-    const key = a+'-'+b;
-    if (seen.has(key)) continue;
-    seen.add(key);
-    const rev = LINKS.find(x => x.src===b && x.dst===a && x.color===0);
-    edges.push({a, b, dim: l.dim, fwd: l, rev});
-  }
-  return edges;
-}
-
-function buildSvg(container, mode, filterColor, activeColors) {
-  let svg = `<svg viewBox="0 0 ${W} ${H}" class="topo-svg" role="img">`;
-  const showColors = mode === 'merged' ? activeColors : new Set([filterColor]);
-  const markerIds = [...showColors];
-  svg += makeMarkers(markerIds);
-  svg += meshNodes();
-  if (mode === 'merged' || filterColor !== 0) svg += meshSkeleton();
-
-  const counters = {0:0,1:0,2:0,3:0};
-
-  // C1-C3 curved links
-  for (const link of LINKS) {
-    if (!showColors.has(link.color) || link.color === 0) continue;
-    const hex = COLORS[link.color].hex;
-    const idx = counters[link.color]++;
-    const d = arcPath(link.src, link.dst, link.dim, idx);
-    const label = `${link.src}→${link.dst} · dim${link.dim} · C${link.color}`;
-    svg += `<path d="${d}" class="logic-link" stroke="${hex}" marker-end="url(#arrow-${link.color})"
-      data-label="${label}" data-src="${link.src}" data-dst="${link.dst}" data-dim="${link.dim}" data-color="${link.color}"/>`;
-  }
-
-  // C0: individual directed links for single view, undirected pairs for merged
-  if (showColors.has(0)) {
-    if (mode === 'single' && filterColor === 0) {
-      for (const link of LINKS.filter(l => l.color === 0)) {
-        const [x0,y0]=nodeXY(link.src), [x1,y1]=nodeXY(link.dst);
-        const label = `${link.src}→${link.dst} · dim${link.dim} · C0`;
-        svg += `<line x1="${x0}" y1="${y0}" x2="${x1}" y2="${y1}" class="c0-link visible" stroke="${COLORS[0].hex}"
-          data-label="${label}" data-src="${link.src}" data-dst="${link.dst}" data-dim="${link.dim}" data-color="0"/>`;
-      }
-    } else {
-      for (const e of c0UndirectedEdges()) {
-        const [x0,y0]=nodeXY(e.a), [x1,y1]=nodeXY(e.b);
-        const label = `${e.a}↔${e.b} · dim${e.dim} · C0 (${e.fwd.src}→${e.fwd.dst}, ${e.rev.src}→${e.rev.dst})`;
-        svg += `<line x1="${x0}" y1="${y0}" x2="${x1}" y2="${y1}" class="c0-link visible" stroke="${COLORS[0].hex}"
-          data-label="${label}" data-src="${e.fwd.src}" data-dst="${e.fwd.dst}" data-dim="${e.dim}" data-color="0"/>`;
-      }
-    }
-  }
-
-  svg += '</svg>';
-  container.innerHTML = svg;
-  attachHover(container.querySelector('svg'), mode === 'merged' ? document.getElementById('merged-hover-info') : null);
-}
-
-const tooltip = document.getElementById('tooltip');
-
+const tip=document.getElementById('tooltip');
 function attachHover(svg, infoEl) {
-  if (!svg) return;
-  const allLinks = svg.querySelectorAll('.logic-link, .c0-link.visible');
-  allLinks.forEach(el => {
-    el.addEventListener('mouseenter', e => {
-      const label = el.dataset.label || `${el.dataset.src}→${el.dataset.dst} · dim${el.dataset.dim} · C${el.dataset.color}`;
-      const parts = label.split(' · ');
-      tooltip.innerHTML = parts.length > 1
-        ? `${parts[0]} <span class="color-tag">${parts.slice(1).join(' · ')}</span>`
-        : label;
-      tooltip.style.display = 'block';
-      tooltip.style.left = (e.clientX + 14) + 'px';
-      tooltip.style.top = (e.clientY - 10) + 'px';
-      allLinks.forEach(x => x.classList.toggle('dimmed', x !== el));
-      el.classList.add('hovered');
-      if (infoEl) infoEl.textContent = label;
-    });
-    el.addEventListener('mousemove', e => {
-      tooltip.style.left = (e.clientX + 14) + 'px';
-      tooltip.style.top = (e.clientY - 10) + 'px';
-    });
-    el.addEventListener('mouseleave', () => {
-      tooltip.style.display = 'none';
-      allLinks.forEach(x => x.classList.remove('dimmed','hovered'));
-      if (infoEl) infoEl.textContent = '将鼠标移到链路上…';
-    });
+  if(!svg) return;
+  const all=svg.querySelectorAll('.logic-link');
+  all.forEach(el=>{
+    el.onmouseenter=e=>{ const lb=el.dataset.label; const p=lb.split(' · '); tip.innerHTML=`${p[0]} <span class="tag">${p.slice(1).join(' · ')}</span>`; tip.style.display='block'; tip.style.left=(e.clientX+12)+'px'; tip.style.top=(e.clientY-8)+'px'; all.forEach(x=>x.classList.toggle('dimmed',x!==el)); el.classList.add('hovered'); if(infoEl)infoEl.textContent=lb; };
+    el.onmousemove=e=>{ tip.style.left=(e.clientX+12)+'px'; tip.style.top=(e.clientY-8)+'px'; };
+    el.onmouseleave=()=>{ tip.style.display='none'; all.forEach(x=>x.classList.remove('dimmed','hovered')); if(infoEl)infoEl.textContent='将鼠标移到链路上…'; };
   });
 }
 
-document.querySelectorAll('[data-topo="single"]').forEach(wrap => {
-  buildSvg(wrap, 'single', +wrap.dataset.color, null);
+const merged=document.getElementById('merged');
+const filters=document.getElementById('filters');
+let active=new Set(COLORS.map(c=>c.id));
+COLORS.forEach(c=>{
+  const b=document.createElement('button'); b.className='filter-btn active';
+  b.innerHTML=`<span class="dot" style="background:${c.hex}"></span>C${c.id} (${c.count})`;
+  b.onclick=()=>{ if(active.has(c.id)){if(active.size<=1)return; active.delete(c.id); b.classList.replace('active','inactive');} else{active.add(c.id); b.classList.replace('inactive','active');} render(merged,active,document.getElementById('hover-info')); };
+  filters.appendChild(b);
 });
+render(merged,active,document.getElementById('hover-info'));
 
-const mergedWrap = document.querySelector('[data-topo="merged"]');
-const filterBar = document.getElementById('color-filters');
-let activeColors = new Set([0,1,2,3]);
-
-COLORS.forEach(c => {
-  const btn = document.createElement('button');
-  btn.className = 'filter-btn active';
-  btn.innerHTML = `<span class="dot" style="background:${c.hex}"></span>C${c.id}`;
-  btn.addEventListener('click', () => {
-    if (activeColors.has(c.id)) {
-      if (activeColors.size <= 1) return;
-      activeColors.delete(c.id);
-      btn.classList.replace('active','inactive');
-    } else {
-      activeColors.add(c.id);
-      btn.classList.replace('inactive','active');
-    }
-    buildSvg(mergedWrap, 'merged', null, activeColors);
-  });
-  filterBar.appendChild(btn);
-});
-
-buildSvg(mergedWrap, 'merged', null, activeColors);
+const single=document.getElementById('single');
+const sel=document.getElementById('single-color');
+function renderSingle(){ render(single, new Set([+sel.value]), null); }
+sel.onchange=renderSingle; renderSingle();
 </script>
 </body></html>
