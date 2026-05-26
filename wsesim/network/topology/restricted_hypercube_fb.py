@@ -9,7 +9,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from wsesim.network.tdm_coloring import ColorPlan, assign_colors
+from wsesim.network.color_planners import ColorPlannerConfig, build_color_plan
+from wsesim.network.tdm_coloring import ColorPlan
 from wsesim.network.topology.base import Topology
 from wsesim.network.topology.tdm_flat_butterfly import TDMFlatButterfly
 
@@ -22,9 +23,12 @@ class RestrictedHypercubeFB(Topology):
     keep_rows: int
     keep_cols: int
     k: int = 2
+    coloring_strategy: str = "greedy_first_fit"
+    color_planner_config: ColorPlannerConfig | None = None
     _parent: TDMFlatButterfly | None = None
     _kept_logical: set[tuple[int, int]] = field(default_factory=set, init=False)
-    _color_plan: ColorPlan | None = None
+    _color_plan: ColorPlan | None = field(default=None, repr=False)
+    _color_plan_override: ColorPlan | None = field(default=None, repr=False)
 
     def __post_init__(self) -> None:
         if self.k != 2:
@@ -147,13 +151,16 @@ class RestrictedHypercubeFB(Topology):
 
     def coloring(self) -> ColorPlan:
         if self._color_plan is None:
-            links = self.logical_links()
-            paths = {(u, v): self.physical_path(u, v) for u, v, _ in links}
-            self._color_plan = assign_colors(
-                logical_links=links,
-                physical_paths=paths,
-                physical_links=self.physical_links(),
-            )
+            if self._color_plan_override is not None:
+                self._color_plan = self._color_plan_override
+            else:
+                config = self.color_planner_config
+                if config is None:
+                    config = ColorPlannerConfig(
+                        planner=self.coloring_strategy,
+                        topology_hint={"k": self.k, "n": self.n},
+                    )
+                self._color_plan, _ = build_color_plan(self, config)
         return self._color_plan
 
     def node_ids(self) -> list[int]:

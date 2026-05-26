@@ -455,6 +455,15 @@ color_lower_bound = max(load_per_link.values())   # 至少 C ≥ 此值</pre>
   </ul>
 </section>
 
+<section class="panel">
+  <h2>Color DSE（AllGather makespan）</h2>
+  <p>
+    静态 ColorPlan 设计空间探索（约束 × 链路全集 × 着色算法）结果见
+    <a href="color_dse_allgather_report.html"><code>color_dse_allgather_report.html</code></a>。
+    运行：<code>python3 examples/run_color_dse_allgather.py</code>（需 <code>pip install -e '.[color-dse]'</code>）。
+  </p>
+</section>
+
 </main>
 <footer>docs/tdm_fb_color_scaling.html · wse-simulator TDM FB max-load scan</footer>
 

@@ -17,6 +17,7 @@ dependencies = [
 
 [project.optional-dependencies]
 dse = ["scikit-optimize>=0.10.2"]
+color-dse = ["ortools>=9.0"]
 dev = ["pytest>=8.0", "ruff>=0.6.0"]
 
 [tool.setuptools.packages.find]
@@ -25,3 +26,6 @@ include = ["wsesim*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = [
+    "ortools: tests requiring OR-Tools CP-SAT",
+]

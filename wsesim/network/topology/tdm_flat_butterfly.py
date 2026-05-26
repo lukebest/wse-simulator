@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
-from wsesim.network.tdm_coloring import ColorPlan, assign_colors, min_colors_for_route, route_color
+from wsesim.network.color_planners import ColorPlannerConfig, build_color_plan
+from wsesim.network.tdm_coloring import ColorPlan, min_colors_for_route, route_color
 from wsesim.network.topology.base import Topology
 
 
@@ -14,7 +15,10 @@ class TDMFlatButterfly(Topology):
     n: int
     rows: int
     cols: int
-    _color_plan: ColorPlan | None = None
+    coloring_strategy: str = "greedy_first_fit"
+    color_planner_config: ColorPlannerConfig | None = None
+    _color_plan: ColorPlan | None = field(default=None, repr=False)
+    _color_plan_override: ColorPlan | None = field(default=None, repr=False)
 
     def __post_init__(self) -> None:
         if self.k <= 1 or self.n <= 0:
@@ -149,13 +153,16 @@ class TDMFlatButterfly(Topology):
 
     def coloring(self) -> ColorPlan:
         if self._color_plan is None:
-            links = self.logical_links()
-            paths = {(u, v): self.physical_path(u, v) for u, v, _ in links}
-            self._color_plan = assign_colors(
-                logical_links=links,
-                physical_paths=paths,
-                physical_links=self.physical_links(),
-            )
+            if self._color_plan_override is not None:
+                self._color_plan = self._color_plan_override
+            else:
+                config = self.color_planner_config
+                if config is None:
+                    config = ColorPlannerConfig(
+                        planner=self.coloring_strategy,
+                        topology_hint={"k": self.k, "n": self.n},
+                    )
+                self._color_plan, _ = build_color_plan(self, config)
         return self._color_plan
 
     def route_color(self, src: int, dst: int) -> int | None:
