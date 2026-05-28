@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>4×4 Mesh · k2_n4 TDM · ND AllGather · 2 flits/节点</title>
+<title>4×4 Mesh · k2_n4 TDM · ND AllGather · 256 B/包</title>
 <style>
   :root {
     --bg:#0f1419; --panel:#1a2332; --text:#e8edf4; --muted:#94a3b8;
@@ -23,7 +23,13 @@
   .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(170px,1fr)); gap:.85rem; }
   .stat { background:var(--panel); border:1px solid var(--border); border-radius:10px; padding:.9rem 1rem; }
   .stat .val { font-size:1.5rem; font-weight:700; }
+  .stat .val.hero { font-size:2rem; color:var(--good); }
   .stat .lbl { color:var(--muted); font-size:.82rem; }
+  .makespan-banner { margin-top:1rem; padding:1rem 1.25rem; border-radius:10px;
+    background:linear-gradient(90deg,rgba(74,222,128,.12),rgba(96,165,250,.08));
+    border:1px solid rgba(74,222,128,.35); }
+  .makespan-banner .big { font-size:2.2rem; font-weight:800; color:var(--good); line-height:1.2; }
+  .makespan-banner .sub { color:var(--muted); font-size:.88rem; margin-top:.35rem; }
   .panel { background:var(--panel); border:1px solid var(--border); border-radius:12px; padding:1rem 1.15rem; }
   .node-ref { font-family:ui-monospace,monospace; background:#111827; border:1px solid var(--border);
     border-radius:8px; padding:.85rem 1rem; white-space:pre; font-size:.88rem; }
@@ -72,20 +78,54 @@
 </head>
 <body>
 <header>
-  <h1>4×4 物理 Mesh · 2-ary 4-flat TDM · ND AllGather（每节点 2 flit）</h1>
+  <h1>4×4 物理 Mesh · 2-ary 4-flat TDM · ND AllGather（256 B/包）</h1>
   <p>物理拓扑：4×4 Mesh2D（16 PE）。逻辑 overlay：<code>k=2, n=4</code> Flattened Butterfly，<code>C=2</code> Color TDM。
-     集合通信：<code>nd_dimension_exchange_allgather</code>，每节点本地 2 flit，经 4 个 dimension stage 完成全收集。</p>
+     集合通信：<code>nd_dimension_exchange_allgather</code>；每节点本地 256 B，每 stage 交换包 256 B（2 flit × 128 B）。
+     链路：<strong>128 B/cycle</strong>（1 flit/cycle），router 间时延 <strong>1 cycle/hop</strong>。</p>
+  <div class="makespan-banner" id="makespan-banner"></div>
 </header>
 <main>
   <section>
-    <div class="grid">
-      <div class="stat"><div class="val">16</div><div class="lbl">PE（4×4 Mesh）</div></div>
-      <div class="stat"><div class="val">2</div><div class="lbl">flit / 节点（本地数据）</div></div>
-      <div class="stat"><div class="val">32</div><div class="lbl">flit 全网总量</div></div>
-      <div class="stat"><div class="val">64</div><div class="lbl">交换包（16/ stage）</div></div>
-      <div class="stat"><div class="val">128</div><div class="lbl">链路 flit 传输次数</div></div>
-      <div class="stat"><div class="val">C=2</div><div class="lbl">TDM Color 周期</div></div>
-    </div>
+    <div class="grid" id="summary-grid"></div>
+  </section>
+
+  <section class="panel">
+    <h2>链路模型</h2>
+    <table>
+      <thead><tr><th>参数</th><th>值</th><th>说明</th></tr></thead>
+      <tbody>
+        <tr><td>包大小</td><td><strong>256 B</strong></td><td>2 flit × 128 B/flit</td></tr>
+        <tr><td>链路带宽</td><td><strong>128 B/cycle</strong></td><td><code>link_bw_flits_per_cycle=1</code></td></tr>
+        <tr><td>链路时延</td><td><strong>1 cycle/hop</strong></td><td><code>link_latency_cycles=1</code>；单 flit 过链 1+1=2 cyc</td></tr>
+        <tr><td>flit 粒度</td><td>128 B</td><td>网络按 flit 流水传输，每包 2 flit</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section class="panel" id="breakdown-panel">
+    <h2>Makespan 分解（<span id="ms-val"></span> cycles）</h2>
+    <p class="side" id="six-hop-note"></p>
+    <table id="breakdown-table">
+      <thead>
+        <tr>
+          <th>Stage</th><th>inject</th><th>phys hop</th><th>无争用 latency</th>
+          <th>实测 max latency</th><th>争用开销</th><th>stage 完成时刻</th>
+        </tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+    <table style="margin-top:1rem">
+      <thead><tr><th>对比项</th><th>cycles</th><th>说明</th></tr></thead>
+      <tbody id="theory-rows"></tbody>
+    </table>
+  </section>
+
+  <section class="panel" id="sim-panel">
+    <h2>SimPy 端到端仿真（slot_cycles=<span id="slot-label"></span>，link_latency=<span id="link-lat-label"></span>）</h2>
+    <table id="sim-table">
+      <thead><tr><th>指标</th><th>值</th><th>说明</th></tr></thead>
+      <tbody></tbody>
+    </table>
   </section>
 
   <section class="panel">
@@ -109,7 +149,7 @@
 
   <section class="panel">
     <h2>ND AllGather 四阶段时间线</h2>
-    <p class="side">每 stage 注入 offset = dim（cycle 0/1/2/3）。组内双向交换：每对节点各发 1 包 × 2 flit = 256 B chunk。</p>
+    <p class="side">每 stage 注入 offset = dim（cycle 0/1/2/3）。组内双向交换：每对节点各发 1 包 × 256 B。</p>
     <div class="timeline" id="timeline"></div>
   </section>
 
@@ -142,11 +182,11 @@
     <table>
       <thead><tr><th>Stage 后</th><th>每节点已知 chunk 数</th><th>说明</th></tr></thead>
       <tbody>
-        <tr><td>初始</td><td>1（2 flit）</td><td>节点 i 持有本地 chunkᵢ（256 B）</td></tr>
+        <tr><td>初始</td><td>1 × 256 B</td><td>节点 i 持有本地 chunkᵢ</td></tr>
         <tr><td>dim 0</td><td>2</td><td>同组 d₀ 邻居互换 → 覆盖 2 个 d₀ 位</td></tr>
         <tr><td>dim 1</td><td>4</td><td>再沿 d₁ 扩展</td></tr>
         <tr><td>dim 2</td><td>8</td><td>再沿 d₂ 扩展</td></tr>
-        <tr><td>dim 3</td><td>16</td><td>全收集完成：每节点持有全部 16×2 flit</td></tr>
+        <tr><td>dim 3</td><td>16 × 256 B</td><td>全收集完成：每节点 4096 B</td></tr>
       </tbody>
     </table>
   </section>
@@ -154,7 +194,7 @@
 <footer>生成自 scripts/generate_allgather_k2_n4_2flit_viz.py · wse-simulator</footer>
 
 <script>
-const MODEL = {"k":2,"n":4,"rows":4,"cols":4,"C":2,"flit_bytes":128,"flits_per_node":2,"payload_bytes":4096,"chunk_bytes":256,"flits_per_packet":2,"total_packets":64,"total_flits":128,"coords":{"0":[0,0,0,0],"1":[1,0,0,0],"2":[0,1,0,0],"3":[1,1,0,0],"4":[0,0,1,0],"5":[1,0,1,0],"6":[0,1,1,0],"7":[1,1,1,0],"8":[0,0,0,1],"9":[1,0,0,1],"10":[0,1,0,1],"11":[1,1,0,1],"12":[0,0,1,1],"13":[1,0,1,1],"14":[0,1,1,1],"15":[1,1,1,1]},"stages":[{"dim":0,"inject_cycle":0,"groups":[[0,1],[8,9],[4,5],[12,13],[2,3],[10,11],[6,7],[14,15]],"packets":[{"src":0,"dst":1,"stage":0,"chunk_bytes":256,"flits":2,"logical":[{"u":0,"v":1,"color":1,"dim":0}],"phys":[{"u":0,"v":1}],"mono_color":true,"colors":[1]},{"src":1,"dst":0,"stage":0,"chunk_bytes":256,"flits":2,"logical":[{"u":1,"v":0,"color":1,"dim":0}],"phys":[{"u":1,"v":0}],"mono_color":true,"colors":[1]},{"src":8,"dst":9,"stage":0,"chunk_bytes":256,"flits":2,"logical":[{"u":8,"v":9,"color":1,"dim":0}],"phys":[{"u":8,"v":9}],"mono_color":true,"colors":[1]},{"src":9,"dst":8,"stage":0,"chunk_bytes":256,"flits":2,"logical":[{"u":9,"v":8,"color":1,"dim":0}],"phys":[{"u":9,"v":8}],"mono_color":true,"colors":[1]},{"src":4,"dst":5,"stage":0,"chunk_bytes":256,"flits":2,"logical":[{"u":4,"v":5,"color":1,"dim":0}],"phys":[{"u":4,"v":5}],"mono_color":true,"colors":[1]},{"src":5,"dst":4,"stage":0,"chunk_bytes":256,"flits":2,"logical":[{"u":5,"v":4,"color":1,"dim":0}],"phys":[{"u":5,"v":4}],"mono_color":true,"colors":[1]},{"src":12,"dst":13,"stage":0,"chunk_bytes":256,"flits":2,"logical":[{"u":12,"v":13,"color":1,"dim":0}],"phys":[{"u":12,"v":13}],"mono_color":true,"colors":[1]},{"src":13,"dst":12,"stage":0,"chunk_bytes":256,"flits":2,"logical":[{"u":13,"v":12,"color":1,"dim":0}],"phys":[{"u":13,"v":12}],"mono_color":true,"colors":[1]},{"src":2,"dst":3,"stage":0,"chunk_bytes":256,"flits":2,"logical":[{"u":2,"v":3,"color":0,"dim":0}],"phys":[{"u":2,"v":3}],"mono_color":true,"colors":[0]},{"src":3,"dst":2,"stage":0,"chunk_bytes":256,"flits":2,"logical":[{"u":3,"v":2,"color":0,"dim":0}],"phys":[{"u":3,"v":2}],"mono_color":true,"colors":[0]},{"src":10,"dst":11,"stage":0,"chunk_bytes":256,"flits":2,"logical":[{"u":10,"v":11,"color":0,"dim":0}],"phys":[{"u":10,"v":11}],"mono_color":true,"colors":[0]},{"src":11,"dst":10,"stage":0,"chunk_bytes":256,"flits":2,"logical":[{"u":11,"v":10,"color":0,"dim":0}],"phys":[{"u":11,"v":10}],"mono_color":true,"colors":[0]},{"src":6,"dst":7,"stage":0,"chunk_bytes":256,"flits":2,"logical":[{"u":6,"v":7,"color":0,"dim":0}],"phys":[{"u":6,"v":7}],"mono_color":true,"colors":[0]},{"src":7,"dst":6,"stage":0,"chunk_bytes":256,"flits":2,"logical":[{"u":7,"v":6,"color":0,"dim":0}],"phys":[{"u":7,"v":6}],"mono_color":true,"colors":[0]},{"src":14,"dst":15,"stage":0,"chunk_bytes":256,"flits":2,"logical":[{"u":14,"v":15,"color":0,"dim":0}],"phys":[{"u":14,"v":15}],"mono_color":true,"colors":[0]},{"src":15,"dst":14,"stage":0,"chunk_bytes":256,"flits":2,"logical":[{"u":15,"v":14,"color":0,"dim":0}],"phys":[{"u":15,"v":14}],"mono_color":true,"colors":[0]}],"num_packets":16,"phys_hops":[1],"colors_used":[0,1]},{"dim":1,"inject_cycle":1,"groups":[[0,2],[8,10],[4,6],[12,14],[1,3],[9,11],[5,7],[13,15]],"packets":[{"src":0,"dst":2,"stage":1,"chunk_bytes":256,"flits":2,"logical":[{"u":0,"v":2,"color":0,"dim":1}],"phys":[{"u":0,"v":1},{"u":1,"v":2}],"mono_color":true,"colors":[0]},{"src":2,"dst":0,"stage":1,"chunk_bytes":256,"flits":2,"logical":[{"u":2,"v":0,"color":0,"dim":1}],"phys":[{"u":2,"v":1},{"u":1,"v":0}],"mono_color":true,"colors":[0]},{"src":8,"dst":10,"stage":1,"chunk_bytes":256,"flits":2,"logical":[{"u":8,"v":10,"color":0,"dim":1}],"phys":[{"u":8,"v":9},{"u":9,"v":10}],"mono_color":true,"colors":[0]},{"src":10,"dst":8,"stage":1,"chunk_bytes":256,"flits":2,"logical":[{"u":10,"v":8,"color":0,"dim":1}],"phys":[{"u":10,"v":9},{"u":9,"v":8}],"mono_color":true,"colors":[0]},{"src":4,"dst":6,"stage":1,"chunk_bytes":256,"flits":2,"logical":[{"u":4,"v":6,"color":0,"dim":1}],"phys":[{"u":4,"v":5},{"u":5,"v":6}],"mono_color":true,"colors":[0]},{"src":6,"dst":4,"stage":1,"chunk_bytes":256,"flits":2,"logical":[{"u":6,"v":4,"color":0,"dim":1}],"phys":[{"u":6,"v":5},{"u":5,"v":4}],"mono_color":true,"colors":[0]},{"src":12,"dst":14,"stage":1,"chunk_bytes":256,"flits":2,"logical":[{"u":12,"v":14,"color":0,"dim":1}],"phys":[{"u":12,"v":13},{"u":13,"v":14}],"mono_color":true,"colors":[0]},{"src":14,"dst":12,"stage":1,"chunk_bytes":256,"flits":2,"logical":[{"u":14,"v":12,"color":0,"dim":1}],"phys":[{"u":14,"v":13},{"u":13,"v":12}],"mono_color":true,"colors":[0]},{"src":1,"dst":3,"stage":1,"chunk_bytes":256,"flits":2,"logical":[{"u":1,"v":3,"color":1,"dim":1}],"phys":[{"u":1,"v":2},{"u":2,"v":3}],"mono_color":true,"colors":[1]},{"src":3,"dst":1,"stage":1,"chunk_bytes":256,"flits":2,"logical":[{"u":3,"v":1,"color":1,"dim":1}],"phys":[{"u":3,"v":2},{"u":2,"v":1}],"mono_color":true,"colors":[1]},{"src":9,"dst":11,"stage":1,"chunk_bytes":256,"flits":2,"logical":[{"u":9,"v":11,"color":1,"dim":1}],"phys":[{"u":9,"v":10},{"u":10,"v":11}],"mono_color":true,"colors":[1]},{"src":11,"dst":9,"stage":1,"chunk_bytes":256,"flits":2,"logical":[{"u":11,"v":9,"color":1,"dim":1}],"phys":[{"u":11,"v":10},{"u":10,"v":9}],"mono_color":true,"colors":[1]},{"src":5,"dst":7,"stage":1,"chunk_bytes":256,"flits":2,"logical":[{"u":5,"v":7,"color":1,"dim":1}],"phys":[{"u":5,"v":6},{"u":6,"v":7}],"mono_color":true,"colors":[1]},{"src":7,"dst":5,"stage":1,"chunk_bytes":256,"flits":2,"logical":[{"u":7,"v":5,"color":1,"dim":1}],"phys":[{"u":7,"v":6},{"u":6,"v":5}],"mono_color":true,"colors":[1]},{"src":13,"dst":15,"stage":1,"chunk_bytes":256,"flits":2,"logical":[{"u":13,"v":15,"color":1,"dim":1}],"phys":[{"u":13,"v":14},{"u":14,"v":15}],"mono_color":true,"colors":[1]},{"src":15,"dst":13,"stage":1,"chunk_bytes":256,"flits":2,"logical":[{"u":15,"v":13,"color":1,"dim":1}],"phys":[{"u":15,"v":14},{"u":14,"v":13}],"mono_color":true,"colors":[1]}],"num_packets":16,"phys_hops":[2],"colors_used":[0,1]},{"dim":2,"inject_cycle":2,"groups":[[0,4],[8,12],[2,6],[10,14],[1,5],[9,13],[3,7],[11,15]],"packets":[{"src":0,"dst":4,"stage":2,"chunk_bytes":256,"flits":2,"logical":[{"u":0,"v":4,"color":1,"dim":2}],"phys":[{"u":0,"v":4}],"mono_color":true,"colors":[1]},{"src":4,"dst":0,"stage":2,"chunk_bytes":256,"flits":2,"logical":[{"u":4,"v":0,"color":1,"dim":2}],"phys":[{"u":4,"v":0}],"mono_color":true,"colors":[1]},{"src":8,"dst":12,"stage":2,"chunk_bytes":256,"flits":2,"logical":[{"u":8,"v":12,"color":0,"dim":2}],"phys":[{"u":8,"v":12}],"mono_color":true,"colors":[0]},{"src":12,"dst":8,"stage":2,"chunk_bytes":256,"flits":2,"logical":[{"u":12,"v":8,"color":0,"dim":2}],"phys":[{"u":12,"v":8}],"mono_color":true,"colors":[0]},{"src":2,"dst":6,"stage":2,"chunk_bytes":256,"flits":2,"logical":[{"u":2,"v":6,"color":1,"dim":2}],"phys":[{"u":2,"v":6}],"mono_color":true,"colors":[1]},{"src":6,"dst":2,"stage":2,"chunk_bytes":256,"flits":2,"logical":[{"u":6,"v":2,"color":1,"dim":2}],"phys":[{"u":6,"v":2}],"mono_color":true,"colors":[1]},{"src":10,"dst":14,"stage":2,"chunk_bytes":256,"flits":2,"logical":[{"u":10,"v":14,"color":0,"dim":2}],"phys":[{"u":10,"v":14}],"mono_color":true,"colors":[0]},{"src":14,"dst":10,"stage":2,"chunk_bytes":256,"flits":2,"logical":[{"u":14,"v":10,"color":0,"dim":2}],"phys":[{"u":14,"v":10}],"mono_color":true,"colors":[0]},{"src":1,"dst":5,"stage":2,"chunk_bytes":256,"flits":2,"logical":[{"u":1,"v":5,"color":1,"dim":2}],"phys":[{"u":1,"v":5}],"mono_color":true,"colors":[1]},{"src":5,"dst":1,"stage":2,"chunk_bytes":256,"flits":2,"logical":[{"u":5,"v":1,"color":1,"dim":2}],"phys":[{"u":5,"v":1}],"mono_color":true,"colors":[1]},{"src":9,"dst":13,"stage":2,"chunk_bytes":256,"flits":2,"logical":[{"u":9,"v":13,"color":0,"dim":2}],"phys":[{"u":9,"v":13}],"mono_color":true,"colors":[0]},{"src":13,"dst":9,"stage":2,"chunk_bytes":256,"flits":2,"logical":[{"u":13,"v":9,"color":0,"dim":2}],"phys":[{"u":13,"v":9}],"mono_color":true,"colors":[0]},{"src":3,"dst":7,"stage":2,"chunk_bytes":256,"flits":2,"logical":[{"u":3,"v":7,"color":1,"dim":2}],"phys":[{"u":3,"v":7}],"mono_color":true,"colors":[1]},{"src":7,"dst":3,"stage":2,"chunk_bytes":256,"flits":2,"logical":[{"u":7,"v":3,"color":1,"dim":2}],"phys":[{"u":7,"v":3}],"mono_color":true,"colors":[1]},{"src":11,"dst":15,"stage":2,"chunk_bytes":256,"flits":2,"logical":[{"u":11,"v":15,"color":0,"dim":2}],"phys":[{"u":11,"v":15}],"mono_color":true,"colors":[0]},{"src":15,"dst":11,"stage":2,"chunk_bytes":256,"flits":2,"logical":[{"u":15,"v":11,"color":0,"dim":2}],"phys":[{"u":15,"v":11}],"mono_color":true,"colors":[0]}],"num_packets":16,"phys_hops":[1],"colors_used":[0,1]},{"dim":3,"inject_cycle":3,"groups":[[0,8],[4,12],[2,10],[6,14],[1,9],[5,13],[3,11],[7,15]],"packets":[{"src":0,"dst":8,"stage":3,"chunk_bytes":256,"flits":2,"logical":[{"u":0,"v":8,"color":0,"dim":3}],"phys":[{"u":0,"v":4},{"u":4,"v":8}],"mono_color":true,"colors":[0]},{"src":8,"dst":0,"stage":3,"chunk_bytes":256,"flits":2,"logical":[{"u":8,"v":0,"color":0,"dim":3}],"phys":[{"u":8,"v":4},{"u":4,"v":0}],"mono_color":true,"colors":[0]},{"src":4,"dst":12,"stage":3,"chunk_bytes":256,"flits":2,"logical":[{"u":4,"v":12,"color":1,"dim":3}],"phys":[{"u":4,"v":8},{"u":8,"v":12}],"mono_color":true,"colors":[1]},{"src":12,"dst":4,"stage":3,"chunk_bytes":256,"flits":2,"logical":[{"u":12,"v":4,"color":1,"dim":3}],"phys":[{"u":12,"v":8},{"u":8,"v":4}],"mono_color":true,"colors":[1]},{"src":2,"dst":10,"stage":3,"chunk_bytes":256,"flits":2,"logical":[{"u":2,"v":10,"color":0,"dim":3}],"phys":[{"u":2,"v":6},{"u":6,"v":10}],"mono_color":true,"colors":[0]},{"src":10,"dst":2,"stage":3,"chunk_bytes":256,"flits":2,"logical":[{"u":10,"v":2,"color":0,"dim":3}],"phys":[{"u":10,"v":6},{"u":6,"v":2}],"mono_color":true,"colors":[0]},{"src":6,"dst":14,"stage":3,"chunk_bytes":256,"flits":2,"logical":[{"u":6,"v":14,"color":1,"dim":3}],"phys":[{"u":6,"v":10},{"u":10,"v":14}],"mono_color":true,"colors":[1]},{"src":14,"dst":6,"stage":3,"chunk_bytes":256,"flits":2,"logical":[{"u":14,"v":6,"color":1,"dim":3}],"phys":[{"u":14,"v":10},{"u":10,"v":6}],"mono_color":true,"colors":[1]},{"src":1,"dst":9,"stage":3,"chunk_bytes":256,"flits":2,"logical":[{"u":1,"v":9,"color":0,"dim":3}],"phys":[{"u":1,"v":5},{"u":5,"v":9}],"mono_color":true,"colors":[0]},{"src":9,"dst":1,"stage":3,"chunk_bytes":256,"flits":2,"logical":[{"u":9,"v":1,"color":0,"dim":3}],"phys":[{"u":9,"v":5},{"u":5,"v":1}],"mono_color":true,"colors":[0]},{"src":5,"dst":13,"stage":3,"chunk_bytes":256,"flits":2,"logical":[{"u":5,"v":13,"color":1,"dim":3}],"phys":[{"u":5,"v":9},{"u":9,"v":13}],"mono_color":true,"colors":[1]},{"src":13,"dst":5,"stage":3,"chunk_bytes":256,"flits":2,"logical":[{"u":13,"v":5,"color":1,"dim":3}],"phys":[{"u":13,"v":9},{"u":9,"v":5}],"mono_color":true,"colors":[1]},{"src":3,"dst":11,"stage":3,"chunk_bytes":256,"flits":2,"logical":[{"u":3,"v":11,"color":0,"dim":3}],"phys":[{"u":3,"v":7},{"u":7,"v":11}],"mono_color":true,"colors":[0]},{"src":11,"dst":3,"stage":3,"chunk_bytes":256,"flits":2,"logical":[{"u":11,"v":3,"color":0,"dim":3}],"phys":[{"u":11,"v":7},{"u":7,"v":3}],"mono_color":true,"colors":[0]},{"src":7,"dst":15,"stage":3,"chunk_bytes":256,"flits":2,"logical":[{"u":7,"v":15,"color":1,"dim":3}],"phys":[{"u":7,"v":11},{"u":11,"v":15}],"mono_color":true,"colors":[1]},{"src":15,"dst":7,"stage":3,"chunk_bytes":256,"flits":2,"logical":[{"u":15,"v":7,"color":1,"dim":3}],"phys":[{"u":15,"v":11},{"u":11,"v":7}],"mono_color":true,"colors":[1]}],"num_packets":16,"phys_hops":[2],"colors_used":[0,1]}]};
+const MODEL = {"k":2,"n":4,"rows":4,"cols":4,"C":2,"flit_bytes":128,"chunk_bytes":256,"flits_per_packet":2,"node_data_bytes":256,"payload_bytes":4096,"link_latency_cycles":1,"link_bw_flits_per_cycle":1,"total_packets":64,"inject_flits":128,"link_flits_static":192,"sim":{"slot_cycles":1,"link_latency_cycles":1,"link_bw_flits_per_cycle":1,"flit_bytes":128,"flit_hop_cycles":7,"flits_per_packet":2,"makespan_cycles":68,"avg_latency":34.78,"max_packet_latency":65,"link_flits_sent":192,"color_buffer_wait_cycles":66,"link_wait_cycles":0,"vc_wait_cycles":789,"router_pipeline_cycles":1860,"stage_stats":[{"dim":0,"inject_cycle":0,"phys_hops":1,"num_packets":16,"min_latency":14,"max_latency":14,"last_done":14,"wall_clock":14,"uncontended_latency":14,"uncontended_wall":14,"contention_overhead":0},{"dim":1,"inject_cycle":1,"phys_hops":2,"num_packets":16,"min_latency":29,"max_latency":65,"last_done":66,"wall_clock":66,"uncontended_latency":28,"uncontended_wall":29,"contention_overhead":37},{"dim":2,"inject_cycle":2,"phys_hops":1,"num_packets":16,"min_latency":14,"max_latency":44,"last_done":46,"wall_clock":46,"uncontended_latency":14,"uncontended_wall":16,"contention_overhead":30},{"dim":3,"inject_cycle":3,"phys_hops":2,"num_packets":16,"min_latency":41,"max_latency":65,"last_done":68,"wall_clock":68,"uncontended_latency":28,"uncontended_wall":31,"contention_overhead":37}],"cumulative_phys_hops":6,"uncontended_makespan":31,"bottleneck":{"stage":3,"src":14,"dst":6,"phys_hops":2,"latency":65,"done_at":68}},"coords":{"0":[0,0,0,0],"1":[1,0,0,0],"2":[0,1,0,0],"3":[1,1,0,0],"4":[0,0,1,0],"5":[1,0,1,0],"6":[0,1,1,0],"7":[1,1,1,0],"8":[0,0,0,1],"9":[1,0,0,1],"10":[0,1,0,1],"11":[1,1,0,1],"12":[0,0,1,1],"13":[1,0,1,1],"14":[0,1,1,1],"15":[1,1,1,1]},"stages":[{"dim":0,"inject_cycle":0,"groups":[[0,1],[8,9],[4,5],[12,13],[2,3],[10,11],[6,7],[14,15]],"packets":[{"src":0,"dst":1,"stage":0,"chunk_bytes":256,"flits":2,"logical":[{"u":0,"v":1,"color":1,"dim":0}],"phys":[{"u":0,"v":1}],"mono_color":true,"colors":[1]},{"src":1,"dst":0,"stage":0,"chunk_bytes":256,"flits":2,"logical":[{"u":1,"v":0,"color":1,"dim":0}],"phys":[{"u":1,"v":0}],"mono_color":true,"colors":[1]},{"src":8,"dst":9,"stage":0,"chunk_bytes":256,"flits":2,"logical":[{"u":8,"v":9,"color":1,"dim":0}],"phys":[{"u":8,"v":9}],"mono_color":true,"colors":[1]},{"src":9,"dst":8,"stage":0,"chunk_bytes":256,"flits":2,"logical":[{"u":9,"v":8,"color":1,"dim":0}],"phys":[{"u":9,"v":8}],"mono_color":true,"colors":[1]},{"src":4,"dst":5,"stage":0,"chunk_bytes":256,"flits":2,"logical":[{"u":4,"v":5,"color":1,"dim":0}],"phys":[{"u":4,"v":5}],"mono_color":true,"colors":[1]},{"src":5,"dst":4,"stage":0,"chunk_bytes":256,"flits":2,"logical":[{"u":5,"v":4,"color":1,"dim":0}],"phys":[{"u":5,"v":4}],"mono_color":true,"colors":[1]},{"src":12,"dst":13,"stage":0,"chunk_bytes":256,"flits":2,"logical":[{"u":12,"v":13,"color":1,"dim":0}],"phys":[{"u":12,"v":13}],"mono_color":true,"colors":[1]},{"src":13,"dst":12,"stage":0,"chunk_bytes":256,"flits":2,"logical":[{"u":13,"v":12,"color":1,"dim":0}],"phys":[{"u":13,"v":12}],"mono_color":true,"colors":[1]},{"src":2,"dst":3,"stage":0,"chunk_bytes":256,"flits":2,"logical":[{"u":2,"v":3,"color":0,"dim":0}],"phys":[{"u":2,"v":3}],"mono_color":true,"colors":[0]},{"src":3,"dst":2,"stage":0,"chunk_bytes":256,"flits":2,"logical":[{"u":3,"v":2,"color":0,"dim":0}],"phys":[{"u":3,"v":2}],"mono_color":true,"colors":[0]},{"src":10,"dst":11,"stage":0,"chunk_bytes":256,"flits":2,"logical":[{"u":10,"v":11,"color":0,"dim":0}],"phys":[{"u":10,"v":11}],"mono_color":true,"colors":[0]},{"src":11,"dst":10,"stage":0,"chunk_bytes":256,"flits":2,"logical":[{"u":11,"v":10,"color":0,"dim":0}],"phys":[{"u":11,"v":10}],"mono_color":true,"colors":[0]},{"src":6,"dst":7,"stage":0,"chunk_bytes":256,"flits":2,"logical":[{"u":6,"v":7,"color":0,"dim":0}],"phys":[{"u":6,"v":7}],"mono_color":true,"colors":[0]},{"src":7,"dst":6,"stage":0,"chunk_bytes":256,"flits":2,"logical":[{"u":7,"v":6,"color":0,"dim":0}],"phys":[{"u":7,"v":6}],"mono_color":true,"colors":[0]},{"src":14,"dst":15,"stage":0,"chunk_bytes":256,"flits":2,"logical":[{"u":14,"v":15,"color":0,"dim":0}],"phys":[{"u":14,"v":15}],"mono_color":true,"colors":[0]},{"src":15,"dst":14,"stage":0,"chunk_bytes":256,"flits":2,"logical":[{"u":15,"v":14,"color":0,"dim":0}],"phys":[{"u":15,"v":14}],"mono_color":true,"colors":[0]}],"num_packets":16,"phys_hops":[1],"colors_used":[0,1]},{"dim":1,"inject_cycle":1,"groups":[[0,2],[8,10],[4,6],[12,14],[1,3],[9,11],[5,7],[13,15]],"packets":[{"src":0,"dst":2,"stage":1,"chunk_bytes":256,"flits":2,"logical":[{"u":0,"v":2,"color":0,"dim":1}],"phys":[{"u":0,"v":1},{"u":1,"v":2}],"mono_color":true,"colors":[0]},{"src":2,"dst":0,"stage":1,"chunk_bytes":256,"flits":2,"logical":[{"u":2,"v":0,"color":0,"dim":1}],"phys":[{"u":2,"v":1},{"u":1,"v":0}],"mono_color":true,"colors":[0]},{"src":8,"dst":10,"stage":1,"chunk_bytes":256,"flits":2,"logical":[{"u":8,"v":10,"color":0,"dim":1}],"phys":[{"u":8,"v":9},{"u":9,"v":10}],"mono_color":true,"colors":[0]},{"src":10,"dst":8,"stage":1,"chunk_bytes":256,"flits":2,"logical":[{"u":10,"v":8,"color":0,"dim":1}],"phys":[{"u":10,"v":9},{"u":9,"v":8}],"mono_color":true,"colors":[0]},{"src":4,"dst":6,"stage":1,"chunk_bytes":256,"flits":2,"logical":[{"u":4,"v":6,"color":0,"dim":1}],"phys":[{"u":4,"v":5},{"u":5,"v":6}],"mono_color":true,"colors":[0]},{"src":6,"dst":4,"stage":1,"chunk_bytes":256,"flits":2,"logical":[{"u":6,"v":4,"color":0,"dim":1}],"phys":[{"u":6,"v":5},{"u":5,"v":4}],"mono_color":true,"colors":[0]},{"src":12,"dst":14,"stage":1,"chunk_bytes":256,"flits":2,"logical":[{"u":12,"v":14,"color":0,"dim":1}],"phys":[{"u":12,"v":13},{"u":13,"v":14}],"mono_color":true,"colors":[0]},{"src":14,"dst":12,"stage":1,"chunk_bytes":256,"flits":2,"logical":[{"u":14,"v":12,"color":0,"dim":1}],"phys":[{"u":14,"v":13},{"u":13,"v":12}],"mono_color":true,"colors":[0]},{"src":1,"dst":3,"stage":1,"chunk_bytes":256,"flits":2,"logical":[{"u":1,"v":3,"color":1,"dim":1}],"phys":[{"u":1,"v":2},{"u":2,"v":3}],"mono_color":true,"colors":[1]},{"src":3,"dst":1,"stage":1,"chunk_bytes":256,"flits":2,"logical":[{"u":3,"v":1,"color":1,"dim":1}],"phys":[{"u":3,"v":2},{"u":2,"v":1}],"mono_color":true,"colors":[1]},{"src":9,"dst":11,"stage":1,"chunk_bytes":256,"flits":2,"logical":[{"u":9,"v":11,"color":1,"dim":1}],"phys":[{"u":9,"v":10},{"u":10,"v":11}],"mono_color":true,"colors":[1]},{"src":11,"dst":9,"stage":1,"chunk_bytes":256,"flits":2,"logical":[{"u":11,"v":9,"color":1,"dim":1}],"phys":[{"u":11,"v":10},{"u":10,"v":9}],"mono_color":true,"colors":[1]},{"src":5,"dst":7,"stage":1,"chunk_bytes":256,"flits":2,"logical":[{"u":5,"v":7,"color":1,"dim":1}],"phys":[{"u":5,"v":6},{"u":6,"v":7}],"mono_color":true,"colors":[1]},{"src":7,"dst":5,"stage":1,"chunk_bytes":256,"flits":2,"logical":[{"u":7,"v":5,"color":1,"dim":1}],"phys":[{"u":7,"v":6},{"u":6,"v":5}],"mono_color":true,"colors":[1]},{"src":13,"dst":15,"stage":1,"chunk_bytes":256,"flits":2,"logical":[{"u":13,"v":15,"color":1,"dim":1}],"phys":[{"u":13,"v":14},{"u":14,"v":15}],"mono_color":true,"colors":[1]},{"src":15,"dst":13,"stage":1,"chunk_bytes":256,"flits":2,"logical":[{"u":15,"v":13,"color":1,"dim":1}],"phys":[{"u":15,"v":14},{"u":14,"v":13}],"mono_color":true,"colors":[1]}],"num_packets":16,"phys_hops":[2],"colors_used":[0,1]},{"dim":2,"inject_cycle":2,"groups":[[0,4],[8,12],[2,6],[10,14],[1,5],[9,13],[3,7],[11,15]],"packets":[{"src":0,"dst":4,"stage":2,"chunk_bytes":256,"flits":2,"logical":[{"u":0,"v":4,"color":1,"dim":2}],"phys":[{"u":0,"v":4}],"mono_color":true,"colors":[1]},{"src":4,"dst":0,"stage":2,"chunk_bytes":256,"flits":2,"logical":[{"u":4,"v":0,"color":1,"dim":2}],"phys":[{"u":4,"v":0}],"mono_color":true,"colors":[1]},{"src":8,"dst":12,"stage":2,"chunk_bytes":256,"flits":2,"logical":[{"u":8,"v":12,"color":0,"dim":2}],"phys":[{"u":8,"v":12}],"mono_color":true,"colors":[0]},{"src":12,"dst":8,"stage":2,"chunk_bytes":256,"flits":2,"logical":[{"u":12,"v":8,"color":0,"dim":2}],"phys":[{"u":12,"v":8}],"mono_color":true,"colors":[0]},{"src":2,"dst":6,"stage":2,"chunk_bytes":256,"flits":2,"logical":[{"u":2,"v":6,"color":1,"dim":2}],"phys":[{"u":2,"v":6}],"mono_color":true,"colors":[1]},{"src":6,"dst":2,"stage":2,"chunk_bytes":256,"flits":2,"logical":[{"u":6,"v":2,"color":1,"dim":2}],"phys":[{"u":6,"v":2}],"mono_color":true,"colors":[1]},{"src":10,"dst":14,"stage":2,"chunk_bytes":256,"flits":2,"logical":[{"u":10,"v":14,"color":0,"dim":2}],"phys":[{"u":10,"v":14}],"mono_color":true,"colors":[0]},{"src":14,"dst":10,"stage":2,"chunk_bytes":256,"flits":2,"logical":[{"u":14,"v":10,"color":0,"dim":2}],"phys":[{"u":14,"v":10}],"mono_color":true,"colors":[0]},{"src":1,"dst":5,"stage":2,"chunk_bytes":256,"flits":2,"logical":[{"u":1,"v":5,"color":1,"dim":2}],"phys":[{"u":1,"v":5}],"mono_color":true,"colors":[1]},{"src":5,"dst":1,"stage":2,"chunk_bytes":256,"flits":2,"logical":[{"u":5,"v":1,"color":1,"dim":2}],"phys":[{"u":5,"v":1}],"mono_color":true,"colors":[1]},{"src":9,"dst":13,"stage":2,"chunk_bytes":256,"flits":2,"logical":[{"u":9,"v":13,"color":0,"dim":2}],"phys":[{"u":9,"v":13}],"mono_color":true,"colors":[0]},{"src":13,"dst":9,"stage":2,"chunk_bytes":256,"flits":2,"logical":[{"u":13,"v":9,"color":0,"dim":2}],"phys":[{"u":13,"v":9}],"mono_color":true,"colors":[0]},{"src":3,"dst":7,"stage":2,"chunk_bytes":256,"flits":2,"logical":[{"u":3,"v":7,"color":1,"dim":2}],"phys":[{"u":3,"v":7}],"mono_color":true,"colors":[1]},{"src":7,"dst":3,"stage":2,"chunk_bytes":256,"flits":2,"logical":[{"u":7,"v":3,"color":1,"dim":2}],"phys":[{"u":7,"v":3}],"mono_color":true,"colors":[1]},{"src":11,"dst":15,"stage":2,"chunk_bytes":256,"flits":2,"logical":[{"u":11,"v":15,"color":0,"dim":2}],"phys":[{"u":11,"v":15}],"mono_color":true,"colors":[0]},{"src":15,"dst":11,"stage":2,"chunk_bytes":256,"flits":2,"logical":[{"u":15,"v":11,"color":0,"dim":2}],"phys":[{"u":15,"v":11}],"mono_color":true,"colors":[0]}],"num_packets":16,"phys_hops":[1],"colors_used":[0,1]},{"dim":3,"inject_cycle":3,"groups":[[0,8],[4,12],[2,10],[6,14],[1,9],[5,13],[3,11],[7,15]],"packets":[{"src":0,"dst":8,"stage":3,"chunk_bytes":256,"flits":2,"logical":[{"u":0,"v":8,"color":0,"dim":3}],"phys":[{"u":0,"v":4},{"u":4,"v":8}],"mono_color":true,"colors":[0]},{"src":8,"dst":0,"stage":3,"chunk_bytes":256,"flits":2,"logical":[{"u":8,"v":0,"color":0,"dim":3}],"phys":[{"u":8,"v":4},{"u":4,"v":0}],"mono_color":true,"colors":[0]},{"src":4,"dst":12,"stage":3,"chunk_bytes":256,"flits":2,"logical":[{"u":4,"v":12,"color":1,"dim":3}],"phys":[{"u":4,"v":8},{"u":8,"v":12}],"mono_color":true,"colors":[1]},{"src":12,"dst":4,"stage":3,"chunk_bytes":256,"flits":2,"logical":[{"u":12,"v":4,"color":1,"dim":3}],"phys":[{"u":12,"v":8},{"u":8,"v":4}],"mono_color":true,"colors":[1]},{"src":2,"dst":10,"stage":3,"chunk_bytes":256,"flits":2,"logical":[{"u":2,"v":10,"color":0,"dim":3}],"phys":[{"u":2,"v":6},{"u":6,"v":10}],"mono_color":true,"colors":[0]},{"src":10,"dst":2,"stage":3,"chunk_bytes":256,"flits":2,"logical":[{"u":10,"v":2,"color":0,"dim":3}],"phys":[{"u":10,"v":6},{"u":6,"v":2}],"mono_color":true,"colors":[0]},{"src":6,"dst":14,"stage":3,"chunk_bytes":256,"flits":2,"logical":[{"u":6,"v":14,"color":1,"dim":3}],"phys":[{"u":6,"v":10},{"u":10,"v":14}],"mono_color":true,"colors":[1]},{"src":14,"dst":6,"stage":3,"chunk_bytes":256,"flits":2,"logical":[{"u":14,"v":6,"color":1,"dim":3}],"phys":[{"u":14,"v":10},{"u":10,"v":6}],"mono_color":true,"colors":[1]},{"src":1,"dst":9,"stage":3,"chunk_bytes":256,"flits":2,"logical":[{"u":1,"v":9,"color":0,"dim":3}],"phys":[{"u":1,"v":5},{"u":5,"v":9}],"mono_color":true,"colors":[0]},{"src":9,"dst":1,"stage":3,"chunk_bytes":256,"flits":2,"logical":[{"u":9,"v":1,"color":0,"dim":3}],"phys":[{"u":9,"v":5},{"u":5,"v":1}],"mono_color":true,"colors":[0]},{"src":5,"dst":13,"stage":3,"chunk_bytes":256,"flits":2,"logical":[{"u":5,"v":13,"color":1,"dim":3}],"phys":[{"u":5,"v":9},{"u":9,"v":13}],"mono_color":true,"colors":[1]},{"src":13,"dst":5,"stage":3,"chunk_bytes":256,"flits":2,"logical":[{"u":13,"v":5,"color":1,"dim":3}],"phys":[{"u":13,"v":9},{"u":9,"v":5}],"mono_color":true,"colors":[1]},{"src":3,"dst":11,"stage":3,"chunk_bytes":256,"flits":2,"logical":[{"u":3,"v":11,"color":0,"dim":3}],"phys":[{"u":3,"v":7},{"u":7,"v":11}],"mono_color":true,"colors":[0]},{"src":11,"dst":3,"stage":3,"chunk_bytes":256,"flits":2,"logical":[{"u":11,"v":3,"color":0,"dim":3}],"phys":[{"u":11,"v":7},{"u":7,"v":3}],"mono_color":true,"colors":[0]},{"src":7,"dst":15,"stage":3,"chunk_bytes":256,"flits":2,"logical":[{"u":7,"v":15,"color":1,"dim":3}],"phys":[{"u":7,"v":11},{"u":11,"v":15}],"mono_color":true,"colors":[1]},{"src":15,"dst":7,"stage":3,"chunk_bytes":256,"flits":2,"logical":[{"u":15,"v":7,"color":1,"dim":3}],"phys":[{"u":15,"v":11},{"u":11,"v":7}],"mono_color":true,"colors":[1]}],"num_packets":16,"phys_hops":[2],"colors_used":[0,1]}]};
 const ROWS = MODEL.rows, COLS = MODEL.cols, CELL = 105, MARGIN = 62, W = 460, H = 460;
 let curStage = 0, curView = 'all', hoverKey = null;
 
@@ -236,7 +276,7 @@ function buildSvg(stage, view) {
     svg += `<circle cx="${x}" cy="${y}" r="17" class="node ${role}"/>`;
     svg += `<text x="${x}" y="${y+4}" class="node-label">${n}</text>`;
     if (curStage === 0 && view === 'sample' && (n===0||n===1))
-      svg += `<text x="${x}" y="${y+16}" class="flit-badge">2 flit</text>`;
+      svg += `<text x="${x}" y="${y+16}" class="flit-badge">256B</text>`;
   }
   svg += '</svg>';
   return svg;
@@ -251,7 +291,7 @@ function renderSide(stage, view) {
   html += `<p>组数: ${stage.groups.length} × k=${MODEL.k} = ${stage.num_packets} 条有向流</p>`;
   if (view === 'sample') {
     const g = stage.groups[0];
-    html += `<p>示例组 <code>[${g.join(', ')}]</code>：双向各发 2 flit chunk（256 B）</p>`;
+    html += `<p>示例组 <code>[${g.join(', ')}]</code>：双向各发 256 B（2 flit）</p>`;
     html += `<p>0→1: 逻辑 dim0, Color 1, 1 物理 hop<br>1→0: 对称</p>`;
   }
   if (stage.dim === 1 && view === 'sample') {
@@ -285,6 +325,75 @@ function renderStage() {
 }
 
 function init() {
+  const sim = MODEL.sim;
+  const fh = sim.flit_hop_cycles;
+  const fp = sim.flits_per_packet;
+  document.getElementById('makespan-banner').innerHTML =
+    `<div class="big">Makespan = ${sim.makespan_cycles} cycles</div>` +
+    `<div class="sub">256 B/包 · 128 B/cycle · link_latency=${sim.link_latency_cycles} cyc/hop · ` +
+    `flit/hop=${fh} cyc · 累计 ${sim.cumulative_phys_hops} phys hops（4 stage）· ` +
+    `无争用下界 ${sim.uncontended_makespan} cyc</div>`;
+
+  document.getElementById('ms-val').textContent = sim.makespan_cycles;
+  document.getElementById('six-hop-note').innerHTML =
+    `<strong>6 hop 是对的，但不等于 makespan。</strong> ND 4 阶段每包物理 hop 为 1+2+1+2 = <strong>${sim.cumulative_phys_hops}</strong> ` +
+    `（同一 chunk 若依次参与 4 次交换的累计跳数）。但 makespan = max<sub>stage</sub>(inject + 该 stage 最慢包 latency)，` +
+    `4 个 stage 并行重叠，不是把 6 hop 串成一条路径。每 stage 发完整 256 B（${fp} flit），` +
+    `单 flit 单 hop 代价 = router(5) + link(${sim.link_latency_cycles}+1) = ${fh} cyc。`;
+
+  document.querySelector('#breakdown-table tbody').innerHTML = sim.stage_stats.map(s => {
+    const hot = s.last_done === sim.makespan_cycles;
+    return `<tr${hot?' style="outline:1px solid var(--good)"':''}>` +
+      `<td>dim ${s.dim}</td><td>@${s.inject_cycle}</td><td>${s.phys_hops}</td>` +
+      `<td>${s.uncontended_latency}</td><td><strong>${s.max_latency}</strong></td>` +
+      `<td>+${s.contention_overhead}</td><td>${s.last_done}</td></tr>`;
+  }).join('');
+
+  const bn = sim.bottleneck;
+  const theory = [
+    ['单 flit 单 hop', fh, 'router 5 + link(1+1)'],
+    ['256 B 单包 1-hop', fp * fh, `${fp} flit × ${fh}（dim0/2）`],
+    ['256 B 单包 2-hop 无争用', 2 * fp * fh, `${fp} flit × 2 hop × ${fh}（dim1/3）`],
+    ['6 hop × 单 flit（串行假想）', sim.cumulative_phys_hops * fh, '若 1 flit 连续走 6 hop，仍非 ND 调度模型'],
+    ['6 hop × 256 B（串行假想）', sim.cumulative_phys_hops * fp * fh, '4 次交换各走 1/2 hop，不是一条 6-hop 路由'],
+    ['无争用 makespan 下界', sim.uncontended_makespan, 'max(inject + 无争用 latency) = max(14,29,16,31)'],
+    ['实测 makespan', sim.makespan_cycles, `瓶颈 dim${bn.stage} ${bn.src}→${bn.dst} inject@${bn.stage} lat=${bn.latency} → ${bn.done_at}`],
+    ['争用额外开销', sim.makespan_cycles - sim.uncontended_makespan, '主要来自 dim1/3 的 16 路 2-hop 并发 + VC=2'],
+  ];
+  document.getElementById('theory-rows').innerHTML = theory.map(([a,b,c]) =>
+    `<tr><td>${a}</td><td><strong>${b}</strong></td><td>${c}</td></tr>`
+  ).join('');
+
+  const grid = document.getElementById('summary-grid');
+  const stats = [
+    ['Makespan', `${sim.makespan_cycles} cyc`, '端到端墙钟'],
+    ['包大小', '256 B', '2 flit × 128 B'],
+    ['链路时延', `${sim.link_latency_cycles} cyc`, 'router 间/hop'],
+    ['链路带宽', '128 B/cyc', '1 flit/cycle'],
+    ['注入 flit', String(MODEL.inject_flits), '64 包 × 2 flit'],
+    ['TDM C', String(MODEL.C), 'Color 周期'],
+  ];
+  grid.innerHTML = stats.map(([lbl,val]) =>
+    `<div class="stat"><div class="val ${lbl==='Makespan'?'hero':''}">${val}</div><div class="lbl">${lbl}</div></div>`
+  ).join('');
+
+  document.getElementById('slot-label').textContent = sim.slot_cycles;
+  document.getElementById('link-lat-label').textContent = sim.link_latency_cycles;
+  const simRows = [
+    ['makespan_cycles', sim.makespan_cycles, '最后一个包完成时刻（墙钟）'],
+    ['link_latency_cycles', sim.link_latency_cycles, 'router 间链路传播时延/hop'],
+    ['link_bw', `${sim.link_bw_flits_per_cycle} flit/cyc (${sim.flit_bytes} B/cyc)`, '链路传输带宽'],
+    ['avg_latency', sim.avg_latency, '所有包 latency 均值'],
+    ['max_packet_latency', sim.max_packet_latency, '最慢包（瓶颈路径）'],
+    ['link_flits_sent', sim.link_flits_sent, '链路级 flit 传输总次数'],
+    ['color_buffer_wait_cycles', sim.color_buffer_wait_cycles, 'TDM color 门控等待（全网累加）'],
+    ['link_wait_cycles', sim.link_wait_cycles, '链路排队等待（全网累加）'],
+    ['router_pipeline_cycles', sim.router_pipeline_cycles, 'router pipeline（全网累加）'],
+  ];
+  document.querySelector('#sim-table tbody').innerHTML = simRows.map(([k,v,d]) =>
+    `<tr><td><code>${k}</code></td><td><strong>${v}</strong></td><td>${d}</td></tr>`
+  ).join('');
+
   const tabs = document.getElementById('stage-tabs');
   MODEL.stages.forEach((s,i) => {
     const b = document.createElement('button');
@@ -297,7 +406,7 @@ function init() {
   MODEL.stages.forEach((s,i) => {
     const d = document.createElement('div');
     d.className = 'tl-stage' + (i===0?' active':'');
-    d.innerHTML = `<div class="dim">dim ${s.dim}</div>inject@${s.inject_cycle}<br>${s.num_packets}×2 flit<br>${s.phys_hops.join('/')} phys hop`;
+    d.innerHTML = `<div class="dim">dim ${s.dim}</div>inject@${s.inject_cycle}<br>${s.num_packets}×256 B<br>${s.phys_hops.join('/')} phys hop`;
     d.onclick = () => { curStage = i; renderStage(); };
     tl.appendChild(d);
   });

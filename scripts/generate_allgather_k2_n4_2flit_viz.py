@@ -8,9 +8,15 @@ import sys
 from math import ceil
 from pathlib import Path
 
+import simpy
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from wsesim.network.collective import _groups_by_dimension, generate_collective_traffic
+from wsesim.network.flow_control.credit_vc import CreditBasedVCFlowControl
+from wsesim.network.network import UnifiedNetwork
+from wsesim.network.packet import Packet
+from wsesim.network.routing.tdm_flat_butterfly import TDMFlatButterflyRouting
 from wsesim.network.topology.tdm_flat_butterfly import TDMFlatButterfly
 
 ROWS = 4
@@ -18,8 +24,15 @@ COLS = 4
 K = 2
 N = 4
 FLIT_BYTES = 128
-FLITS_PER_NODE = 2
+CHUNK_BYTES = 256  # 每包 / 每节点本地数据：256 B = 2 flit
+LINK_BW_FLITS_PER_CYCLE = 1  # 128 B/cycle
+LINK_LATENCY_CYCLES = 1  # router 间链路传播时延
+SLOT_CYCLES = 1
+ROUTER_CYCLES_PER_FLIT = 5  # RC+VA+SA+ST(1)+crossbar(1)
+TX_CYCLES_PER_FLIT = 1
 OUT = Path("docs/allgather_k2_n4_2flit_viz.html")
+
+FLIT_HOP_CYCLES = ROUTER_CYCLES_PER_FLIT + LINK_LATENCY_CYCLES + TX_CYCLES_PER_FLIT
 
 
 def _build_model() -> dict:
@@ -27,7 +40,7 @@ def _build_model() -> dict:
     plan = topo.coloring()
     nodes = list(range(ROWS * COLS))
     groups = _groups_by_dimension(nodes, K, N)
-    payload = FLIT_BYTES * FLITS_PER_NODE * len(nodes)
+    payload = CHUNK_BYTES * len(nodes)
     traffic = generate_collective_traffic(
         algorithm="nd_dimension_exchange_allgather",
         participating_nodes_global=nodes,
@@ -81,6 +94,9 @@ def _build_model() -> dict:
         )
 
     coords = {node: list(topo.to_coords(node)) for node in nodes}
+    inject_flits = sum(p["flits"] for p in packets)
+    link_flits_static = sum(p["flits"] * len(p["phys"]) for p in packets)
+    sim = _run_simulation(payload, traffic, topo)
     return {
         "k": K,
         "n": N,
@@ -88,12 +104,16 @@ def _build_model() -> dict:
         "cols": COLS,
         "C": plan.C,
         "flit_bytes": FLIT_BYTES,
-        "flits_per_node": FLITS_PER_NODE,
+        "chunk_bytes": CHUNK_BYTES,
+        "flits_per_packet": max(1, ceil(CHUNK_BYTES / FLIT_BYTES)),
+        "node_data_bytes": CHUNK_BYTES,
         "payload_bytes": payload,
-        "chunk_bytes": packets[0]["chunk_bytes"] if packets else 0,
-        "flits_per_packet": packets[0]["flits"] if packets else 0,
+        "link_latency_cycles": LINK_LATENCY_CYCLES,
+        "link_bw_flits_per_cycle": LINK_BW_FLITS_PER_CYCLE,
         "total_packets": len(packets),
-        "total_flits": sum(p["flits"] for p in packets),
+        "inject_flits": inject_flits,
+        "link_flits_static": link_flits_static,
+        "sim": sim,
         "coords": coords,
         "stages": stages,
     }
@@ -107,6 +127,126 @@ def _hop_dim(topo: TDMFlatButterfly, u: int, v: int) -> int:
     return -1
 
 
+def _run_simulation(payload: int, traffic: list[dict], topo: TDMFlatButterfly) -> dict:
+    env = simpy.Environment()
+    net = UnifiedNetwork(
+        env=env,
+        topology=topo,
+        routing=TDMFlatButterflyRouting(topology=topo),
+        flow_control=CreditBasedVCFlowControl(),
+        num_nodes=ROWS * COLS,
+        link_bw_flits_per_cycle=LINK_BW_FLITS_PER_CYCLE,
+        link_latency_cycles=LINK_LATENCY_CYCLES,
+        num_vcs=2,
+        buffer_depth=8,
+        slot_cycles=SLOT_CYCLES,
+        flit_bytes=FLIT_BYTES,
+    )
+    flits_per_pkt = max(1, ceil(CHUNK_BYTES / FLIT_BYTES))
+    records: list[dict] = []
+
+    for item in traffic:
+        delay = int(item.get("delay_cycles", 0))
+        src, dst = int(item["src_core"]), int(item["dst_core"])
+        stage = delay
+        phys_hops = len(
+            list(
+                dict.fromkeys(
+                    e
+                    for u, v in topo.dim_order_route(src, dst)
+                    for e in topo.physical_path(u, v)
+                )
+            )
+        )
+
+        def _inject(sim_env: simpy.Environment, delay_cycles: int, pkt: dict, meta: dict):
+            if delay_cycles > 0:
+                yield sim_env.timeout(delay_cycles)
+            t0 = sim_env.now
+            yield sim_env.process(
+                net.send_packet(
+                    Packet(
+                        src=int(pkt["src_core"]),
+                        dst=int(pkt["dst_core"]),
+                        size_bytes=int(pkt["size_bytes"]),
+                        payload_type=str(pkt["payload"]),
+                    )
+                )
+            )
+            records.append(
+                {
+                    **meta,
+                    "latency": int(sim_env.now - t0),
+                    "done_at": int(sim_env.now),
+                }
+            )
+
+        env.process(
+            _inject(
+                env,
+                delay,
+                item,
+                {"stage": stage, "src": src, "dst": dst, "phys_hops": phys_hops},
+            )
+        )
+
+    env.run()
+
+    stage_stats = []
+    for dim in range(N):
+        recs = [r for r in records if r["stage"] == dim]
+        hop_set = sorted({r["phys_hops"] for r in recs})
+        phys_hops = hop_set[0] if len(hop_set) == 1 else max(hop_set)
+        lats = [r["latency"] for r in recs]
+        unc_lat = phys_hops * flits_per_pkt * FLIT_HOP_CYCLES
+        stage_stats.append(
+            {
+                "dim": dim,
+                "inject_cycle": dim,
+                "phys_hops": phys_hops,
+                "num_packets": len(recs),
+                "min_latency": min(lats),
+                "max_latency": max(lats),
+                "last_done": max(r["done_at"] for r in recs),
+                "wall_clock": dim + max(lats),
+                "uncontended_latency": unc_lat,
+                "uncontended_wall": dim + unc_lat,
+                "contention_overhead": max(lats) - unc_lat,
+            }
+        )
+
+    bottleneck = max(records, key=lambda r: r["done_at"])
+    cum_hops = sum(s["phys_hops"] for s in stage_stats)
+
+    return {
+        "slot_cycles": SLOT_CYCLES,
+        "link_latency_cycles": LINK_LATENCY_CYCLES,
+        "link_bw_flits_per_cycle": LINK_BW_FLITS_PER_CYCLE,
+        "flit_bytes": FLIT_BYTES,
+        "flit_hop_cycles": FLIT_HOP_CYCLES,
+        "flits_per_packet": flits_per_pkt,
+        "makespan_cycles": int(env.now),
+        "avg_latency": round(float(net.stats.avg_latency()), 2),
+        "max_packet_latency": int(net.stats.max_packet_latency),
+        "link_flits_sent": int(net.stats.flits_sent),
+        "color_buffer_wait_cycles": int(net.stats.color_buffer_wait_cycles),
+        "link_wait_cycles": int(net.stats.link_wait_cycles),
+        "vc_wait_cycles": int(net.stats.vc_wait_cycles),
+        "router_pipeline_cycles": int(net.stats.pipeline_cycles),
+        "stage_stats": stage_stats,
+        "cumulative_phys_hops": cum_hops,
+        "uncontended_makespan": max(s["uncontended_wall"] for s in stage_stats),
+        "bottleneck": {
+            "stage": bottleneck["stage"],
+            "src": bottleneck["src"],
+            "dst": bottleneck["dst"],
+            "phys_hops": bottleneck["phys_hops"],
+            "latency": bottleneck["latency"],
+            "done_at": bottleneck["done_at"],
+        },
+    }
+
+
 def _html(model: dict) -> str:
     data = json.dumps(model, separators=(",", ":"))
     return f"""<!DOCTYPE html>
@@ -114,7 +254,7 @@ def _html(model: dict) -> str:
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>4×4 Mesh · k2_n4 TDM · ND AllGather · 2 flits/节点</title>
+<title>4×4 Mesh · k2_n4 TDM · ND AllGather · 256 B/包</title>
 <style>
   :root {{
     --bg:#0f1419; --panel:#1a2332; --text:#e8edf4; --muted:#94a3b8;
@@ -134,7 +274,13 @@ def _html(model: dict) -> str:
   .grid {{ display:grid; grid-template-columns:repeat(auto-fit,minmax(170px,1fr)); gap:.85rem; }}
   .stat {{ background:var(--panel); border:1px solid var(--border); border-radius:10px; padding:.9rem 1rem; }}
   .stat .val {{ font-size:1.5rem; font-weight:700; }}
+  .stat .val.hero {{ font-size:2rem; color:var(--good); }}
   .stat .lbl {{ color:var(--muted); font-size:.82rem; }}
+  .makespan-banner {{ margin-top:1rem; padding:1rem 1.25rem; border-radius:10px;
+    background:linear-gradient(90deg,rgba(74,222,128,.12),rgba(96,165,250,.08));
+    border:1px solid rgba(74,222,128,.35); }}
+  .makespan-banner .big {{ font-size:2.2rem; font-weight:800; color:var(--good); line-height:1.2; }}
+  .makespan-banner .sub {{ color:var(--muted); font-size:.88rem; margin-top:.35rem; }}
   .panel {{ background:var(--panel); border:1px solid var(--border); border-radius:12px; padding:1rem 1.15rem; }}
   .node-ref {{ font-family:ui-monospace,monospace; background:#111827; border:1px solid var(--border);
     border-radius:8px; padding:.85rem 1rem; white-space:pre; font-size:.88rem; }}
@@ -183,20 +329,54 @@ def _html(model: dict) -> str:
 </head>
 <body>
 <header>
-  <h1>4×4 物理 Mesh · 2-ary 4-flat TDM · ND AllGather（每节点 2 flit）</h1>
+  <h1>4×4 物理 Mesh · 2-ary 4-flat TDM · ND AllGather（256 B/包）</h1>
   <p>物理拓扑：4×4 Mesh2D（16 PE）。逻辑 overlay：<code>k=2, n=4</code> Flattened Butterfly，<code>C=2</code> Color TDM。
-     集合通信：<code>nd_dimension_exchange_allgather</code>，每节点本地 2 flit，经 4 个 dimension stage 完成全收集。</p>
+     集合通信：<code>nd_dimension_exchange_allgather</code>；每节点本地 256 B，每 stage 交换包 256 B（2 flit × 128 B）。
+     链路：<strong>128 B/cycle</strong>（1 flit/cycle），router 间时延 <strong>1 cycle/hop</strong>。</p>
+  <div class="makespan-banner" id="makespan-banner"></div>
 </header>
 <main>
   <section>
-    <div class="grid">
-      <div class="stat"><div class="val">16</div><div class="lbl">PE（4×4 Mesh）</div></div>
-      <div class="stat"><div class="val">2</div><div class="lbl">flit / 节点（本地数据）</div></div>
-      <div class="stat"><div class="val">32</div><div class="lbl">flit 全网总量</div></div>
-      <div class="stat"><div class="val">64</div><div class="lbl">交换包（16/ stage）</div></div>
-      <div class="stat"><div class="val">128</div><div class="lbl">链路 flit 传输次数</div></div>
-      <div class="stat"><div class="val">C=2</div><div class="lbl">TDM Color 周期</div></div>
-    </div>
+    <div class="grid" id="summary-grid"></div>
+  </section>
+
+  <section class="panel">
+    <h2>链路模型</h2>
+    <table>
+      <thead><tr><th>参数</th><th>值</th><th>说明</th></tr></thead>
+      <tbody>
+        <tr><td>包大小</td><td><strong>256 B</strong></td><td>2 flit × 128 B/flit</td></tr>
+        <tr><td>链路带宽</td><td><strong>128 B/cycle</strong></td><td><code>link_bw_flits_per_cycle=1</code></td></tr>
+        <tr><td>链路时延</td><td><strong>1 cycle/hop</strong></td><td><code>link_latency_cycles=1</code>；单 flit 过链 1+1=2 cyc</td></tr>
+        <tr><td>flit 粒度</td><td>128 B</td><td>网络按 flit 流水传输，每包 2 flit</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section class="panel" id="breakdown-panel">
+    <h2>Makespan 分解（<span id="ms-val"></span> cycles）</h2>
+    <p class="side" id="six-hop-note"></p>
+    <table id="breakdown-table">
+      <thead>
+        <tr>
+          <th>Stage</th><th>inject</th><th>phys hop</th><th>无争用 latency</th>
+          <th>实测 max latency</th><th>争用开销</th><th>stage 完成时刻</th>
+        </tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+    <table style="margin-top:1rem">
+      <thead><tr><th>对比项</th><th>cycles</th><th>说明</th></tr></thead>
+      <tbody id="theory-rows"></tbody>
+    </table>
+  </section>
+
+  <section class="panel" id="sim-panel">
+    <h2>SimPy 端到端仿真（slot_cycles=<span id="slot-label"></span>，link_latency=<span id="link-lat-label"></span>）</h2>
+    <table id="sim-table">
+      <thead><tr><th>指标</th><th>值</th><th>说明</th></tr></thead>
+      <tbody></tbody>
+    </table>
   </section>
 
   <section class="panel">
@@ -220,7 +400,7 @@ def _html(model: dict) -> str:
 
   <section class="panel">
     <h2>ND AllGather 四阶段时间线</h2>
-    <p class="side">每 stage 注入 offset = dim（cycle 0/1/2/3）。组内双向交换：每对节点各发 1 包 × 2 flit = 256 B chunk。</p>
+    <p class="side">每 stage 注入 offset = dim（cycle 0/1/2/3）。组内双向交换：每对节点各发 1 包 × 256 B。</p>
     <div class="timeline" id="timeline"></div>
   </section>
 
@@ -253,11 +433,11 @@ def _html(model: dict) -> str:
     <table>
       <thead><tr><th>Stage 后</th><th>每节点已知 chunk 数</th><th>说明</th></tr></thead>
       <tbody>
-        <tr><td>初始</td><td>1（2 flit）</td><td>节点 i 持有本地 chunkᵢ（256 B）</td></tr>
+        <tr><td>初始</td><td>1 × 256 B</td><td>节点 i 持有本地 chunkᵢ</td></tr>
         <tr><td>dim 0</td><td>2</td><td>同组 d₀ 邻居互换 → 覆盖 2 个 d₀ 位</td></tr>
         <tr><td>dim 1</td><td>4</td><td>再沿 d₁ 扩展</td></tr>
         <tr><td>dim 2</td><td>8</td><td>再沿 d₂ 扩展</td></tr>
-        <tr><td>dim 3</td><td>16</td><td>全收集完成：每节点持有全部 16×2 flit</td></tr>
+        <tr><td>dim 3</td><td>16 × 256 B</td><td>全收集完成：每节点 4096 B</td></tr>
       </tbody>
     </table>
   </section>
@@ -347,7 +527,7 @@ function buildSvg(stage, view) {{
     svg += `<circle cx="${{x}}" cy="${{y}}" r="17" class="node ${{role}}"/>`;
     svg += `<text x="${{x}}" y="${{y+4}}" class="node-label">${{n}}</text>`;
     if (curStage === 0 && view === 'sample' && (n===0||n===1))
-      svg += `<text x="${{x}}" y="${{y+16}}" class="flit-badge">2 flit</text>`;
+      svg += `<text x="${{x}}" y="${{y+16}}" class="flit-badge">256B</text>`;
   }}
   svg += '</svg>';
   return svg;
@@ -362,7 +542,7 @@ function renderSide(stage, view) {{
   html += `<p>组数: ${{stage.groups.length}} × k=${{MODEL.k}} = ${{stage.num_packets}} 条有向流</p>`;
   if (view === 'sample') {{
     const g = stage.groups[0];
-    html += `<p>示例组 <code>[${{g.join(', ')}}]</code>：双向各发 2 flit chunk（256 B）</p>`;
+    html += `<p>示例组 <code>[${{g.join(', ')}}]</code>：双向各发 256 B（2 flit）</p>`;
     html += `<p>0→1: 逻辑 dim0, Color 1, 1 物理 hop<br>1→0: 对称</p>`;
   }}
   if (stage.dim === 1 && view === 'sample') {{
@@ -396,6 +576,75 @@ function renderStage() {{
 }}
 
 function init() {{
+  const sim = MODEL.sim;
+  const fh = sim.flit_hop_cycles;
+  const fp = sim.flits_per_packet;
+  document.getElementById('makespan-banner').innerHTML =
+    `<div class="big">Makespan = ${{sim.makespan_cycles}} cycles</div>` +
+    `<div class="sub">256 B/包 · 128 B/cycle · link_latency=${{sim.link_latency_cycles}} cyc/hop · ` +
+    `flit/hop=${{fh}} cyc · 累计 ${{sim.cumulative_phys_hops}} phys hops（4 stage）· ` +
+    `无争用下界 ${{sim.uncontended_makespan}} cyc</div>`;
+
+  document.getElementById('ms-val').textContent = sim.makespan_cycles;
+  document.getElementById('six-hop-note').innerHTML =
+    `<strong>6 hop 是对的，但不等于 makespan。</strong> ND 4 阶段每包物理 hop 为 1+2+1+2 = <strong>${{sim.cumulative_phys_hops}}</strong> ` +
+    `（同一 chunk 若依次参与 4 次交换的累计跳数）。但 makespan = max<sub>stage</sub>(inject + 该 stage 最慢包 latency)，` +
+    `4 个 stage 并行重叠，不是把 6 hop 串成一条路径。每 stage 发完整 256 B（${{fp}} flit），` +
+    `单 flit 单 hop 代价 = router(5) + link(1+1) = ${{fh}} cyc。`;
+
+  document.querySelector('#breakdown-table tbody').innerHTML = sim.stage_stats.map(s => {{
+    const hot = s.last_done === sim.makespan_cycles;
+    return `<tr${{hot?' style="outline:1px solid var(--good)"':''}}>` +
+      `<td>dim ${{s.dim}}</td><td>@${{s.inject_cycle}}</td><td>${{s.phys_hops}}</td>` +
+      `<td>${{s.uncontended_latency}}</td><td><strong>${{s.max_latency}}</strong></td>` +
+      `<td>+${{s.contention_overhead}}</td><td>${{s.last_done}}</td></tr>`;
+  }}).join('');
+
+  const bn = sim.bottleneck;
+  const theory = [
+    ['单 flit 单 hop', fh, 'router 5 + link(1+1)'],
+    ['256 B 单包 1-hop', fp * fh, `${{fp}} flit × ${{fh}}（dim0/2）`],
+    ['256 B 单包 2-hop 无争用', 2 * fp * fh, `${{fp}} flit × 2 hop × ${{fh}}（dim1/3）`],
+    ['6 hop × 单 flit（串行假想）', sim.cumulative_phys_hops * fh, '若 1 flit 连续走 6 hop，仍非 ND 调度模型'],
+    ['6 hop × 256 B（串行假想）', sim.cumulative_phys_hops * fp * fh, '4 次交换各走 1/2 hop，不是一条 6-hop 路由'],
+    ['无争用 makespan 下界', sim.uncontended_makespan, 'max(inject + 无争用 latency) = max(14,29,16,31)'],
+    ['实测 makespan', sim.makespan_cycles, `瓶颈 dim${{bn.stage}} ${{bn.src}}→${{bn.dst}} inject@${{bn.stage}} lat=${{bn.latency}} → ${{bn.done_at}}`],
+    ['争用额外开销', sim.makespan_cycles - sim.uncontended_makespan, '主要来自 dim1/3 的 16 路 2-hop 并发 + VC=2'],
+  ];
+  document.getElementById('theory-rows').innerHTML = theory.map(([a,b,c]) =>
+    `<tr><td>${{a}}</td><td><strong>${{b}}</strong></td><td>${{c}}</td></tr>`
+  ).join('');
+
+  const grid = document.getElementById('summary-grid');
+  const stats = [
+    ['Makespan', `${{sim.makespan_cycles}} cyc`, '端到端墙钟'],
+    ['包大小', '256 B', '2 flit × 128 B'],
+    ['链路时延', `${{sim.link_latency_cycles}} cyc`, 'router 间/hop'],
+    ['链路带宽', '128 B/cyc', '1 flit/cycle'],
+    ['注入 flit', String(MODEL.inject_flits), '64 包 × 2 flit'],
+    ['TDM C', String(MODEL.C), 'Color 周期'],
+  ];
+  grid.innerHTML = stats.map(([lbl,val]) =>
+    `<div class="stat"><div class="val ${{lbl==='Makespan'?'hero':''}}">${{val}}</div><div class="lbl">${{lbl}}</div></div>`
+  ).join('');
+
+  document.getElementById('slot-label').textContent = sim.slot_cycles;
+  document.getElementById('link-lat-label').textContent = sim.link_latency_cycles;
+  const simRows = [
+    ['makespan_cycles', sim.makespan_cycles, '最后一个包完成时刻（墙钟）'],
+    ['link_latency_cycles', sim.link_latency_cycles, 'router 间链路传播时延/hop'],
+    ['link_bw', `${{sim.link_bw_flits_per_cycle}} flit/cyc (${{sim.flit_bytes}} B/cyc)`, '链路传输带宽'],
+    ['avg_latency', sim.avg_latency, '所有包 latency 均值'],
+    ['max_packet_latency', sim.max_packet_latency, '最慢包（瓶颈路径）'],
+    ['link_flits_sent', sim.link_flits_sent, '链路级 flit 传输总次数'],
+    ['color_buffer_wait_cycles', sim.color_buffer_wait_cycles, 'TDM color 门控等待（全网累加）'],
+    ['link_wait_cycles', sim.link_wait_cycles, '链路排队等待（全网累加）'],
+    ['router_pipeline_cycles', sim.router_pipeline_cycles, 'router pipeline（全网累加）'],
+  ];
+  document.querySelector('#sim-table tbody').innerHTML = simRows.map(([k,v,d]) =>
+    `<tr><td><code>${{k}}</code></td><td><strong>${{v}}</strong></td><td>${{d}}</td></tr>`
+  ).join('');
+
   const tabs = document.getElementById('stage-tabs');
   MODEL.stages.forEach((s,i) => {{
     const b = document.createElement('button');
@@ -408,7 +657,7 @@ function init() {{
   MODEL.stages.forEach((s,i) => {{
     const d = document.createElement('div');
     d.className = 'tl-stage' + (i===0?' active':'');
-    d.innerHTML = `<div class="dim">dim ${{s.dim}}</div>inject@${{s.inject_cycle}}<br>${{s.num_packets}}×2 flit<br>${{s.phys_hops.join('/')}} phys hop`;
+    d.innerHTML = `<div class="dim">dim ${{s.dim}}</div>inject@${{s.inject_cycle}}<br>${{s.num_packets}}×256 B<br>${{s.phys_hops.join('/')}} phys hop`;
     d.onclick = () => {{ curStage = i; renderStage(); }};
     tl.appendChild(d);
   }});
