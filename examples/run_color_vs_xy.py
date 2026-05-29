@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S .venv/bin/python
 """Run color NoC vs single-VN XY baseline study."""
 
 from __future__ import annotations

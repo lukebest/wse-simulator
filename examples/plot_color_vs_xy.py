@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S .venv/bin/python
 """Plot color NoC vs XY baseline makespan from results.csv files."""
 
 from __future__ import annotations

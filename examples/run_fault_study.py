@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S .venv/bin/python
 """Sweep defect rate on 4x4 color plan repair; write fault_degradation.csv."""
 
 from __future__ import annotations
@@ -35,7 +35,7 @@ def main() -> None:
     out_rows: list[dict] = []
     rng = random.Random(args.seed)
     for rate in args.rates:
-        n_dead = int(num_nodes * rate)
+        n_dead = max(1, round(num_nodes * rate)) if rate > 0 else 0
         dead = set(rng.sample(list(range(num_nodes)), n_dead)) if n_dead else set()
         defect = DefectMap(dead_cores=dead, dead_links=set())
         repaired, coverage = repair_color_plan(plan, graph, defect)

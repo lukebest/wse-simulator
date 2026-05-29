@@ -231,7 +231,9 @@ def run_full_study(
     rows_out: list[dict] = []
     for rows, cols in mesh_sizes:
         num_nodes = rows * cols
+        mesh_label = f"{rows}x{cols}"
         patterns = PATTERNS_SMALL if num_nodes <= 16 else PATTERNS
+        mesh_rows: list[dict] = []
         for pattern in patterns:
             print(f"  [{mesh_label}] {pattern}...", flush=True)
             color_r, xy_r = run_pattern_comparison(
@@ -251,13 +253,45 @@ def run_full_study(
                     "ordering_violations": r.ordering_violations,
                 }
                 rows_out.append(row)
+                mesh_rows.append(row)
 
-    csv_path = output_dir / "results.csv"
-    headers = list(rows_out[0].keys()) if rows_out else []
-    with csv_path.open("w") as f:
-        f.write(",".join(headers) + "\n")
-        for row in rows_out:
-            f.write(",".join(str(row[h]) for h in headers) + "\n")
+        csv_path = output_dir / "results.csv"
+        headers = list(mesh_rows[0].keys()) if mesh_rows else []
+        with csv_path.open("w") as f:
+            f.write(",".join(headers) + "\n")
+            for row in mesh_rows:
+                f.write(",".join(str(row[h]) for h in headers) + "\n")
+
+        summary = {
+            "num_colors": num_colors,
+            "msg_bytes": msg_bytes,
+            "patterns": patterns,
+            "mesh": mesh_label,
+            "color_wins": sum(
+                1
+                for i in range(0, len(mesh_rows), 2)
+                if i + 1 < len(mesh_rows)
+                and mesh_rows[i]["topology"] == "color_mesh2d"
+                and mesh_rows[i]["makespan_cycles"] < mesh_rows[i + 1]["makespan_cycles"]
+            ),
+        }
+        (output_dir / "summary.json").write_text(json.dumps(summary, indent=2))
+        (output_dir / "meta.json").write_text(
+            json.dumps(
+                {
+                    "mesh": mesh_label,
+                    "num_nodes": num_nodes,
+                    "num_colors": num_colors,
+                    "msg_bytes": msg_bytes,
+                    "patterns": patterns,
+                    "baseline": "single_vn_xy",
+                },
+                indent=2,
+            )
+        )
+
+    if not rows_out:
+        return rows_out
 
     summary = {
         "num_colors": num_colors,
@@ -272,7 +306,7 @@ def run_full_study(
             and rows_out[i]["makespan_cycles"] < rows_out[i + 1]["makespan_cycles"]
         ),
     }
-    (output_dir / "summary.json").write_text(json.dumps(summary, indent=2))
+    (output_dir / "study_summary.json").write_text(json.dumps(summary, indent=2))
 
     if write_trace and mesh_sizes:
         rows, cols = mesh_sizes[0]
