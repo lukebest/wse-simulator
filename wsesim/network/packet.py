@@ -15,7 +15,6 @@ class Packet:
     creation_time: float = 0.0
     color: int = 0
     task: int = 0
-    seq: int = 0
 
 
 @dataclass(slots=True)
@@ -25,7 +24,6 @@ class Flit:
     is_head: bool
     is_tail: bool
     color: int = 0
-    branch_id: int = 0
 
 
 def packet_to_num_flits(packet: Packet, flit_bytes: int = 32) -> int:
@@ -40,7 +38,7 @@ def packet_to_flits(packet: Packet, flit_bytes: int = 32) -> list[Flit]:
             flit_id=idx,
             is_head=(idx == 0),
             is_tail=(idx == count - 1),
-            color=packet.color,
+            color=getattr(packet, "color", 0),
         )
         for idx in range(count)
     ]

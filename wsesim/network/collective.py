@@ -15,9 +15,7 @@ COLLECTIVE_ALGORITHMS = {
     "reduction_tree",
     "all_to_all",
     "systolic",
-    "mixed_taxonomy",
-    "partial_sum",
-    "activation_broadcast",
+    "mixed",
 }
 
 
@@ -90,12 +88,13 @@ def generate_collective_traffic(
         return _all_to_all(participating_nodes_global, payload_bytes_per_expert, num_experts)
     if algo == "systolic":
         return _systolic_stream(participating_nodes_global, payload_bytes_per_expert, num_experts, topology_hint)
-    if algo == "partial_sum":
-        return _reduction_tree(participating_nodes_global, payload_bytes_per_expert, num_experts, topology_hint)
-    if algo == "activation_broadcast":
-        return _broadcast_tree(participating_nodes_global, payload_bytes_per_expert, num_experts, topology_hint)
-    if algo == "mixed_taxonomy":
-        return _mixed_taxonomy(participating_nodes_global, payload_bytes_per_expert, num_experts, topology_hint)
+    if algo == "mixed":
+        return generate_mixed_taxonomy_traffic(
+            participating_nodes_global,
+            payload_bytes_per_expert,
+            num_experts,
+            topology_hint=topology_hint,
+        )
     return _hierarchical(participating_nodes_global, payload_bytes_per_expert, num_experts, cores_per_reticle)
 
 
@@ -298,38 +297,32 @@ def _factor_near_square(value: int) -> tuple[int, int]:
 def _broadcast_tree(
     nodes: list[int], payload_bytes: int, num_experts: int, topology_hint: dict | None
 ) -> list[dict]:
-    """Row-wise broadcast from westmost node per row."""
     rows, cols = _mesh_hint(nodes, topology_hint)
+    chunk = max(1, ceil(payload_bytes / len(nodes)))
     traffic: list[dict] = []
-    chunk = max(1, payload_bytes)
     for expert_id in range(num_experts):
-        for r in range(rows):
-            root = r * cols
-            if root not in nodes:
-                continue
+        base = expert_id * cols
+        for row in range(rows):
+            root = row * cols
             for c in range(1, cols):
-                dst = r * cols + c
-                if dst in nodes:
-                    traffic.append(_packet(root, dst, chunk, "activation_broadcast", expert_id))
+                dst = row * cols + c
+                traffic.append(_packet(root, dst, chunk, "broadcast", base + c))
     return traffic
 
 
 def _reduction_tree(
     nodes: list[int], payload_bytes: int, num_experts: int, topology_hint: dict | None
 ) -> list[dict]:
-    """Column-wise reduction toward northmost node per column."""
     rows, cols = _mesh_hint(nodes, topology_hint)
+    chunk = max(1, ceil(payload_bytes / len(nodes)))
     traffic: list[dict] = []
-    chunk = max(1, payload_bytes)
     for expert_id in range(num_experts):
-        for c in range(cols):
-            root = c
-            if root not in nodes:
-                continue
-            for r in range(rows - 1, 0, -1):
-                src = r * cols + c
-                if src in nodes:
-                    traffic.append(_packet(src, root, chunk, "partial_sum", expert_id))
+        base = expert_id * rows
+        for col in range(cols):
+            root = col
+            for r in range(1, rows):
+                src = r * cols + col
+                traffic.append(_packet(src, root, chunk, "reduce", base + r))
     return traffic
 
 
@@ -338,83 +331,89 @@ def _all_to_all(nodes: list[int], payload_bytes: int, num_experts: int) -> list[
     chunk = max(1, ceil(payload_bytes / s))
     traffic: list[dict] = []
     for expert_id in range(num_experts):
-        for phase in range(s):
-            for i, src in enumerate(nodes):
-                dst = nodes[(i + phase) % s]
+        for phase in range(s - 1):
+            for idx, src in enumerate(nodes):
+                dst = nodes[(idx + phase + 1) % s]
                 if src != dst:
-                    traffic.append(_packet(src, dst, chunk, "all_to_all", phase + expert_id * s))
+                    traffic.append(
+                        _packet(src, dst, chunk, "all_to_all", expert_id * s * s + phase * s + idx)
+                    )
     return traffic
 
 
 def _systolic_stream(
     nodes: list[int], payload_bytes: int, num_experts: int, topology_hint: dict | None
 ) -> list[dict]:
-    """Nearest-neighbor eastward streaming per row."""
     rows, cols = _mesh_hint(nodes, topology_hint)
+    chunk = max(1, ceil(payload_bytes / max(1, cols)))
     traffic: list[dict] = []
-    chunk = max(1, payload_bytes // max(1, cols))
     for expert_id in range(num_experts):
-        for r in range(rows):
+        for row in range(rows):
             for c in range(cols - 1):
-                src = r * cols + c
-                dst = r * cols + c + 1
-                if src in nodes and dst in nodes:
-                    traffic.append(_packet(src, dst, chunk, "systolic", c + expert_id * cols))
+                src = row * cols + c
+                dst = row * cols + (c + 1)
+                traffic.append(_packet(src, dst, chunk, "systolic", expert_id * rows + row + c))
     return traffic
 
 
-def _mixed_taxonomy(
-    nodes: list[int], payload_bytes: int, num_experts: int, topology_hint: dict | None
+def generate_mixed_taxonomy_traffic(
+    nodes: list[int],
+    payload_bytes: int,
+    num_experts: int = 1,
+    *,
+    topology_hint: dict | None = None,
 ) -> list[dict]:
-    """Combined workload: partial-sum + broadcast + ring allreduce + all-to-all."""
+    """Combined NN communication patterns with staggered phases."""
     traffic: list[dict] = []
-    traffic.extend(_reduction_tree(nodes, payload_bytes, max(1, num_experts // 4), topology_hint))
-    traffic.extend(_broadcast_tree(nodes, payload_bytes, max(1, num_experts // 4), topology_hint))
-    traffic.extend(_sequential_ring(nodes, max(1, ceil(payload_bytes / len(nodes))), 2 * (len(nodes) - 1), max(1, num_experts // 4)))
-    traffic.extend(_all_to_all(nodes, payload_bytes, max(1, num_experts // 4)))
+    offset = 0
+    for gen, phase in (
+        (_systolic_stream, "systolic"),
+        (_reduction_tree, "reduce"),
+        (_broadcast_tree, "broadcast"),
+        (_sequential_ring, "allreduce"),
+        (_direct_allgather, "allgather"),
+        (_all_to_all, "all_to_all"),
+    ):
+        if gen is _sequential_ring:
+            s = len(nodes)
+            chunk = max(1, ceil(payload_bytes / s))
+            part = gen(nodes, chunk, 2 * (s - 1), num_experts)
+        elif gen in (_broadcast_tree, _reduction_tree, _systolic_stream):
+            part = gen(nodes, payload_bytes, num_experts, topology_hint)
+        else:
+            part = gen(nodes, payload_bytes, num_experts)
+        for pkt in part:
+            pkt["delay_cycles"] += offset
+            pkt["payload"] = f"mixed_{pkt['payload']}"
+        traffic.extend(part)
+        offset += max(64, len(part))
     return traffic
+
+
+def default_color_map() -> dict[str, int]:
+    """Map payload types to colors in the mixed plan."""
+    return {
+        "systolic": 0,
+        "mixed_systolic": 0,
+        "reduce": 1,
+        "mixed_reduce": 1,
+        "broadcast": 0,
+        "mixed_broadcast": 0,
+        "allreduce_rs": 0,
+        "allreduce_ag": 0,
+        "mixed_allreduce_rs": 0,
+        "mixed_allreduce_ag": 0,
+        "allgather": 0,
+        "mixed_allgather": 0,
+        "all_to_all": 1,
+        "mixed_all_to_all": 1,
+    }
 
 
 def _mesh_hint(nodes: list[int], topology_hint: dict | None) -> tuple[int, int]:
-    rows = int((topology_hint or {}).get("rows", 0))
-    cols = int((topology_hint or {}).get("cols", 0))
+    hint = topology_hint or {}
+    rows = int(hint.get("rows", 0))
+    cols = int(hint.get("cols", 0))
     if rows * cols == len(nodes):
         return rows, cols
     return _factor_near_square(len(nodes))
-
-
-def assign_colors_to_traffic(
-    traffic: list[dict],
-    num_colors: int,
-    pattern_color_map: dict[str, int] | None = None,
-) -> list[dict]:
-    """Assign color field per packet based on payload pattern and phase."""
-    default_map = {
-        "partial_sum": 1,
-        "activation_broadcast": 2,
-        "allreduce_rs": 0,
-        "allreduce_ag": 0,
-        "allgather": 3,
-        "all_to_all": 4,
-        "systolic": 5,
-    }
-    pmap = {**default_map, **(pattern_color_map or {})}
-    out: list[dict] = []
-    for i, pkt in enumerate(traffic):
-        payload = pkt.get("payload", "data")
-        src = int(pkt["src_core"])
-        dst = int(pkt.get("dst_core", src))
-        # Ring: one color per source PE (fixed path to ring successor)
-        if payload in ("allreduce_rs", "allreduce_ag"):
-            color = src % num_colors
-        elif payload == "all_to_all":
-            phase = int(pkt.get("delay_cycles", 0))
-            color = (phase * 31 + src * 17 + dst) % num_colors
-        else:
-            # Unicast patterns: unique color per (src, dst) edge when possible
-            color = (src * 31 + dst * 17 + pmap.get(payload, 0)) % num_colors
-        enriched = dict(pkt)
-        enriched["color"] = color
-        enriched["seq"] = 0
-        out.append(enriched)
-    return out

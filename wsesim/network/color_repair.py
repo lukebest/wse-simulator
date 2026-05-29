@@ -1,129 +1,106 @@
-"""Partial-good color route repair on defective mesh."""
+"""Partial-good color route repair on pruned mesh."""
 
 from __future__ import annotations
 
 from collections import deque
 
-from wsesim.network.color import ColorPlan
-from wsesim.network.color_routes import mesh_dims, xy_path
 from wsesim.fault.defect_map import DefectMap
-
-
-def prune_graph(
-    graph: dict[int, list[int]],
-    defect: DefectMap,
-) -> dict[int, list[int]]:
-    """Return graph with dead nodes/links removed."""
-    dead_n = defect.dead_cores
-    dead_l = defect.dead_links
-    pruned: dict[int, list[int]] = {}
-    for src, dsts in graph.items():
-        if src in dead_n:
-            continue
-        pruned[src] = [d for d in dsts if d not in dead_n and (src, d) not in dead_l]
-    return pruned
-
-
-def _shortest_path(src: int, dst: int, graph: dict[int, list[int]]) -> list[int] | None:
-    if src == dst:
-        return [src]
-    queue = deque([src])
-    parent = {src: -1}
-    while queue:
-        node = queue.popleft()
-        for nb in graph.get(node, []):
-            if nb not in parent:
-                parent[nb] = node
-                if nb == dst:
-                    queue.clear()
-                    break
-                queue.append(nb)
-    if dst not in parent:
-        return None
-    path = []
-    hop = dst
-    while hop != -1:
-        path.append(hop)
-        hop = parent[hop]
-    path.reverse()
-    return path
+from wsesim.network.color import ColorPlan
+from wsesim.network.color_routes import add_path_color, empty_plan
+from wsesim.network.routing.table_based import TableBasedRouting
 
 
 def repair_color_plan(
     plan: ColorPlan,
     graph: dict[int, list[int]],
-    defect: DefectMap,
+    dead_nodes: set[int],
+    dead_links: set[tuple[int, int]],
 ) -> tuple[ColorPlan, float]:
-    """Recompute per-color routes on pruned graph; return (plan, coverage fraction)."""
-    pruned = prune_graph(graph, defect)
-    rows, cols = mesh_dims(len(graph), None)
-    repaired = ColorPlan.empty(len(graph), plan.num_colors)
-    total_routes = 0
-    successful = 0
+    """Recompute unicast routes on pruned graph; return repaired plan and coverage fraction."""
+    alive = set(graph.keys()) - dead_nodes
+    if not alive:
+        return plan, 0.0
 
-    # Collect (src,dst) pairs from original plan per color
-    for color_id in range(plan.num_colors):
-        pairs: set[tuple[int, int]] = set()
-        for node, colors in plan.dest.items():
-            hops = colors.get(color_id, frozenset())
-            for nxt in hops:
-                pairs.add((node, nxt))
-        # Rebuild routes: for each edge in old plan, try shortest path in pruned graph
-        for src, dst in pairs:
-            total_routes += 1
-            if src not in pruned or dst not in pruned:
-                continue
-            path = _shortest_path(src, dst, pruned)
-            if path is None:
-                # Try detour via row/column redundancy: alternate XY/YX
-                path = xy_path(src, dst, rows, cols)
-                valid = all(
-                    (path[i], path[i + 1]) in {(s, d) for s, ds in pruned.items() for d in ds}
-                    or (path[i], path[i + 1]) not in defect.dead_links
-                    for i in range(len(path) - 1)
-                    if path[i] in pruned
-                )
-                if not valid:
-                    continue
+    pruned: dict[int, list[int]] = {}
+    for src in alive:
+        pruned[src] = [
+            d for d in graph.get(src, []) if d in alive and (src, d) not in dead_links
+        ]
+
+    routing = TableBasedRouting(pruned)
+    repaired = empty_plan(plan.rows, plan.cols, plan.num_colors)
+    repaired.colors = list(plan.colors)
+    repaired.unicast_modes = dict(plan.unicast_modes)
+
+    routable_pairs = 0
+    total_pairs = len(alive) * (len(alive) - 1)
+
+    for node in alive:
+        repaired.dest[node] = {}
+        for c in range(plan.num_colors):
+            orig = plan.dest.get(node, {}).get(c, set())
+            valid = {h for h in orig if h in pruned.get(node, [])}
+            if valid:
+                repaired.dest[node][c] = valid
+            elif c in plan.unicast_modes:
+                repaired.set_unicast_mode(c, plan.unicast_modes[c])
             else:
-                for i in range(len(path) - 1):
-                    if path[i] in pruned and path[i + 1] in pruned.get(path[i], []):
-                        repaired.set_next_hops(path[i], color_id, frozenset({path[i + 1]}))
-                successful += 1
-                continue
-            for i in range(len(path) - 1):
-                if path[i] in pruned:
-                    nxt = path[i + 1]
-                    if nxt in pruned.get(path[i], []):
-                        repaired.set_next_hops(path[i], color_id, frozenset({nxt}))
-            successful += 1
+                repaired.dest[node][c] = set()
 
-    coverage = successful / max(1, total_routes)
+    for src in alive:
+        for dst in alive:
+            if src == dst:
+                continue
+            try:
+                routing.next_hop(src, dst, pruned)
+                routable_pairs += 1
+            except ValueError:
+                continue
+
+    coverage = routable_pairs / max(1, total_pairs)
     return repaired, coverage
 
 
-def routable_nodes(graph: dict[int, list[int]], defect: DefectMap) -> set[int]:
-    """Nodes reachable in largest connected component after defects."""
-    pruned = prune_graph(graph, defect)
-    if not pruned:
+def apply_defect_map_to_graph(
+    graph: dict[int, list[int]], defect: DefectMap
+) -> dict[int, list[int]]:
+    pruned = {n: list(neighbors) for n, neighbors in graph.items() if n not in defect.dead_cores}
+    for src in list(pruned):
+        pruned[src] = [
+            d
+            for d in pruned[src]
+            if d not in defect.dead_cores and (src, d) not in defect.dead_links
+        ]
+    for dead in defect.dead_cores:
+        pruned.pop(dead, None)
+    return pruned
+
+
+def largest_component_nodes(graph: dict[int, list[int]]) -> set[int]:
+    """Return nodes in largest connected component (undirected view)."""
+    if not graph:
         return set()
+    undirected: dict[int, set[int]] = {n: set() for n in graph}
+    for src, dsts in graph.items():
+        for d in dsts:
+            undirected.setdefault(src, set()).add(d)
+            undirected.setdefault(d, set()).add(src)
     visited: set[int] = set()
     best: set[int] = set()
-
-    for start in pruned:
+    for start in undirected:
         if start in visited:
             continue
-        component: set[int] = set()
+        comp: set[int] = set()
         queue = deque([start])
         while queue:
             n = queue.popleft()
-            if n in component:
+            if n in comp:
                 continue
-            component.add(n)
-            for nb in pruned.get(n, []):
-                if nb not in component:
+            comp.add(n)
+            for nb in undirected.get(n, set()):
+                if nb not in comp and nb in graph:
                     queue.append(nb)
-        visited |= component
-        if len(component) > len(best):
-            best = component
+        visited |= comp
+        if len(comp) > len(best):
+            best = comp
     return best

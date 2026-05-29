@@ -6,14 +6,14 @@ from wsesim.network.flow_control.base import FlowControl
 
 
 class PerColorCreditFlowControl(FlowControl):
-    """Patent-style per-color backpressure: stall when downstream queue full."""
+    """Credit-style: send when downstream per-color queue has space."""
 
-    def __init__(self, entries_per_color: int = 2) -> None:
+    def __init__(self, entries_per_color: int) -> None:
         self.entries_per_color = entries_per_color
 
     def can_send(self, downstream_queue_len: int, downstream_capacity: int) -> bool:
-        return downstream_queue_len < min(downstream_capacity, self.entries_per_color)
+        del downstream_capacity
+        return downstream_queue_len < self.entries_per_color
 
-    def capacity_for_color(self, num_colors: int, entries_per_color: int | None = None) -> int:
-        e = entries_per_color if entries_per_color is not None else self.entries_per_color
-        return max(1, e)
+    def is_stalled(self, queue_len: int) -> bool:
+        return queue_len >= self.entries_per_color

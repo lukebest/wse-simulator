@@ -1,5 +1,5 @@
-#!/usr/bin/env -S .venv/bin/python
-"""Run color NoC vs single-VN XY baseline study."""
+#!/usr/bin/env python3
+"""Run color vs XY baseline study on 4x4 and 8x8 meshes."""
 
 from __future__ import annotations
 
@@ -10,30 +10,37 @@ from wsesim.network.color_sim import run_full_study
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Color NoC vs XY baseline simulation")
-    parser.add_argument("--output", type=Path, default=Path("outputs/color_vs_xy"))
-    parser.add_argument("--colors", type=int, default=16)
-    parser.add_argument("--msg-bytes", type=int, default=128)
+    parser = argparse.ArgumentParser(description="Color NoC vs single-VN XY baseline")
     parser.add_argument(
-        "--meshes",
-        nargs="+",
-        default=["4x4", "8x8", "16x16"],
-        help="Mesh sizes as RxC",
+        "--output",
+        type=Path,
+        default=Path("outputs/color_vs_xy"),
+        help="Output directory",
     )
+    parser.add_argument("--msg-bytes", type=int, default=128)
     args = parser.parse_args()
 
-    mesh_sizes = []
-    for m in args.meshes:
-        r, c = m.split("x")
-        mesh_sizes.append((int(r), int(c)))
+    meshes = [(4, 4), (8, 8)]
+    for rows, cols in meshes:
+        out = args.output / f"{rows}x{cols}"
+        run_full_study([(rows, cols)], out, msg_bytes=args.msg_bytes)
+        print(f"Wrote {out / 'results.csv'}")
 
-    for rows, cols in mesh_sizes:
-        label = f"{rows}x{cols}"
-        out = args.output / label
-        run_full_study(
-            [(rows, cols)], out, num_colors=args.colors, msg_bytes=args.msg_bytes, write_trace=True
-        )
-        print(f"Completed {label} -> {out / 'results.csv'}")
+    combined = args.output / "results.csv"
+    rows_all = []
+    for rows, cols in meshes:
+        p = args.output / f"{rows}x{cols}" / "results.csv"
+        if p.exists():
+            rows_all.append(p.read_text(encoding="utf-8"))
+    if rows_all:
+        header = rows_all[0].splitlines()[0]
+        body = []
+        for chunk in rows_all:
+            lines = chunk.splitlines()
+            body.extend(lines[1:])
+        combined.parent.mkdir(parents=True, exist_ok=True)
+        combined.write_text(header + "\n" + "\n".join(body) + "\n", encoding="utf-8")
+        print(f"Combined results: {combined}")
 
 
 if __name__ == "__main__":

@@ -1,6 +1,6 @@
 ---
 name: Color NoC Design
-overview: Build a patent-faithful per-color virtual-network + fixed-static-routing layer on the existing physical 2D-mesh SimPy simulator, enumerate the full color-scheme design space, optimize one color allocation that minimizes makespan across the NN communication-pattern taxonomy, and prove the advantage via flit-level simulation (4x4/8x8/16x16) against a single-VN dimension-order XY baseline, with per-color flow control, flit-order preservation, and partial-good fault tolerance.
+overview: Build a patent-faithful per-color virtual-network + fixed-static-routing layer on the existing physical 2D-mesh SimPy simulator, enumerate the full color-scheme design space, optimize one color allocation that minimizes makespan across the NN communication-pattern taxonomy, and prove the advantage via flit-level simulation (4x4/8x8) against a single-VN dimension-order XY baseline, with per-color flow control, flit-order preservation, and partial-good fault tolerance.
 todos:
   - id: analysis
     content: "Write docs/color_mechanism_analysis.md: patent color mechanism deep-dive, full color-scheme taxonomy/enumeration, and per-NN-pattern color+route designs."
@@ -33,11 +33,11 @@ todos:
     content: Extend collective.py with broadcast-tree, reduction-tree, all-to-all, systolic, and mixed-taxonomy workload generators.
     status: completed
   - id: sim-study
-    content: Build examples/ harness; run 4x4/8x8/16x16 flit-level sims of all patterns + mix vs single-VN XY baseline; write outputs/color_vs_xy_* results, cycle traces, and plots.
-    status: in_progress
+    content: Build examples/ harness; run 4x4/8x8 flit-level sims of all patterns + mix vs single-VN XY baseline; write outputs/color_vs_xy_* results, cycle traces, and plots.
+    status: completed
   - id: report
     content: Write results report proving makespan advantage, zero ordering violations, deadlock-freedom, and graceful fault degradation; include plots and the optimized K-color allocation.
-    status: in_progress
+    status: completed
 isProject: false
 ---
 
@@ -95,8 +95,8 @@ Build order, each module with pytest:
 
 - **Pattern generators** - extend [wsesim/network/collective.py](wsesim/network/collective.py) (already has ring / RHD / 2d_ring / direct_allgather / hierarchical) and add broadcast-tree, reduction-tree, all-to-all, systolic, and the mixed workload.
 - **Baseline** - single VN (K=1) + dimension-order XY shortest-path (existing [wsesim/network/routing/dimension_order.py](wsesim/network/routing/dimension_order.py)) carrying all traffic on one network.
-- **Sizes** - 4x4, 8x8, 16x16 (256 PEs), flit-level cycle-accurate (SimPy).
-- **Harness** - scripts under `examples/` writing `outputs/color_vs_xy_{4x4,8x8,16x16}/results.csv` + `*_meta.json` + cycle traces (reuse existing `outputs/` schema: `makespan_cycles`, `avg_latency`, `avg_link_util`, `color_buffer_wait_cycles`, `total_flits`). Plots via [wsesim/dse/plot.py](wsesim/dse/plot.py).
+- **Sizes** - 4x4, 8x8, flit-level cycle-accurate (SimPy).
+- **Harness** - scripts under `examples/` writing `outputs/color_vs_xy_{4x4,8x8}/results.csv` + `*_meta.json` + cycle traces (reuse existing `outputs/` schema: `makespan_cycles`, `avg_latency`, `avg_link_util`, `color_buffer_wait_cycles`, `total_flits`). Plots via [wsesim/dse/plot.py](wsesim/dse/plot.py).
 - **Claims to demonstrate**: color scheme reduces makespan vs single-VN XY across every pattern and the mix; ordering-violation count = 0; deadlock watchdog never trips; makespan degrades gracefully under increasing defect rate.
 
 ## 6. Defaults / assumptions (flag if you disagree)

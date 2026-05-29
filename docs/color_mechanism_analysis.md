@@ -1,70 +1,85 @@
 # Color Mechanism Analysis (US10,515,303)
 
-## 1. Patent summary
+## Core concept
 
-The Cerebras WSE fabric implements **16 logically independent networks called colors** overlaid on a single physical 2D mesh. Each color is:
+A **color** is a virtual network overlaid on one physical 2D mesh. The Cerebras fabric uses ~16 colors (also 8/24/32). Each color has:
 
-1. A **virtual network** (virtual channel) with dedicated per-color buffering.
-2. A **fixed static routing pattern** — no dynamic routing after compile-time configuration.
-3. A **task selector** at the destination PE (`instruction_addr = base + color * 4`).
+- **Dedicated per-color input buffering** at every router
+- **Shared physical links** between colors
+- **Fixed static routing** — no dynamic route computation at runtime
+- **Independent per-color backpressure** traveling opposite to data flow
 
-### Key hardware semantics (Router 600)
+This maps NN communication staticity to hardware: since connection patterns are known at compile time, routes are fixed, eliminating dynamic routing area and latency.
 
-| Mechanism | Patent behavior |
-|-----------|-----------------|
-| `Dest[node][color]` | Static bit-vector over 7 directions (X±, Y±, skipX±, On/Off-Ramp); multiple bits = multicast replication |
-| `Data Queues` | 2 entries per color; dedicated buffering, shared physical links |
-| Flow control | Per-color backpressure on reverse path; queue full → stall upstream |
-| Ordering | Single active input source per color; FIFO within color |
-| Multicast | Router replicates wavelet to all outputs in Dest bit-vector |
+## Dual role: VN ID + task selector
 
-### Why colors map to NN communication
+The wavelet **color field** selects:
 
-Neural network connectivity is **static at compile time**. Fixed routes eliminate routing logic area and latency. Colors isolate concurrent communication patterns (e.g., partial-sum column reduce vs activation row broadcast) without dynamic arbitration.
+1. Which virtual network (and thus which fixed route) carries the packet
+2. Which compute task runs on arrival (`instruction_addr = base + color × 4`)
 
-## 2. Color scheme taxonomy
+## Router model (Router 600)
 
-| Primitive | Topology shape | NN pattern |
-|-----------|----------------|------------|
-| Path/line | 1→1 fixed path (XY/YX) | Systolic streaming |
-| Ring | Hamiltonian cycle | Ring all-reduce, partial-sum |
-| Multicast tree | 1→N spanning tree | Activation broadcast |
-| Reduction tree | N→1 converge tree | Partial-sum reduction |
-| Dimension-exchange set | K colors, stride 2^k partners | RHD all-reduce, all-gather |
-| All-to-all set | Time-phased permutations | MoE dispatch/combine |
-| Row/column bus | Per-row X-bus, per-col Y-bus | 2D decomposed collectives |
+Per node:
 
-## 3. Allocation problem
+| Structure | Role |
+|-----------|------|
+| `Data Queues 650` | 2 entries × num_colors |
+| `Dest 661` | Static `color → {next_hop nodes}` (multicast = multiple bits set) |
+| `Sent 662` | Tracks multicast replication progress |
+| `Stall Out/In` | Per-color, per-direction backpressure |
 
-Given K colors and F concurrent flows:
+**Ordering**: one active input source per color at a time (software coordinated). Single buffer per color + fixed route ⇒ FIFO order preserved.
 
-- **Isolation**: overlapping flows → distinct colors
-- **Reuse**: disjoint flows → same color
-- **Load balance**: minimize peak link utilization → lower makespan
-- **Deadlock freedom**: acyclic per-color route graph or credit-bounded ring
+## Color scheme taxonomy
 
-Strategies: greedy-by-load, graph-coloring on flow-conflict graph, ILP (pulp).
+| Primitive | Use case | Static route shape |
+|-----------|----------|-------------------|
+| Path (XY/YX) | Systolic streaming | Dimension-order unicast |
+| Row/column ring | Ring all-reduce, partial-sum | Fixed successor on ring |
+| Snake ring | All-reduce on full mesh | Hamiltonian cycle |
+| Row multicast tree | Activation broadcast | Replicate along row |
+| Column reduction tree | Partial-sum reduce | Converge to column root |
+| Dimension-exchange set | RHD all-reduce/gather | One color per XOR stage |
+| All-to-all phases | MoE dispatch | Time-phased permutations |
+| Row/column bus | 2D decomposed collectives | Shared bus per row/col |
 
-## 4. Per-pattern recommended colors
+## Allocation problem
 
-| Pattern | Primary colors | Route shape |
-|---------|----------------|-------------|
-| Partial-sum reduce | Column reduction-tree + ring fallback | N→1 per column |
-| Activation broadcast | Row multicast-tree / row-bus | 1→N per row |
-| AllReduce | Snake ring or butterfly color-set | Ring / hypercube stages |
-| AllGather / ReduceScatter | Dimension-exchange + bus | Stride partners |
-| All-to-all (MoE) | Time-phased permutation set | Latin-square phases |
-| Systolic | Path colors along rows/cols | XY fixed paths |
-| Mixed workload | Optimized K=16 allocation | Allocator output |
+Given K colors and a set of flows (with time windows and links used):
 
-## 5. Simulation model mapping
+1. Temporally overlapping flows → **different colors**
+2. Non-overlapping flows → **reuse colors**
+3. Minimize **peak link load** (makespan)
+4. Keep per-color route graph **acyclic** (or credit-bounded ring)
 
-```
-Flit.color → per-color queue → scheduler → ColorPlan.dest[node][color] → link(s)
-                                    ↑
-                         per-color backpressure (reverse)
-```
+Strategies implemented: greedy-by-load, conflict-graph coloring, ILP (`pulp` with greedy fallback).
 
-Ordering: `OrderTracker` records per-(src,color) sequence; violations = 0 when single-source-per-color enforced.
+## Per-pattern color assignment (default mixed plan)
 
-Fault tolerance: `color_repair.py` recomputes routes on pruned graph after `DefectMap` application.
+| Pattern | Color ID | Route primitive |
+|---------|----------|-----------------|
+| Systolic | 0 | XY path |
+| Systolic alt | 1 | YX path |
+| All-reduce ring | 2 | Snake ring |
+| Broadcast | 3 | Row multicast |
+| Partial-sum reduce | 4 | Column reduction |
+| RHD stages | 5+ | Dimension exchange |
+| Spare | remainder | Row/col rings or XY |
+
+## Flow control
+
+Per-color credits: downstream queue full ⇒ assert stall on reverse path. Queued flits at each hop form a **distributed FIFO** extending the destination queue.
+
+## Partial-good fault tolerance
+
+On defect:
+
+1. Prune dead nodes/links from mesh graph
+2. Recompute color routes on largest connected component
+3. Preserve route *shape* where possible (tree/ring detour)
+4. Metric: routable-pair coverage + makespan vs defect rate
+
+## Simulation scope
+
+Flit-level SimPy on **4×4** and **8×8** meshes. Baseline: single VN + XY routing. Compare makespan, link utilization, color buffer wait cycles, ordering violations.
