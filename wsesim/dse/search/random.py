@@ -68,9 +68,13 @@ class RandomSearch(SearchStrategy):
             ["mesh2d", "flat_butterfly", "butterfly", "supermesh_bi", "supermesh_alter"]
         )
         cfg.network.noc.routing = self._rng.choice(["xy", "ugal", "table_based"])
-        cfg.network.noc.flow_control = self._rng.choice(["credit_vc", "wormhole"])
+        cfg.network.noc.flow_control = self._rng.choice(["credit_vc", "wormhole", "per_color_credit"])
         cfg.network.noc.buffer_depth = self._rng.choice([4, 8, 16])
         cfg.network.noc.num_vcs = self._rng.choice([1, 2, 4])
+        cfg.network.noc.num_colors = self._rng.choice([8, 16, 24, 32])
+        cfg.network.noc.color_scheme = self._rng.choice(
+            ["mixed", "ring", "dimension_exchange", "row_col_bus"]
+        )
         cfg.network.noc.link_bw_flits_per_cycle = self._rng.choice([1, 2, 4])
 
         cfg.network.now.topology = self._rng.choice(["mesh2d", "flat_butterfly", "butterfly"])

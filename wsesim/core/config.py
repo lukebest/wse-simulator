@@ -60,6 +60,9 @@ class NetworkDomainConfig:
     link_latency_cycles: int = 1
     num_vcs: int = 2
     buffer_depth: int = 8
+    num_colors: int = 16
+    color_scheme: str = "mixed"
+    entries_per_color: int = 2
     router_pipeline_mode: str = "4_stage"
     rc_latency_cycles: int = 1
     va_latency_cycles: int = 1
