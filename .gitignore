@@ -4,3 +4,5 @@ __pycache__/
 .pytest_cache/
 wsesim.egg-info/
 outputs/*
+.cursor/rules/imported/andrej-karpathy-skills/karpathy-guidelines.mdc
+docs/US10515303.pdf:Zone.Identifier
