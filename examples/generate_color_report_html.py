@@ -5,9 +5,18 @@ from __future__ import annotations
 
 import csv
 import html
+import sys
 from collections import defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from wsesim.network.collective import default_color_map
+from wsesim.network.color import ColorPlan
+from wsesim.network.color_routes import build_mixed_plan
 
 
 def load_results(path: Path) -> list[dict[str, str]]:
@@ -31,6 +40,203 @@ def fmt_num(v: float) -> str:
     if abs(v - round(v)) < 0.05:
         return str(int(round(v)))
     return f"{v:.2f}"
+
+
+def _describe_color_route(plan: ColorPlan, color_id: int) -> tuple[str, str]:
+    """Return (route_kind, detail) for one color in a plan."""
+    name = ""
+    if color_id < len(plan.colors):
+        name = plan.colors[color_id].name or ""
+
+    if color_id in plan.unicast_modes:
+        mode = plan.unicast_modes[color_id].upper()
+        return (
+            f"维度序单播 ({mode})",
+            "依据包内 <code>dst</code> 在每一跳静态选择下一跳（先 row 后 col 为 XY，反之为 YX）；"
+            "dest 表为空时由 <code>unicast_modes</code> 推导。",
+        )
+
+    forward_nodes = 0
+    max_fanout = 0
+    for node in range(plan.num_nodes):
+        hops = plan.dest.get(node, {}).get(color_id, set())
+        if hops:
+            forward_nodes += 1
+            max_fanout = max(max_fanout, len(hops))
+
+    if forward_nodes == 0:
+        return ("保留 / 未填充", "该 color ID 在 mixed plan 中可能为 spare 或未启用。")
+
+    if "row_ring" in name or "col_ring" in name:
+        return (
+            "行/列环",
+            f"每节点 <code>dest[node][{color_id}]</code> 指向环上唯一后继；"
+            f"{forward_nodes} 个节点参与转发。",
+        )
+    if "allreduce_ring" in name or "snake" in name:
+        return (
+            "线性 / Snake 环",
+            f"节点按固定顺序组成环，每跳指向序列中的下一个节点（{forward_nodes} 个转发项）。",
+        )
+    if "row_mcast" in name or "row_bus" in name:
+        return (
+            "行多播树",
+            "行内自西向东单播复制；每节点最多转发给一个东向邻居。",
+        )
+    if "col_reduce" in name or "col_bus" in name:
+        return (
+            "列归约树",
+            "列内自南向北归约；非根节点向北发送 partial sum。",
+        )
+    if "dim_ex" in name:
+        return (
+            "维度交换 (RHD)",
+            "超立方 XOR 伙伴交换的一 stage；每个 stage 独占一个 color。",
+        )
+    if "a2a_p" in name:
+        return (
+            "All-to-all 相位",
+            "时间分相的固定置换：phase p 上 src→rotate(src, p+1)。",
+        )
+    if max_fanout > 1:
+        return ("多播 dest 表", f"静态多下一跳；最大 fanout {max_fanout}。")
+    return (
+        "显式单播 dest 表",
+        f"每源节点预计算下一跳；{forward_nodes} 个节点有路由项。",
+    )
+
+
+def _build_mixed_plan_steps() -> str:
+    return """
+    <ol class="steps">
+      <li><strong>Color 0</strong> — <code>add_path_color(xy)</code>：systolic / gather 主路径</li>
+      <li><strong>Color 1</strong> — <code>add_path_color(yx)</code>：与 0 正交，并行单播</li>
+      <li><strong>Color 2</strong> — <code>add_linear_ring</code>：按 node ID 顺序的环（all-reduce 拓扑）</li>
+      <li><strong>Color 3</strong> — <code>add_row_multicast_tree(row=0)</code>：第 0 行广播树</li>
+      <li><strong>Color 4</strong> — <code>add_col_reduction_tree(col=0)</code>：第 0 列归约树</li>
+      <li><strong>Color 5…</strong> — <code>add_dimension_exchange_colors</code>：RHD XOR stage（节点数为 2 的幂时）</li>
+      <li><strong>后续</strong> — 逐行 <code>add_row_ring</code>、逐列 <code>add_col_ring</code> 直到 K 用尽</li>
+      <li><strong>Spare</strong> — 剩余 ID 交替 XY/YX 单播</li>
+    </ol>"""
+
+
+def _plan_table_html(rows: int, cols: int, num_colors: int = 16) -> str:
+    plan = build_mixed_plan(rows, cols, num_colors)
+    body = ""
+    for cid in range(num_colors):
+        c = plan.colors[cid] if cid < len(plan.colors) else None
+        name = html.escape(c.name if c and c.name else f"color_{cid}")
+        kind, detail = _describe_color_route(plan, cid)
+        body += f"""
+        <tr>
+          <td class="num">{cid}</td>
+          <td><code>{name}</code></td>
+          <td>{html.escape(kind)}</td>
+          <td>{detail}</td>
+        </tr>"""
+    return f"""
+    <h3>{rows}×{cols} mesh — <code>build_mixed_plan</code> 生成的 {num_colors} 个 color</h3>
+    <table>
+      <thead><tr><th>ID</th><th>名称</th><th>路由类型</th><th>生成规则</th></tr></thead>
+      <tbody>{body}</tbody>
+    </table>"""
+
+
+def _traffic_color_map_html() -> str:
+    cmap = default_color_map()
+    rows = ""
+    for payload, cid in sorted(cmap.items(), key=lambda x: (x[1], x[0])):
+        rows += f"<tr><td><code>{html.escape(payload)}</code></td><td class=\"num\">{cid}</td></tr>"
+    return f"""
+    <table>
+      <thead><tr><th>Traffic <code>payload</code></th><th>默认 Color ID</th></tr></thead>
+      <tbody>{rows}</tbody>
+    </table>"""
+
+
+def render_color_generation_section(num_colors: int = 16) -> str:
+    plan_4 = _plan_table_html(4, 4, num_colors)
+    plan_8 = _plan_table_html(8, 8, num_colors)
+    steps = _build_mixed_plan_steps()
+    cmap = _traffic_color_map_html()
+    return f"""
+    <h2>Color 生成方法与依据</h2>
+
+    <h3>设计依据</h3>
+    <div class="callout">
+      <p>本仿真参照 Cerebras 专利 <strong>US10,515,303</strong> 的 Color 机制：</p>
+      <ul>
+        <li><strong>编译期静态路由</strong> — NN 通信模式在编译时已知，每个 color 对应一张固定的
+            <code>dest[node][color] → next_hop</code> 转发表（或 XY/YX 单播模式），运行时无动态路由。</li>
+        <li><strong>虚拟网络隔离</strong> — 时间上重叠、路径上冲突的 flow 应映射到<strong>不同 color</strong>，
+            非重叠 flow 可<strong>复用</strong>同一 color（见 <code>color_alloc.py</code> 贪心 / 图着色 / ILP）。</li>
+        <li><strong>NN 通信原语分类</strong> — 按 Cerebras 文档中的 taxonomy 为每类 collective 预置路由形状：
+            路径 (XY/YX)、环、行多播、列归约、维度交换、all-to-all 分相等（详见
+            <a href="color_mechanism_analysis.md">color_mechanism_analysis.md</a>）。</li>
+        <li><strong>保序</strong> — 每个 <code>(color, src, dst)</code> 流在仿真中串行注入，配合固定路由保证 FIFO、
+            <code>ordering_violations = 0</code>。</li>
+      </ul>
+    </div>
+
+    <h3>静态 ColorPlan 构建 — <code>build_mixed_plan(rows, cols, K=16)</code></h3>
+    <p>仿真使用的 <code>color_mixed</code> 方案由 <code>wsesim/network/color_routes.py</code>
+       按下列<strong>固定顺序</strong>填充 K 个 color（默认 K=16）：</p>
+    {steps}
+    <p>实现入口：</p>
+    <pre>plan = build_mixed_plan(rows, cols, num_colors=16)
+# wsesim/network/color_routes.py → ColorPlan(dest, unicast_modes, colors[])</pre>
+
+    {plan_4}
+    {plan_8}
+
+    <h3>Traffic → Color 映射（运行时）</h3>
+    <p>Collective 流量由 <code>generate_collective_traffic()</code> 产生后，经两步分配 color：</p>
+
+    <h4>1. 默认 payload 映射 — <code>default_color_map()</code></h4>
+    <p>依据 collective 语义将 <code>payload</code> 类型映射到 mixed plan 中的主 color（当前实现以
+       <strong>color 0 (XY)</strong> 与 <strong>color 1 (YX)</strong> 为主通道）：</p>
+    {cmap}
+
+    <h4>2. 并发 striping — <code>_assign_traffic_colors()</code></h4>
+    <p>同一 <code>delay_cycles</code> 时刻并发注入的包，若 base color 为 0 或 1，则按序号交替分配到
+       <strong>color 0 / 1</strong>，使 XY 与 YX 虚拟网络同时承载并行单播，避免单 VN  Head-of-line blocking：</p>
+    <pre>for j, idx in enumerate(concurrent_packet_indices):
+    traffic[idx]["color"] = (base + j) % 2   # base ∈ {{0, 1}}</pre>
+
+    <p><strong>说明：</strong> mixed plan 中预置的 ring (2)、row multicast (3)、col reduce (4)、
+       dimension-exchange (5+) 等 color 已生成静态路由表，但<strong>当前 benchmark 的 traffic 映射
+       主要使用 color 0/1 单播</strong>。Ring all-reduce 因此尚未走专用环 color，这是 ring 模式
+       makespan 落后于 XY 的原因之一。</p>
+
+    <h3>与 Baseline 对比</h3>
+    <table>
+      <thead><tr><th>方案</th><th>Color 数</th><th>路由</th><th>生成函数</th></tr></thead>
+      <tbody>
+        <tr>
+          <td><code>color_mixed</code></td>
+          <td class="num">16</td>
+          <td>上表 mixed plan + traffic 映射</td>
+          <td><code>build_mixed_plan</code></td>
+        </tr>
+        <tr>
+          <td><code>xy_single_vn</code></td>
+          <td class="num">1</td>
+          <td>仅 color 0 = XY 维度序</td>
+          <td><code>build_baseline_single_vn</code></td>
+        </tr>
+      </tbody>
+    </table>
+
+    <h3>可选：动态 Color 分配</h3>
+    <p>若给定 flow 的时间窗与占用链路集合，<code>wsesim/network/color_alloc.py</code> 提供：</p>
+    <ul>
+      <li><strong>greedy_allocate</strong> — 按开始时间排序，选冲突最少 / 峰值负载最低的 color</li>
+      <li><strong>graph_coloring_allocate</strong> — 冲突图着色</li>
+      <li><strong>ilp_allocate</strong> — PuLP ILP 最小化峰值链路负载（失败时回退贪心）</li>
+    </ul>
+    <p>约束：时间重叠且链路交集非空的 flow 不能共享 color；路由图需无环（<code>routes_acyclic</code> 检查）。
+       本报告 benchmark 未启用动态分配，而是使用固定的 mixed plan + default_color_map。</p>
+    """
 
 
 def build_summary(rows: list[dict[str, str]]) -> list[dict]:
@@ -60,7 +266,10 @@ def build_summary(rows: list[dict[str, str]]) -> list[dict]:
     return summary
 
 
-def render_html(rows: list[dict[str, str]], summary: list[dict], csv_path: Path) -> str:
+def render_html(
+    rows: list[dict[str, str]], summary: list[dict], csv_path: Path, *, num_colors: int = 16
+) -> str:
+    color_gen_section = render_color_generation_section(num_colors)
     ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     max_ms = max(float(r["makespan_cycles"]) for r in rows) or 1
 
@@ -187,6 +396,17 @@ def render_html(rows: list[dict[str, str]], summary: list[dict], csv_path: Path)
     ul {{ padding-left: 1.25rem; }}
     li {{ margin: 0.35rem 0; }}
     .meta {{ font-size: 0.8rem; color: var(--muted); margin-top: 3rem; }}
+    .callout {{
+      background: var(--surface);
+      border-left: 3px solid var(--accent);
+      padding: 1rem 1.25rem;
+      margin: 1rem 0;
+      border-radius: 0 6px 6px 0;
+    }}
+    .callout ul {{ margin: 0.5rem 0 0; }}
+    h4 {{ font-size: 0.95rem; margin: 1.25rem 0 0.4rem; color: var(--muted); }}
+    ol.steps {{ margin: 0.75rem 0; padding-left: 1.5rem; }}
+    ol.steps li {{ margin: 0.4rem 0; }}
   </style>
 </head>
 <body>
@@ -217,6 +437,8 @@ def render_html(rows: list[dict[str, str]], summary: list[dict], csv_path: Path)
         <dt>Data source</dt><dd><code>{html.escape(str(csv_path))}</code></dd>
       </dl>
     </div>
+
+    {color_gen_section}
 
     <h2>Reproduce</h2>
     <pre>.venv/bin/python examples/run_color_vs_xy.py --msg-bytes 128
