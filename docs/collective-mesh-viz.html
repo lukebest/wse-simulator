@@ -1,0 +1,819 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>2D Mesh 集合通信逐周期可视化</title>
+<style>
+:root{
+  --ink:#1b1b1b;--muted:#666;--border:#dedede;--soft:#f6f7f9;
+  --accent:#1a4480;--warn:#9a5b00;--bad:#a33;--good:#166534;
+}
+*{box-sizing:border-box}
+body{font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei","Segoe UI",sans-serif;
+  max-width:1920px;margin:24px auto;padding:0 24px;color:var(--ink);line-height:1.55}
+h1{border-bottom:2px solid #333;padding-bottom:8px;margin:0 0 10px}
+h2{font-size:20px;color:var(--accent);margin:28px 0 10px}
+h3{font-size:15px;margin:0 0 8px}
+code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;background:#f0f1f3;padding:1px 4px;border-radius:3px}
+.intro{background:#fffbe6;border-left:4px solid #ffc107;padding:10px 14px;border-radius:4px;margin:14px 0;font-size:14px}
+.controls{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px;align-items:end;background:var(--soft);
+  border:1px solid var(--border);padding:12px;border-radius:8px;margin:12px 0}
+label{display:flex;flex-direction:column;gap:4px;font-size:12px;color:var(--muted)}
+input,select,button{font:inherit;border:1px solid #cfcfcf;border-radius:6px;background:#fff;padding:6px 8px}
+button{cursor:pointer;background:#1a4480;color:#fff;border-color:#1a4480}
+button.secondary{background:#fff;color:#1a4480}
+.grid2{display:grid;grid-template-columns:minmax(640px,1.35fr) minmax(380px,.65fr);gap:16px;align-items:start}
+.card{border:1px solid var(--border);border-radius:8px;background:#fff;padding:12px;margin:10px 0}
+.card,.table-wrap,.viz{min-width:0}
+.mesh-card{overflow:hidden}
+.metrics{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}
+.metric{border:1px solid var(--border);border-radius:8px;padding:10px;background:#fff}
+.metric .name{font-size:12px;color:var(--muted)}
+.metric .value{font-size:22px;font-weight:700;margin-top:2px}
+.metric .sub{font-size:12px;color:var(--muted);margin-top:2px}
+.table-wrap{overflow:auto;border:1px solid var(--border);border-radius:8px}
+table{border-collapse:collapse;width:100%;font-size:12px;background:#fff}
+th,td{border-bottom:1px solid #eee;border-right:1px solid #eee;padding:6px 8px;text-align:left;white-space:nowrap}
+th{background:#f4f5f7;color:#333;position:sticky;top:0;z-index:1}
+tr:last-child td{border-bottom:none}
+.viz{border:1px solid var(--border);border-radius:8px;background:#fafafa;padding:10px;overflow:auto}
+#mesh svg{display:block;margin:0 auto;max-width:none}
+.lane{overflow:auto;border:1px solid var(--border);border-radius:8px;max-height:520px}
+.lane-grid{display:grid;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:11px;min-width:max-content;--cell-w:62px;--cell-h:28px}
+.cell{height:var(--cell-h);min-width:var(--cell-w);display:flex;align-items:center;justify-content:center;border-right:1px solid #eee;border-bottom:1px solid #eee;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding:0 4px}
+.head{background:#f4f5f7;font-weight:700}
+.rowhead{justify-content:flex-start;padding-left:8px;background:#fbfbfb;position:sticky;left:0;z-index:2}
+.tag{display:inline-block;border:1px solid var(--border);border-radius:999px;padding:2px 8px;font-size:12px;background:#fff;margin-right:6px}
+.small{font-size:12px;color:var(--muted)}
+.warn{color:var(--warn)}
+svg text{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+@media (min-width:1500px){.grid2{grid-template-columns:minmax(760px,1.45fr) minmax(420px,.55fr)}.lane{max-height:580px}}
+@media (max-width:1100px){.grid2{grid-template-columns:1fr}.metrics{grid-template-columns:repeat(2,1fr)}}
+@media (max-width:720px){body{padding:0 12px}.controls{grid-template-columns:repeat(2,minmax(0,1fr))}.metrics{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<h1>2D Mesh 集合通信逐周期可视化</h1>
+<div class="intro">
+  功能：配置 2D Mesh 形状、集合通信算子和算法实现，查看逐 cycle 的 flit 传输过程、物理 edge 泳道图、逻辑 flow 流水线，并对比
+  <code>logical butterfly / dim-wise</code> 传输模式与直接在 mesh 上优化的 tree、ring 集合通信算子延迟。
+  调度模型按 flit 建立依赖：沿路径传播时，某个 flit 到达下一节点后的下一 cycle 即可继续转发，不等待同一 block 的全部 flit。
+</div>
+
+<div class="controls">
+  <label>Rows <input id="rows" type="number" min="2" max="16" value="4"></label>
+  <label>Cols <input id="cols" type="number" min="2" max="16" value="4"></label>
+  <label>Collective
+    <select id="op">
+      <option value="broadcast">Broadcast</option>
+      <option value="gather">Gather</option>
+      <option value="reduce">Reduce</option>
+      <option value="allreduce">All-reduce</option>
+      <option value="allgather">All-gather</option>
+    </select>
+  </label>
+  <label>Algorithm
+    <select id="alg">
+      <option value="butterfly-basic">Logical butterfly (basic)</option>
+      <option value="butterfly-pipelined">Logical butterfly (pipelined)</option>
+      <option value="tree-pipelined">2D tree (pipelined)</option>
+      <option value="ring-xy">XY ring (pipelined)</option>
+      <option value="ring-snake">Snake ring (baseline)</option>
+    </select>
+  </label>
+  <label>Flits per block <input id="flits" type="number" min="1" max="24" value="3"></label>
+  <label>Cycle <input id="cycle" type="number" min="0" value="0"></label>
+  <button id="apply">重新生成</button>
+</div>
+
+<div class="metrics" id="metrics"></div>
+<p class="small">指标说明：延迟为最后一个 flit 离开最后一条 edge 后的 cycle 数；Max edge sharing 表示同一 cycle 同一有向物理 edge 上重叠的 flit 数，理想无冲突时为 1。</p>
+<p class="small" id="algNote"></p>
+
+<h2>算法对比</h2>
+<div class="table-wrap"><table id="compare"></table></div>
+
+<div class="grid2">
+  <div class="card mesh-card">
+    <h3>所选 cycle 的 Mesh</h3>
+    <div class="viz" id="mesh"></div>
+    <div style="margin-top:8px">
+      <button class="secondary" id="prev">Prev</button>
+      <button class="secondary" id="next">Next</button>
+      <span class="tag" id="cycleTag"></span>
+      <span class="tag" id="activeTag"></span>
+    </div>
+  </div>
+  <div class="card active-card">
+    <h3>当前在飞 flit</h3>
+    <div class="table-wrap"><table id="active"></table></div>
+  </div>
+</div>
+
+<h2>物理 Edge 泳道图</h2>
+<p class="small">每一行是一条物理有向 edge，每一列是一个 cycle。窗口会跟随当前 cycle 滑动。</p>
+<div class="lane"><div class="lane-grid" id="lane"></div></div>
+
+<h2>逻辑 Flow 流水线</h2>
+<p class="small">每一行是一条逻辑通信流。格子显示该 flow 在当前 cycle 正占用的物理 edge。</p>
+<div class="lane"><div class="lane-grid" id="timeline"></div></div>
+
+<script>
+const COLORS=["#2E79B5","#1F8A65","#7B64B8","#F0A040","#C85898","#8A6F2A","#2A9A8A","#C04848"];
+const ALG_NAMES={
+  "butterfly-basic":"Logical butterfly (basic)",
+  "butterfly-pipelined":"Logical butterfly (pipelined)",
+  "tree-pipelined":"2D tree (pipelined)",
+  "ring-xy":"XY ring (pipelined)",
+  "ring-snake":"Snake ring (baseline)",
+};
+const ALG_NOTES={
+  "butterfly-basic":"Basic butterfly 保留阶段屏障；payload 会增长的 all-gather 使用大 stride 优先，避免大 payload 走长距离。",
+  "butterfly-pipelined":"Pipelined butterfly 按 flit 建立依赖；all-gather 同样采用 payload-aware 的大 stride 优先顺序。",
+  "tree-pipelined":"2D tree 使用行/列链式树，按 flit 在相邻 mesh edge 上流水转发。",
+  "ring-xy":"XY ring 先做行内并行 ring/chain 阶段，再做列内并行阶段；gather/reduce 反向聚合，all-reduce 近似为 reduce+broadcast。",
+  "ring-snake":"Snake ring 是 legacy baseline：把 2D mesh 拉平成一条 snake 逻辑环/链。",
+};
+let current=null;
+
+function node(x,y){return {x,y};}
+function eid(a,b){return `${a.x},${a.y}->${b.x},${b.y}`;}
+function elabel(e){return e.id;}
+function path(a,b){
+  const p=[]; let c={x:a.x,y:a.y};
+  while(c.x!==b.x){const n={x:c.x+Math.sign(b.x-c.x),y:c.y};p.push({id:eid(c,n),from:{...c},to:{...n}});c=n;}
+  while(c.y!==b.y){const n={x:c.x,y:c.y+Math.sign(b.y-c.y)};p.push({id:eid(c,n),from:{...c},to:{...n}});c=n;}
+  return p;
+}
+function flow(id,a,b,flits,payload,ci,stage){
+  return {id,label:`${id}: (${a.x},${a.y})->(${b.x},${b.y})`,from:a,to:b,flits,path:path(a,b),
+          payload,color:COLORS[ci%COLORS.length],stage,start:0,period:null};
+}
+function edgeLoad(flows){
+  const m=new Map(); flows.forEach(f=>f.path.forEach(e=>m.set(e.id,(m.get(e.id)||0)+1)));
+  return Math.max(1,...m.values());
+}
+function periodOf(f,defaultPeriod=1){
+  return f.period ?? defaultPeriod ?? 1;
+}
+function duration(flows,period=1){
+  return Math.max(1,...flows.map(f=>(f.start||0)+(f.flits-1)*periodOf(f,period)+f.path.length));
+}
+function eventAt(f,cycle,defaultPeriod){
+  return eventsAt(f,cycle,defaultPeriod)[0] || null;
+}
+function eventsAt(f,cycle,defaultPeriod){
+  const start=f.start||0, period=periodOf(f,defaultPeriod);
+  const out=[];
+  for(let i=0;i<f.flits;i++){
+    const off=cycle-(start+i*period);
+    if(off>=0 && off<f.path.length) out.push({flow:f,flit:i,edge:f.path[off],label:`${f.id}.f${i}`});
+  }
+  return out;
+}
+function allEvents(schedule,cycle){
+  return schedule.flows.flatMap(f=>eventsAt(f,cycle,schedule.period));
+}
+function pow2Strides(n){
+  const out=[]; for(let s=1;s<n;s*=2) out.push(s); return out;
+}
+function pairExchange(rows,cols,axis,stride,flits,payload,prefix){
+  const fs=[]; let idx=0;
+  if(axis==="x"){
+    for(let y=0;y<rows;y++) for(let x=0;x<cols;x+=2*stride) for(let d=0;d<stride;d++){
+      if(x+d+stride<cols){
+        const a=node(x+d,y), b=node(x+d+stride,y);
+        fs.push(flow(`${prefix}E${idx++}`,a,b,flits,payload,idx,""));
+        fs.push(flow(`${prefix}W${idx++}`,b,a,flits,payload,idx,""));
+      }
+    }
+  }else{
+    for(let x=0;x<cols;x++) for(let y=0;y<rows;y+=2*stride) for(let d=0;d<stride;d++){
+      if(y+d+stride<rows){
+        const a=node(x,y+d), b=node(x,y+d+stride);
+        fs.push(flow(`${prefix}S${idx++}`,a,b,flits,payload,idx,""));
+        fs.push(flow(`${prefix}N${idx++}`,b,a,flits,payload,idx,""));
+      }
+    }
+  }
+  return fs;
+}
+function bcastStage(rows,cols,axis,stride,base,prefix){
+  const fs=[]; let idx=0;
+  if(axis==="x"){
+    for(let x=0;x<stride;x++){
+      if(x+stride<cols) fs.push(flow(`${prefix}B${idx++}`,node(x,0),node(x+stride,0),base,"root block",idx,""));
+    }
+  }else{
+    for(let y=0;y<stride;y++) for(let x=0;x<cols;x++){
+      if(y+stride<rows) fs.push(flow(`${prefix}B${idx++}`,node(x,y),node(x,y+stride),base,"root block",idx,""));
+    }
+  }
+  return fs;
+}
+function reverseBcastStage(rows,cols,axis,stride,base,prefix,mul,kind){
+  const fs=[]; let idx=0;
+  const payload=kind==="reduce" ? "partial sum" : `${mul} block(s)`;
+  const flits=kind==="reduce" ? base : base*mul;
+  if(axis==="y"){
+    for(let y=0;y<stride;y++) for(let x=0;x<cols;x++){
+      if(y+stride<rows) fs.push(flow(`${prefix}G${idx++}`,node(x,y+stride),node(x,y),flits,payload,idx,""));
+    }
+  }else{
+    for(let x=0;x<stride;x++){
+      if(x+stride<cols) fs.push(flow(`${prefix}G${idx++}`,node(x+stride,0),node(x,0),flits,payload,idx,""));
+    }
+  }
+  return fs;
+}
+function addStage(stages,flows,label){
+  if(!flows.length) return;
+  const period=edgeLoad(flows);
+  stages.push({label,flows,period,duration:duration(flows,period)});
+}
+function applyStagePeriods(flows){
+  const groups=new Map();
+  flows.forEach((f,i)=>{
+    const key=f.stage || `__flow_${i}`;
+    if(!groups.has(key)) groups.set(key,[]);
+    groups.get(key).push(f);
+  });
+  const periods=new Map();
+  groups.forEach((stageFlows,key)=>periods.set(key,edgeLoad(stageFlows)));
+  return flows.map((f,i)=>{
+    const key=f.stage || `__flow_${i}`;
+    return {...f,period:periods.get(key) ?? periodOf(f,1)};
+  });
+}
+function flowConflicts(f,start,occupied){
+  const period=periodOf(f,1);
+  for(let i=0;i<f.flits;i++){
+    const base=start+i*period;
+    for(let h=0;h<f.path.length;h++){
+      if(occupied.has(`${base+h}|${f.path[h].id}`)) return true;
+    }
+  }
+  return false;
+}
+function reserveFlow(f,occupied){
+  const period=periodOf(f,1), start=f.start||0;
+  for(let i=0;i<f.flits;i++){
+    const base=start+i*period;
+    for(let h=0;h<f.path.length;h++) occupied.add(`${base+h}|${f.path[h].id}`);
+  }
+}
+function resolveEdgeConflicts(flows){
+  const occupied=new Set(), resolved=new Array(flows.length);
+  const ordered=flows.map((f,i)=>({...f,order:i})).sort((a,b)=>(a.start||0)-(b.start||0)||a.order-b.order);
+  ordered.forEach(f=>{
+    let start=f.start||0;
+    while(flowConflicts(f,start,occupied)) start++;
+    const out={...f,start};
+    delete out.order;
+    resolved[f.order]=out;
+    reserveFlow(out,occupied);
+  });
+  return resolved;
+}
+function enforceBroadcastDependencies(flows,root=node(0,0)){
+  const maxFlits=Math.max(1,...flows.map(f=>f.flits));
+  const arrivals=new Map([[nkey(root),Array.from({length:maxFlits},()=>0)]]);
+  let changed=false;
+  const out=flows.map(f=>({...f}));
+  out.forEach(f=>{
+    const srcArrivals=arrivals.get(nkey(f.from)) || Array.from({length:maxFlits},()=>Infinity);
+    const period=periodOf(f,1);
+    let requiredStart=f.start||0;
+    for(let i=0;i<f.flits;i++) requiredStart=Math.max(requiredStart,srcArrivals[i]-i*period);
+    if(requiredStart>(f.start||0)){
+      f.start=requiredStart;
+      changed=true;
+    }
+    const dstKey=nkey(f.to);
+    const dstArrivals=arrivals.get(dstKey) || Array.from({length:maxFlits},()=>Infinity);
+    for(let i=0;i<f.flits;i++){
+      dstArrivals[i]=Math.min(dstArrivals[i],(f.start||0)+i*period+f.path.length);
+    }
+    arrivals.set(dstKey,dstArrivals);
+  });
+  return {flows:out,changed};
+}
+function stableBroadcastFlows(flows){
+  let scheduled=applyStagePeriods(flows);
+  let sig="";
+  for(let pass=0;pass<100;pass++){
+    scheduled=resolveEdgeConflicts(scheduled);
+    const enforced=enforceBroadcastDependencies(scheduled);
+    scheduled=enforced.flows;
+    const nextSig=scheduled.map(f=>f.start||0).join(",");
+    if(!enforced.changed && nextSig===sig) break;
+    sig=nextSig;
+  }
+  return resolveEdgeConflicts(scheduled);
+}
+function flattenStages(stages){
+  const flows=[]; let t=0;
+  stages.forEach((st,si)=>{
+    st.flows.forEach(f=>flows.push({...f,id:`S${si+1}.${f.id}`,label:`S${si+1}.${f.label}`,stage:st.label,start:t,period:st.period}));
+    t+=st.duration;
+  });
+  return {flows,period:Math.max(1,...stages.map(s=>s.period)),duration:t,stages};
+}
+function finishFlattenedStages(stages,label){
+  const schedule=flattenStages(stages);
+  schedule.label=label;
+  schedule.peak=peakEdgeOccupancy(schedule);
+  return schedule;
+}
+function timedSchedule(flows,label){
+  const period=Math.max(1,...flows.map(f=>periodOf(f,1)));
+  const dur=duration(flows,period);
+  return {flows,period,duration:dur,stages:[{label,flows,period,duration:dur}]};
+}
+function setTiming(f,start,period,stage){
+  return {...f,start,period,stage};
+}
+function nkey(n){return `${n.x},${n.y}`;}
+function getAvail(avail,n){return avail.get(nkey(n)) ?? Infinity;}
+function setAvail(avail,n,t){avail.set(nkey(n),t);}
+function getHeld(held,n){return held.get(nkey(n)) ?? 1;}
+function setHeld(held,n,v){held.set(nkey(n),v);}
+function initNodeMap(rows,cols,value){
+  const m=new Map();
+  for(let y=0;y<rows;y++) for(let x=0;x<cols;x++) m.set(`${x},${y}`,value);
+  return m;
+}
+function copyMap(m){return new Map(m);}
+function peakEdgeOccupancy(schedule){
+  let peak=0;
+  for(let c=0;c<schedule.duration;c++){
+    const counts=new Map();
+    allEvents(schedule,c).forEach(e=>counts.set(e.edge.id,(counts.get(e.edge.id)||0)+1));
+    peak=Math.max(peak,...counts.values(),0);
+  }
+  return peak;
+}
+function finishSchedule(flows,label){
+  const scheduled=resolveEdgeConflicts(applyStagePeriods(flows));
+  return scheduleFromResolvedFlows(scheduled,label);
+}
+function finishBroadcastSchedule(flows,label){
+  const scheduled=stableBroadcastFlows(flows);
+  return scheduleFromResolvedFlows(scheduled,label);
+}
+function scheduleFromResolvedFlows(scheduled,label){
+  const schedule=timedSchedule(scheduled,label);
+  const labels=[...new Set(scheduled.map(f=>f.stage).filter(Boolean))];
+  if(labels.length){
+    schedule.stages=labels.map(stage=>{
+      const stageFlows=scheduled.filter(f=>f.stage===stage);
+      const period=Math.max(1,...stageFlows.map(f=>periodOf(f,1)));
+      return {label:stage,flows:stageFlows,period,duration:duration(stageFlows,period)};
+    });
+  }
+  schedule.peak=peakEdgeOccupancy(schedule);
+  return schedule;
+}
+function dimwiseBroadcast(rows,cols,base){
+  const flows=[]; let idx=0;
+  const avail=initNodeMap(rows,cols,Infinity);
+  setAvail(avail,node(0,0),0);
+  function add(src,dst,stage,readyAt=0){
+    const start=Math.max(getAvail(avail,src),readyAt);
+    if(!Number.isFinite(start)) return;
+    const f=flow(`D${idx++}`,src,dst,base,"root block",idx,stage);
+    flows.push(setTiming(f,start,1,stage));
+    const firstArrive=start+f.path.length;
+    setAvail(avail,dst,Math.min(getAvail(avail,dst),firstArrive));
+    return firstArrive;
+  }
+  let xReady=0;
+  pow2Strides(cols).forEach(s=>{
+    let nextReady=xReady;
+    for(let x=0;x<s;x++) if(x+s<cols){
+      const firstArrive=add(node(x,0),node(x+s,0),`dim-wise X broadcast stride=${s}`,xReady);
+      if(Number.isFinite(firstArrive)) nextReady=Math.max(nextReady,firstArrive);
+    }
+    xReady=nextReady;
+  });
+  const yReady=initNodeMap(1,cols,0);
+  pow2Strides(rows).forEach(s=>{
+    const nextReady=copyMap(yReady);
+    for(let y=0;y<s;y++) for(let x=0;x<cols;x++) if(y+s<rows){
+      const colKey=`${x},0`;
+      const firstArrive=add(node(x,y),node(x,y+s),`dim-wise Y broadcast stride=${s}`,yReady.get(colKey)||0);
+      if(Number.isFinite(firstArrive)) nextReady.set(colKey,Math.max(nextReady.get(colKey)||0,firstArrive));
+    }
+    yReady.clear();
+    nextReady.forEach((v,k)=>yReady.set(k,v));
+  });
+  return finishBroadcastSchedule(flows,"dim-wise broadcast, flit-pipelined");
+}
+function dimwiseGatherReduce(rows,cols,op,base){
+  const flows=[]; let idx=0;
+  const avail=initNodeMap(rows,cols,0), held=initNodeMap(rows,cols,1);
+  function add(src,dst,stage,readyAt=0){
+    const sendBlocks=getHeld(held,src);
+    const flits=op==="gather" ? base*sendBlocks : base;
+    const payload=op==="gather" ? `${sendBlocks} block(s)` : "partial sum";
+    const start=Math.max(getAvail(avail,src),readyAt);
+    const f=flow(`D${idx++}`,src,dst,flits,payload,idx,stage);
+    flows.push(setTiming(f,start,1,stage));
+    const firstArrive=start+f.path.length;
+    setAvail(avail,dst,Math.max(getAvail(avail,dst),firstArrive));
+    setHeld(held,dst,getHeld(held,dst)+sendBlocks);
+    return firstArrive;
+  }
+  let yReady=0;
+  [...pow2Strides(rows)].reverse().forEach(s=>{
+    let nextReady=yReady;
+    for(let y=0;y<s;y++) for(let x=0;x<cols;x++) if(y+s<rows){
+      const firstArrive=add(node(x,y+s),node(x,y),`dim-wise Y ${op} stride=${s}`,yReady);
+      if(Number.isFinite(firstArrive)) nextReady=Math.max(nextReady,firstArrive);
+    }
+    yReady=nextReady;
+  });
+  let xReady=0;
+  [...pow2Strides(cols)].reverse().forEach(s=>{
+    let nextReady=xReady;
+    for(let x=0;x<s;x++) if(x+s<cols){
+      const firstArrive=add(node(x+s,0),node(x,0),`dim-wise X ${op} stride=${s}`,xReady);
+      if(Number.isFinite(firstArrive)) nextReady=Math.max(nextReady,firstArrive);
+    }
+    xReady=nextReady;
+  });
+  return finishSchedule(flows,`dim-wise ${op}, flit-pipelined`);
+}
+function dimwiseExchange(rows,cols,op,base){
+  const flows=[]; let idx=0;
+  let avail=initNodeMap(rows,cols,0), held=initNodeMap(rows,cols,1);
+  function oneAxis(axis,stride){
+    const nextAvail=copyMap(avail), nextHeld=copyMap(held);
+    function addPair(a,b,stage){
+      const blocksA=getHeld(held,a), blocksB=getHeld(held,b);
+      const flitsA=op==="allgather" ? base*blocksA : base;
+      const flitsB=op==="allgather" ? base*blocksB : base;
+      const payloadA=op==="allgather" ? `${blocksA} block(s)` : "partial sum";
+      const payloadB=op==="allgather" ? `${blocksB} block(s)` : "partial sum";
+      const fa=flow(`D${idx++}`,a,b,flitsA,payloadA,idx,stage);
+      const fb=flow(`D${idx++}`,b,a,flitsB,payloadB,idx,stage);
+      const sa=getAvail(avail,a), sb=getAvail(avail,b);
+      flows.push(setTiming(fa,sa,1,stage));
+      flows.push(setTiming(fb,sb,1,stage));
+      setAvail(nextAvail,b,Math.max(getAvail(nextAvail,b),sa+fa.path.length));
+      setAvail(nextAvail,a,Math.max(getAvail(nextAvail,a),sb+fb.path.length));
+      if(op==="allgather"){
+        setHeld(nextHeld,b,getHeld(held,b)+blocksA);
+        setHeld(nextHeld,a,getHeld(held,a)+blocksB);
+      }
+    }
+    if(axis==="x"){
+      for(let y=0;y<rows;y++) for(let x=0;x<cols;x+=2*stride) for(let d=0;d<stride;d++){
+        if(x+d+stride<cols) addPair(node(x+d,y),node(x+d+stride,y),`dim-wise X ${op} stride=${stride}`);
+      }
+    }else{
+      for(let x=0;x<cols;x++) for(let y=0;y<rows;y+=2*stride) for(let d=0;d<stride;d++){
+        if(y+d+stride<rows) addPair(node(x,y+d),node(x,y+d+stride),`dim-wise Y ${op} stride=${stride}`);
+      }
+    }
+    avail=nextAvail; held=nextHeld;
+  }
+  const xStrides=op==="allgather" ? [...pow2Strides(cols)].reverse() : pow2Strides(cols);
+  const yStrides=op==="allgather" ? [...pow2Strides(rows)].reverse() : pow2Strides(rows);
+  xStrides.forEach(s=>oneAxis("x",s));
+  yStrides.forEach(s=>oneAxis("y",s));
+  return finishSchedule(flows,`dim-wise ${op}, flit-pipelined`);
+}
+function scheduleDimwise(rows,cols,op,base){
+  if(op==="broadcast") return dimwiseBroadcast(rows,cols,base);
+  if(op==="gather" || op==="reduce") return dimwiseGatherReduce(rows,cols,op,base);
+  if(op==="allreduce" || op==="allgather") return dimwiseExchange(rows,cols,op,base);
+  return finishSchedule([],"dim-wise");
+}
+function scheduleButterflyBasic(rows,cols,op,base){
+  const stages=[];
+  if(op==="broadcast"){
+    pow2Strides(cols).forEach(s=>addStage(stages,bcastStage(rows,cols,"x",s,base,`BX${s}.`),`basic X broadcast stride=${s}`));
+    pow2Strides(rows).forEach(s=>addStage(stages,bcastStage(rows,cols,"y",s,base,`BY${s}.`),`basic Y broadcast stride=${s}`));
+  }else if(op==="gather" || op==="reduce"){
+    [...pow2Strides(rows)].reverse().forEach(s=>{
+      const mul=op==="gather" ? rows/(2*s) : 1;
+      addStage(stages,reverseBcastStage(rows,cols,"y",s,base,`GY${s}.`,mul,op),`basic Y ${op} stride=${s}`);
+    });
+    [...pow2Strides(cols)].reverse().forEach(s=>{
+      const mul=op==="gather" ? rows*cols/(2*s) : 1;
+      addStage(stages,reverseBcastStage(rows,cols,"x",s,base,`GX${s}.`,mul,op),`basic X ${op} stride=${s}`);
+    });
+  }else if(op==="allgather"){
+    let blocks=1;
+    [...pow2Strides(cols)].reverse().forEach(s=>{
+      addStage(stages,pairExchange(rows,cols,"x",s,base*blocks,`${blocks} block(s)`,`AX${s}.`),`basic X ${op} stride=${s}`);
+      blocks*=2;
+    });
+    blocks=cols;
+    [...pow2Strides(rows)].reverse().forEach(s=>{
+      addStage(stages,pairExchange(rows,cols,"y",s,base*blocks,`${blocks} block(s)`,`AY${s}.`),`basic Y ${op} stride=${s}`);
+      blocks*=2;
+    });
+  }else if(op==="allreduce"){
+    pow2Strides(cols).forEach(s=>{
+      addStage(stages,pairExchange(rows,cols,"x",s,base,"partial sum",`AX${s}.`),`basic X ${op} stride=${s}`);
+    });
+    pow2Strides(rows).forEach(s=>{
+      addStage(stages,pairExchange(rows,cols,"y",s,base,"partial sum",`AY${s}.`),`basic Y ${op} stride=${s}`);
+    });
+  }
+  return finishFlattenedStages(stages,`basic logical butterfly ${op}`);
+}
+function scheduleTree(rows,cols,op,base){
+  const flows=[];
+  let idx=0;
+  if(op==="broadcast"){
+    for(let x=0;x<cols-1;x++){
+      flows.push(setTiming(flow(`T${idx++}`,node(x,0),node(x+1,0),base,"root block",idx,"tree row pipeline"),x,1,"tree row pipeline"));
+    }
+    for(let x=0;x<cols;x++) for(let y=0;y<rows-1;y++){
+      flows.push(setTiming(flow(`T${idx++}`,node(x,y),node(x,y+1),base,"root block",idx,"tree column pipeline"),x+y,1,"tree column pipeline"));
+    }
+    return finishSchedule(flows,"2D tree broadcast, flit-pipelined");
+  }else if(op==="gather" || op==="reduce"){
+    if(op==="gather"){
+      for(let x=0;x<cols;x++) for(let y=rows-1;y>=1;y--){
+        const blocks=rows-y;
+        flows.push(setTiming(flow(`T${idx++}`,node(x,y),node(x,y-1),base*blocks,`${blocks} block(s)`,idx,"tree column gather pipeline"),0,1,"tree column gather pipeline"));
+      }
+      for(let x=cols-1;x>=1;x--){
+        const blocks=rows*(cols-x);
+        flows.push(setTiming(flow(`T${idx++}`,node(x,0),node(x-1,0),base*blocks,`${blocks} block(s)`,idx,"tree row gather pipeline"),0,1,"tree row gather pipeline"));
+      }
+      return finishSchedule(flows,"2D tree gather, flit-pipelined");
+    }
+    for(let x=0;x<cols;x++) for(let y=rows-1;y>=1;y--){
+      const start=rows-1-y;
+      flows.push(setTiming(flow(`T${idx++}`,node(x,y),node(x,y-1),base,"partial sum",idx,"tree column reduce pipeline"),start,1,"tree column reduce pipeline"));
+    }
+    const rowStart=rows-1;
+    for(let x=cols-1;x>=1;x--){
+      const start=rowStart+(cols-1-x);
+      flows.push(setTiming(flow(`T${idx++}`,node(x,0),node(x-1,0),base,"partial sum",idx,"tree row reduce pipeline"),start,1,"tree row reduce pipeline"));
+    }
+    return finishSchedule(flows,"2D tree reduce, flit-pipelined");
+  }else if(op==="allreduce"){
+    return concatSchedules(scheduleTree(rows,cols,"reduce",base),scheduleTree(rows,cols,"broadcast",base),"2D tree all-reduce");
+  }else if(op==="allgather"){
+    return concatSchedules(scheduleTree(rows,cols,"gather",base),scheduleTree(rows,cols,"broadcast",base*rows*cols),"2D tree all-gather via root");
+  }
+  return finishSchedule(flows,"2D tree");
+}
+function snake(rows,cols){
+  const a=[]; for(let y=0;y<rows;y++){ if(y%2===0){for(let x=0;x<cols;x++)a.push(node(x,y));} else {for(let x=cols-1;x>=0;x--)a.push(node(x,y));}}
+  return a;
+}
+function scheduleRingSnake(rows,cols,op,base){
+  const nodes=snake(rows,cols), n=nodes.length, stages=[];
+  const flows=[]; let idx=0;
+  function ringRound(r,label,flitMul=1,dir=1){
+    const fs=[]; for(let i=0;i<n;i++){const j=(i+dir+n)%n; fs.push(flow(`R${r}.${i}`,nodes[i],nodes[j],base*flitMul,`${flitMul} block(s)`,i,""));}
+    addStage(stages,fs,label);
+  }
+  if(op==="broadcast"){
+    for(let i=0;i<n-1;i++){
+      flows.push(setTiming(flow(`R${idx++}`,nodes[i],nodes[i+1],base,"root block",idx,"ring broadcast pipeline"),i,1,"ring broadcast pipeline"));
+    }
+    return finishSchedule(flows,"snake ring broadcast");
+  }else if(op==="gather"||op==="reduce"){
+    if(op==="gather"){
+      for(let i=n-2;i>=0;i--){
+        const blocks=n-i-1;
+        flows.push(setTiming(flow(`R${idx++}`,nodes[i+1],nodes[i],base*blocks,`${blocks} block(s)`,idx,"ring gather pipeline"),0,1,"ring gather pipeline"));
+      }
+      return finishSchedule(flows,"snake ring gather");
+    }
+    for(let i=n-2;i>=0;i--){
+      const start=n-2-i;
+      flows.push(setTiming(flow(`R${idx++}`,nodes[i+1],nodes[i],base,"partial sum",idx,"ring reduce pipeline"),start,1,"ring reduce pipeline"));
+    }
+    return finishSchedule(flows,"snake ring reduce");
+  }else if(op==="allgather"){
+    for(let r=0;r<n-1;r++) ringRound(r,`ring all-gather round ${r}`,1,1);
+  }else if(op==="allreduce"){
+    for(let r=0;r<n-1;r++) ringRound(r,`ring reduce-scatter round ${r}`,1,1);
+    for(let r=0;r<n-1;r++) ringRound(r+n-1,`ring all-gather round ${r}`,1,1);
+  }
+  const schedule=flattenStages(stages);
+  schedule.peak=peakEdgeOccupancy(schedule);
+  return schedule;
+}
+function scheduleRingXY(rows,cols,op,base){
+  const flows=[]; let idx=0;
+  function push(id,a,b,flits,payload,start,stage){
+    flows.push(setTiming(flow(id,a,b,flits,payload,idx++,stage),start,1,stage));
+  }
+  function rowBroadcast(){
+    for(let x=0;x<cols-1;x++) push(`XY${idx}`,node(x,0),node(x+1,0),base,"root block",x,"XY row broadcast");
+  }
+  function colBroadcast(){
+    for(let x=0;x<cols;x++) for(let y=0;y<rows-1;y++){
+      push(`XY${idx}`,node(x,y),node(x,y+1),base,"root block",x+y,"XY column broadcast");
+    }
+  }
+  function colGatherReduce(kind){
+    for(let x=0;x<cols;x++) for(let y=rows-1;y>=1;y--){
+      const blocks=rows-y, flits=kind==="gather"?base*blocks:base;
+      const payload=kind==="gather"?`${blocks} block(s)`:"partial sum";
+      push(`XY${idx}`,node(x,y),node(x,y-1),flits,payload,rows-1-y,`XY column ${kind}`);
+    }
+  }
+  function rowGatherReduce(kind){
+    const offset=Math.max(0,rows-1);
+    for(let x=cols-1;x>=1;x--){
+      const blocks=rows*(cols-x), flits=kind==="gather"?base*blocks:base;
+      const payload=kind==="gather"?`${blocks} block(s)`:"partial sum";
+      push(`XY${idx}`,node(x,0),node(x-1,0),flits,payload,offset+cols-1-x,`XY row ${kind}`);
+    }
+  }
+  function rowAllGather(){
+    let start=0;
+    for(let r=0;r<cols-1;r++){
+      for(let y=0;y<rows;y++) for(let x=0;x<cols;x++){
+        const dst=node((x+1)%cols,y);
+        push(`XY${idx}`,node(x,y),dst,base,"1 row block",start,`XY row all-gather round ${r}`);
+      }
+      start+=base;
+    }
+  }
+  function colAllGather(offset){
+    let start=offset;
+    for(let r=0;r<rows-1;r++){
+      for(let x=0;x<cols;x++) for(let y=0;y<rows;y++){
+        const dst=node(x,(y+1)%rows);
+        push(`XY${idx}`,node(x,y),dst,base*cols,"1 row group",start,`XY column all-gather round ${r}`);
+      }
+      start+=base*cols;
+    }
+  }
+  if(op==="broadcast"){
+    rowBroadcast();
+    colBroadcast();
+    return finishSchedule(flows,"XY ring broadcast, flit-pipelined");
+  }
+  if(op==="gather" || op==="reduce"){
+    colGatherReduce(op);
+    rowGatherReduce(op);
+    return finishSchedule(flows,`XY ring ${op}, flit-pipelined`);
+  }
+  if(op==="allreduce"){
+    return concatSchedules(scheduleRingXY(rows,cols,"reduce",base),scheduleRingXY(rows,cols,"broadcast",base),"XY ring all-reduce");
+  }
+  if(op==="allgather"){
+    rowAllGather();
+    const rowSchedule=finishSchedule(flows,"XY row all-gather");
+    colAllGather(rowSchedule.duration);
+    return finishSchedule(flows,"XY ring all-gather, flit-pipelined");
+  }
+  return finishSchedule(flows,"XY ring");
+}
+function concatSchedules(a,b,label){
+  const flows=[...a.flows, ...b.flows.map(f=>({...f,id:`B.${f.id}`,label:`B.${f.label}`,start:f.start+a.duration}))];
+  const stages=[...a.stages, ...b.stages.map(s=>({...s,label:`${label}: ${s.label}`,flows:s.flows.map(f=>({...f,start:f.start+a.duration}))}))];
+  const schedule={flows,period:Math.max(a.period,b.period),duration:a.duration+b.duration,stages};
+  schedule.peak=peakEdgeOccupancy(schedule);
+  return schedule;
+}
+function buildSchedule(rows,cols,op,alg,base){
+  if(alg==="butterfly-basic") return scheduleButterflyBasic(rows,cols,op,base);
+  if(alg==="tree-pipelined") return scheduleTree(rows,cols,op,base);
+  if(alg==="ring-xy") return scheduleRingXY(rows,cols,op,base);
+  if(alg==="ring-snake") return scheduleRingSnake(rows,cols,op,base);
+  return scheduleDimwise(rows,cols,op,base);
+}
+function summarize(rows,cols,op,base){
+  return ["butterfly-basic","butterfly-pipelined","tree-pipelined","ring-xy","ring-snake"].map(alg=>{
+    const s=buildSchedule(rows,cols,op,alg,base);
+    return {alg:ALG_NAMES[alg],duration:s.duration,peak:s.peak ?? peakEdgeOccupancy(s),flows:s.flows.length,stages:s.stages.length};
+  });
+}
+function renderTable(el,headers,rows){
+  el.innerHTML=`<thead><tr>${headers.map(h=>`<th>${h}</th>`).join("")}</tr></thead><tbody>${
+    rows.map(r=>`<tr>${r.map(c=>`<td>${c}</td>`).join("")}</tr>`).join("")
+  }</tbody>`;
+}
+function usedEdges(schedule){
+  const m=new Map(); schedule.flows.forEach(f=>f.path.forEach(e=>m.set(e.id,e)));
+  return [...m.values()].sort((a,b)=>a.id.localeCompare(b.id));
+}
+function meshLayout(rows,cols){
+  const maxDim=Math.max(rows,cols), nodeCount=rows*cols;
+  const step=maxDim>=14?46:maxDim>=10?50:maxDim>=7?58:76;
+  const pad=maxDim>=14?34:38;
+  const width=Math.max(420,pad*2+(cols-1)*step);
+  const height=Math.max(360,pad*2+(rows-1)*step);
+  const dense=maxDim>=13 || nodeCount>144;
+  return {
+    width,height,pad,dense,
+    nodeR:dense?5.5:(maxDim>=10?7:10),
+    nodeFont:dense?6:(maxDim>=10?7:8),
+    edgeOffset:dense?2.4:3.5,
+    trim:dense?8:(maxDim>=10?10:13),
+    showFlitLabels:!dense && nodeCount<=144,
+  };
+}
+function pos(n,rows,cols,layout){
+  const sx=cols===1?0:(layout.width-layout.pad*2)/(cols-1), sy=rows===1?0:(layout.height-layout.pad*2)/(rows-1);
+  return {x:layout.pad+n.x*sx,y:layout.pad+n.y*sy};
+}
+function showNodeLabel(x,y,rows,cols,layout){
+  if(!layout.dense) return true;
+  const corner=(x===0||x===cols-1) && (y===0||y===rows-1);
+  return corner || (x%4===0 && y%4===0);
+}
+function trim(p0,p1,t=13){
+  const dx=p1.x-p0.x,dy=p1.y-p0.y,len=Math.max(1,Math.hypot(dx,dy));
+  return {x1:p0.x+dx/len*t,y1:p0.y+dy/len*t,x2:p1.x-dx/len*t,y2:p1.y-dy/len*t};
+}
+function renderMesh(schedule,rows,cols,cycle){
+  const layout=meshLayout(rows,cols), evs=allEvents(schedule,cycle), byEdge=new Map();
+  evs.forEach(e=>{
+    if(!byEdge.has(e.edge.id)) byEdge.set(e.edge.id,[]);
+    byEdge.get(e.edge.id).push(e);
+  });
+  const lines=[];
+  for(let y=0;y<rows;y++)for(let x=0;x<cols-1;x++){lines.push({from:node(x,y),to:node(x+1,y)});lines.push({from:node(x+1,y),to:node(x,y)});}
+  for(let x=0;x<cols;x++)for(let y=0;y<rows-1;y++){lines.push({from:node(x,y),to:node(x,y+1)});lines.push({from:node(x,y+1),to:node(x,y)});}
+  const lineSvg=lines.map(e=>{
+    const id=eid(e.from,e.to), p0=pos(e.from,rows,cols,layout), p1=pos(e.to,rows,cols,layout), rev=e.from.x>e.to.x||e.from.y>e.to.y;
+    const off=rev?-layout.edgeOffset:layout.edgeOffset, ox=e.from.y===e.to.y?0:off, oy=e.from.x===e.to.x?0:off;
+    const tr=trim({x:p0.x+ox,y:p0.y+oy},{x:p1.x+ox,y:p1.y+oy},layout.trim);
+    const active=byEdge.get(id)||[], color=active.length>1?"#a33":(active[0]?.flow.color||"#ddd"), sw=active.length?Math.min(4,1.8+active.length*.35):1;
+    const title=active.length?`<title>${active.map(ev=>ev.label).join(", ")}</title>`:"";
+    return `<line x1="${tr.x1}" y1="${tr.y1}" x2="${tr.x2}" y2="${tr.y2}" stroke="${color}" stroke-width="${sw}" marker-end="${active.length?'url(#arr)':''}">${title}</line>`;
+  }).join("");
+  const nodes=[]; for(let y=0;y<rows;y++)for(let x=0;x<cols;x++){
+    const p=pos(node(x,y),rows,cols,layout), label=showNodeLabel(x,y,rows,cols,layout);
+    nodes.push(`<g><circle cx="${p.x}" cy="${p.y}" r="${layout.nodeR}" fill="white" stroke="#222"/><title>${x},${y}</title>${label?`<text x="${p.x}" y="${p.y+layout.nodeFont/2-1}" font-size="${layout.nodeFont}" text-anchor="middle">${x},${y}</text>`:""}</g>`);
+  }
+  const labels=layout.showFlitLabels?evs.map(ev=>{
+    const p0=pos(ev.edge.from,rows,cols,layout),p1=pos(ev.edge.to,rows,cols,layout);
+    const horiz=ev.edge.from.y===ev.edge.to.y, rev=ev.edge.from.x>ev.edge.to.x||ev.edge.from.y>ev.edge.to.y;
+    const dx=horiz?0:(rev?-22:22),dy=horiz?(rev?-18:18):-3;
+    return `<text x="${(p0.x+p1.x)/2+dx}" y="${(p0.y+p1.y)/2+dy}" font-size="8" text-anchor="middle" fill="${ev.flow.color}" stroke="white" stroke-width="3" paint-order="stroke">${ev.label}</text>`;
+  }).join(""):"";
+  return `<svg width="${layout.width}" height="${layout.height}" viewBox="0 0 ${layout.width} ${layout.height}" role="img" aria-label="${rows} by ${cols} mesh at cycle ${cycle}"><defs><marker id="arr" markerWidth="5" markerHeight="5" refX="4.5" refY="2.5" orient="auto"><path d="M0,0 L5,2.5 L0,5 Z" fill="context-stroke"/></marker></defs>${lineSvg}${nodes.join("")}${labels}</svg>`;
+}
+function renderLaneGrid(el,rows,cols,rowLabels,cycles,valueAt){
+  const longest=Math.max(4,...rowLabels.map(r=>String(r).length));
+  const labelWidth=Math.max(150,Math.min(280,longest*7+24));
+  const cellWidth=rowLabels.length>160?54:62;
+  const cellHeight=rowLabels.length>220?24:28;
+  el.style.setProperty("--cell-w",`${cellWidth}px`);
+  el.style.setProperty("--cell-h",`${cellHeight}px`);
+  el.style.gridTemplateColumns=`${labelWidth}px repeat(${cycles.length},${cellWidth}px)`;
+  el.innerHTML=`<div class="cell head rowhead">item</div>${cycles.map(c=>`<div class="cell head">c${c}</div>`).join("")}`+
+    rowLabels.map(r=>`<div class="cell rowhead" title="${r}">${r}</div>`+cycles.map(c=>{
+      const v=valueAt(r,c); return `<div class="cell" title="${v.text||""}" style="${v.color?`color:${v.color};font-weight:700;background:#fafafa`:''}">${v.text||"."}</div>`;
+    }).join("")).join("");
+}
+function render(){
+  const rows=Math.max(2,Math.min(16,+document.getElementById("rows").value||4));
+  const cols=Math.max(2,Math.min(16,+document.getElementById("cols").value||4));
+  const op=document.getElementById("op").value, alg=document.getElementById("alg").value;
+  const base=Math.max(1,Math.min(24,+document.getElementById("flits").value||1));
+  const schedule=buildSchedule(rows,cols,op,alg,base); current={rows,cols,op,alg,base,schedule};
+  const cycleInput=document.getElementById("cycle"); cycleInput.max=Math.max(0,schedule.duration);
+  let cycle=Math.max(0,Math.min(+cycleInput.value||0,schedule.duration)); cycleInput.value=cycle;
+  const evs=allEvents(schedule,cycle);
+  document.getElementById("metrics").innerHTML=[
+    ["Mesh",`${rows}×${cols}`,`${rows*cols} nodes`],
+    ["当前选择",ALG_NAMES[alg]||alg,op],
+    ["延迟",`${schedule.duration} cycles`,`${schedule.stages.length} logical stages`],
+    ["Max edge sharing",`${schedule.peak ?? peakEdgeOccupancy(schedule)}`,`当前在飞 flits: ${evs.length}`],
+  ].map(m=>`<div class="metric"><div class="name">${m[0]}</div><div class="value">${m[1]}</div><div class="sub">${m[2]}</div></div>`).join("");
+  document.getElementById("algNote").textContent=ALG_NOTES[alg]||"";
+  const comp=summarize(rows,cols,op,base);
+  renderTable(document.getElementById("compare"),["算法","延迟(cycles)","Max edge sharing","逻辑阶段","逻辑 flows"],
+    comp.map(r=>[r.alg,r.duration,r.peak,r.stages,r.flows]));
+  document.getElementById("mesh").innerHTML=renderMesh(schedule,rows,cols,cycle);
+  document.getElementById("cycleTag").textContent=`cycle ${cycle} / ${schedule.duration}`;
+  document.getElementById("activeTag").textContent=`active ${evs.length}`;
+  renderTable(document.getElementById("active"),["flit","stage","flow","edge","payload"],
+    evs.map(e=>[e.label,e.flow.stage,e.flow.label,elabel(e.edge),e.flow.payload]));
+  const totalCycles=schedule.duration+1;
+  const win=Math.min(36,Math.max(8,totalCycles)), start=totalCycles<=win?0:Math.min(Math.max(0,cycle-8),totalCycles-win);
+  const cycles=Array.from({length:win},(_,i)=>start+i);
+  const edges=usedEdges(schedule).map(e=>e.id);
+  renderLaneGrid(document.getElementById("lane"),rows,cols,edges,cycles,(edgeId,cy)=>{
+    const es=allEvents(schedule,cy).filter(e=>e.edge.id===edgeId); return es[0]?{text:es.length>1?"conflict":es[0].label,color:es.length>1?"#a33":es[0].flow.color}:{text:""};
+  });
+  const flows=schedule.flows.map(f=>f.id);
+  renderLaneGrid(document.getElementById("timeline"),rows,cols,flows,cycles,(fid,cy)=>{
+    const f=schedule.flows.find(x=>x.id===fid), e=f?eventAt(f,cy,schedule.period):null; return e?{text:elabel(e.edge),color:f.color}:{text:""};
+  });
+}
+document.getElementById("apply").onclick=render;
+document.getElementById("prev").onclick=()=>{const c=document.getElementById("cycle");c.value=Math.max(0,(+c.value||0)-1);render();};
+document.getElementById("next").onclick=()=>{const c=document.getElementById("cycle");c.value=(+c.value||0)+1;render();};
+document.getElementById("cycle").onchange=render;
+render();
+</script>
+</body>
+</html>
