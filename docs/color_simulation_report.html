@@ -102,8 +102,9 @@
   <div class="wrap">
     <h1>Color NoC Simulation Report</h1>
     <p class="subtitle">
-      Ideal static-route color scheme (<code>color_ideal</code>, K=24) vs single-VN XY baseline on 2D mesh.
-      Patent background: <a href="color_mechanism_analysis.md">color_mechanism_analysis.md</a>
+      Ideal static-route color scheme (<code>color_ideal</code>, K=24) vs single-VN XY baseline.
+      Usage guide: <a href="color_usage_guide.md">color_usage_guide.md</a> ·
+      Patent: <a href="color_mechanism_analysis.md">color_mechanism_analysis.md</a>
     </p>
 
     <div class="cards">
@@ -129,6 +130,14 @@
 
     
     <h2>Color 生成方法与依据</h2>
+
+    <h3>与 cerebras-cloud-sdk-python 的关系</h3>
+    <div class="callout">
+      <p><code>vendor/cerebras-cloud-sdk-python</code> 是 Cerebras Cloud <strong>REST 推理 API</strong>
+        （chat completions、models），<strong>不包含</strong>片上 NoC color 定义。
+         Color 路由是编译期 fabric 机制，由本仓库 <code>wsesim/network/</code> 与
+         <a href="color_usage_guide.md">color_usage_guide.md</a> 建模。</p>
+    </div>
 
     <h3>设计依据</h3>
     <div class="callout">
@@ -285,25 +294,25 @@
         </tr>
         <tr>
           <td class="num">20</td>
+          <td><code>reduce_col_south</code></td>
+          <td>方向总线 (南 ↓)</td>
+          <td><code>dest[node]</code> 固定指向 <strong>south</strong> 方向相邻节点，与运行时 dst 无关；包沿该方向前进直到抵达目的。</td>
+        </tr>
+        <tr>
+          <td class="num">21</td>
+          <td><code>reduce_row_east</code></td>
+          <td>方向总线 (东 →)</td>
+          <td><code>dest[node]</code> 固定指向 <strong>east</strong> 方向相邻节点，与运行时 dst 无关；包沿该方向前进直到抵达目的。</td>
+        </tr>
+        <tr>
+          <td class="num">22</td>
           <td><code>spare_xy_0</code></td>
           <td>维度序单播 (XY)</td>
           <td>按包内 <code>dst</code> 在每跳静态选择下一跳（XY 先行后列，YX 先列后行）。</td>
         </tr>
         <tr>
-          <td class="num">21</td>
-          <td><code>spare_yx_0</code></td>
-          <td>维度序单播 (YX)</td>
-          <td>按包内 <code>dst</code> 在每跳静态选择下一跳（XY 先行后列，YX 先列后行）。</td>
-        </tr>
-        <tr>
-          <td class="num">22</td>
-          <td><code>spare_xy_1</code></td>
-          <td>维度序单播 (XY)</td>
-          <td>按包内 <code>dst</code> 在每跳静态选择下一跳（XY 先行后列，YX 先列后行）。</td>
-        </tr>
-        <tr>
           <td class="num">23</td>
-          <td><code>spare_yx_1</code></td>
+          <td><code>spare_yx_0</code></td>
           <td>维度序单播 (YX)</td>
           <td>按包内 <code>dst</code> 在每跳静态选择下一跳（XY 先行后列，YX 先列后行）。</td>
         </tr></tbody>
@@ -410,25 +419,25 @@
           <td>4x4</td>
           <td><code>broadcast</code></td>
           <td class="num">81</td>
-          <td class="num">10</td>
+          <td class="num">9</td>
           <td>Color</td>
-          <td class="num">8.1×</td>
+          <td class="num">9.0×</td>
         </tr>
         <tr class="win-color">
           <td>4x4</td>
           <td><code>gather</code></td>
           <td class="num">69</td>
-          <td class="num">9</td>
+          <td class="num">10</td>
           <td>Color</td>
-          <td class="num">7.7×</td>
+          <td class="num">6.9×</td>
         </tr>
         <tr class="win-color">
           <td>4x4</td>
           <td><code>reduce</code></td>
           <td class="num">69</td>
-          <td class="num">9</td>
+          <td class="num">10</td>
           <td>Color</td>
-          <td class="num">7.7×</td>
+          <td class="num">6.9×</td>
         </tr>
         <tr class="win-color">
           <td>8x8</td>
@@ -450,25 +459,25 @@
           <td>8x8</td>
           <td><code>broadcast</code></td>
           <td class="num">333</td>
-          <td class="num">18</td>
+          <td class="num">17</td>
           <td>Color</td>
-          <td class="num">18.5×</td>
+          <td class="num">19.6×</td>
         </tr>
         <tr class="win-color">
           <td>8x8</td>
           <td><code>gather</code></td>
           <td class="num">301</td>
-          <td class="num">17</td>
+          <td class="num">18</td>
           <td>Color</td>
-          <td class="num">17.7×</td>
+          <td class="num">16.7×</td>
         </tr>
         <tr class="win-color">
           <td>8x8</td>
           <td><code>reduce</code></td>
           <td class="num">301</td>
-          <td class="num">17</td>
+          <td class="num">18</td>
           <td>Color</td>
-          <td class="num">17.7×</td>
+          <td class="num">16.7×</td>
         </tr>
       </tbody>
     </table>
@@ -498,6 +507,30 @@
           <td>4x4</td>
           <td>color_ideal</td>
           <td><code>broadcast</code></td>
+          <td class="num">9</td>
+          <td class="num">4</td>
+          <td class="num">0.069</td>
+          <td class="num">0</td>
+          <td class="num">0</td>
+          <td class="num">0</td>
+          <td><div class="bar" style="width:2px" title="9.0 cycles"></div></td>
+        </tr>
+        <tr>
+          <td>4x4</td>
+          <td>xy_single_vn</td>
+          <td><code>gather</code></td>
+          <td class="num">69</td>
+          <td class="num">35</td>
+          <td class="num">0.029</td>
+          <td class="num">0</td>
+          <td class="num">0</td>
+          <td class="num">0</td>
+          <td><div class="bar" style="width:2px" title="69.0 cycles"></div></td>
+        </tr>
+        <tr>
+          <td>4x4</td>
+          <td>color_ideal</td>
+          <td><code>gather</code></td>
           <td class="num">10</td>
           <td class="num">4</td>
           <td class="num">0.062</td>
@@ -509,30 +542,6 @@
         <tr>
           <td>4x4</td>
           <td>xy_single_vn</td>
-          <td><code>gather</code></td>
-          <td class="num">69</td>
-          <td class="num">35</td>
-          <td class="num">0.029</td>
-          <td class="num">0</td>
-          <td class="num">0</td>
-          <td class="num">0</td>
-          <td><div class="bar" style="width:2px" title="69.0 cycles"></div></td>
-        </tr>
-        <tr>
-          <td>4x4</td>
-          <td>color_ideal</td>
-          <td><code>gather</code></td>
-          <td class="num">9</td>
-          <td class="num">4</td>
-          <td class="num">0.069</td>
-          <td class="num">0</td>
-          <td class="num">0</td>
-          <td class="num">0</td>
-          <td><div class="bar" style="width:2px" title="9.0 cycles"></div></td>
-        </tr>
-        <tr>
-          <td>4x4</td>
-          <td>xy_single_vn</td>
           <td><code>reduce</code></td>
           <td class="num">69</td>
           <td class="num">35</td>
@@ -546,13 +555,13 @@
           <td>4x4</td>
           <td>color_ideal</td>
           <td><code>reduce</code></td>
-          <td class="num">9</td>
+          <td class="num">10</td>
           <td class="num">4</td>
-          <td class="num">0.069</td>
+          <td class="num">0.062</td>
           <td class="num">0</td>
           <td class="num">0</td>
           <td class="num">0</td>
-          <td><div class="bar" style="width:2px" title="9.0 cycles"></div></td>
+          <td><div class="bar" style="width:2px" title="10.0 cycles"></div></td>
         </tr>
         <tr>
           <td>4x4</td>
@@ -618,6 +627,30 @@
           <td>8x8</td>
           <td>color_ideal</td>
           <td><code>broadcast</code></td>
+          <td class="num">17</td>
+          <td class="num">4</td>
+          <td class="num">0.033</td>
+          <td class="num">0</td>
+          <td class="num">0</td>
+          <td class="num">0</td>
+          <td><div class="bar" style="width:2px" title="17.0 cycles"></div></td>
+        </tr>
+        <tr>
+          <td>8x8</td>
+          <td>xy_single_vn</td>
+          <td><code>gather</code></td>
+          <td class="num">301</td>
+          <td class="num">147.44</td>
+          <td class="num">0.013</td>
+          <td class="num">0</td>
+          <td class="num">0</td>
+          <td class="num">0</td>
+          <td><div class="bar" style="width:11px" title="301.0 cycles"></div></td>
+        </tr>
+        <tr>
+          <td>8x8</td>
+          <td>color_ideal</td>
+          <td><code>gather</code></td>
           <td class="num">18</td>
           <td class="num">4</td>
           <td class="num">0.031</td>
@@ -629,30 +662,6 @@
         <tr>
           <td>8x8</td>
           <td>xy_single_vn</td>
-          <td><code>gather</code></td>
-          <td class="num">301</td>
-          <td class="num">147.44</td>
-          <td class="num">0.013</td>
-          <td class="num">0</td>
-          <td class="num">0</td>
-          <td class="num">0</td>
-          <td><div class="bar" style="width:11px" title="301.0 cycles"></div></td>
-        </tr>
-        <tr>
-          <td>8x8</td>
-          <td>color_ideal</td>
-          <td><code>gather</code></td>
-          <td class="num">17</td>
-          <td class="num">4</td>
-          <td class="num">0.033</td>
-          <td class="num">0</td>
-          <td class="num">0</td>
-          <td class="num">0</td>
-          <td><div class="bar" style="width:2px" title="17.0 cycles"></div></td>
-        </tr>
-        <tr>
-          <td>8x8</td>
-          <td>xy_single_vn</td>
           <td><code>reduce</code></td>
           <td class="num">301</td>
           <td class="num">147.44</td>
@@ -666,13 +675,13 @@
           <td>8x8</td>
           <td>color_ideal</td>
           <td><code>reduce</code></td>
-          <td class="num">17</td>
+          <td class="num">18</td>
           <td class="num">4</td>
-          <td class="num">0.033</td>
+          <td class="num">0.031</td>
           <td class="num">0</td>
           <td class="num">0</td>
           <td class="num">0</td>
-          <td><div class="bar" style="width:2px" title="17.0 cycles"></div></td>
+          <td><div class="bar" style="width:2px" title="18.0 cycles"></div></td>
         </tr>
         <tr>
           <td>8x8</td>
@@ -731,7 +740,7 @@
        workload×mesh combinations. Largest speedup:
        <strong>72.8×</strong> on <code>8x8</code>
        <code>allgather</code>.</p>
-    <ul><li><code>4x4</code> <code>allgather</code> — 290 → 15 cycles (<strong>19.3×</strong>)</li><li><code>4x4</code> <code>allreduce</code> — 88 → 21 cycles (<strong>4.2×</strong>)</li><li><code>4x4</code> <code>broadcast</code> — 81 → 10 cycles (<strong>8.1×</strong>)</li><li><code>4x4</code> <code>gather</code> — 69 → 9 cycles (<strong>7.7×</strong>)</li><li><code>4x4</code> <code>reduce</code> — 69 → 9 cycles (<strong>7.7×</strong>)</li><li><code>8x8</code> <code>allgather</code> — 2,548.0 → 35 cycles (<strong>72.8×</strong>)</li><li><code>8x8</code> <code>allreduce</code> — 356 → 49 cycles (<strong>7.3×</strong>)</li><li><code>8x8</code> <code>broadcast</code> — 333 → 18 cycles (<strong>18.5×</strong>)</li><li><code>8x8</code> <code>gather</code> — 301 → 17 cycles (<strong>17.7×</strong>)</li><li><code>8x8</code> <code>reduce</code> — 301 → 17 cycles (<strong>17.7×</strong>)</li></ul>
+    <ul><li><code>4x4</code> <code>allgather</code> — 290 → 15 cycles (<strong>19.3×</strong>)</li><li><code>4x4</code> <code>allreduce</code> — 88 → 21 cycles (<strong>4.2×</strong>)</li><li><code>4x4</code> <code>broadcast</code> — 81 → 9 cycles (<strong>9.0×</strong>)</li><li><code>4x4</code> <code>gather</code> — 69 → 10 cycles (<strong>6.9×</strong>)</li><li><code>4x4</code> <code>reduce</code> — 69 → 10 cycles (<strong>6.9×</strong>)</li><li><code>8x8</code> <code>allgather</code> — 2,548.0 → 35 cycles (<strong>72.8×</strong>)</li><li><code>8x8</code> <code>allreduce</code> — 356 → 49 cycles (<strong>7.3×</strong>)</li><li><code>8x8</code> <code>broadcast</code> — 333 → 17 cycles (<strong>19.6×</strong>)</li><li><code>8x8</code> <code>gather</code> — 301 → 18 cycles (<strong>16.7×</strong>)</li><li><code>8x8</code> <code>reduce</code> — 301 → 18 cycles (<strong>16.7×</strong>)</li></ul>
 
     <h3>Why ideal static routes win</h3>
     <ul>
@@ -757,7 +766,7 @@
       <li>Fault-tolerance code exists in <code>wsesim/network/color_repair.py</code> (not yet in this benchmark harness).</li>
     </ol>
 
-    <p class="meta">Generated 2026-05-30 06:54 UTC · wse-simulator color NoC study</p>
+    <p class="meta">Generated 2026-05-30 14:41 UTC · wse-simulator color NoC study</p>
   </div>
 </body>
 </html>

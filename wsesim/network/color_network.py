@@ -111,6 +111,9 @@ class ColorNetwork:
         if packet.src not in self.graph or packet.dst not in self.graph:
             raise ValueError("Packet source/destination unavailable.")
 
+        if packet.task == 0 and color < len(self.plan.colors):
+            packet.task = self.plan.colors[color].task
+
         lock = self._stream_lock(color, packet.src, packet.dst)
         req = lock.request()
         yield req

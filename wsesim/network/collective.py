@@ -391,22 +391,35 @@ def generate_mixed_taxonomy_traffic(
 
 
 def default_color_map() -> dict[str, int]:
-    """Map payload types to colors in the mixed plan."""
+    """Map payload types to catalog color IDs for ideal collectives."""
+    from wsesim.network.color_catalog import (
+        C_AG_ROW_EAST,
+        C_AR_RS_ROW_EAST,
+        C_BCAST_ROW_EAST,
+        C_GATHER_COL_NORTH,
+        C_REDUCE_COL_NORTH,
+        C_UNICAST_XY,
+        C_UNICAST_YX,
+    )
+
     return {
-        "systolic": 0,
-        "mixed_systolic": 0,
-        "reduce": 1,
-        "mixed_reduce": 1,
-        "broadcast": 0,
-        "mixed_broadcast": 0,
-        "allreduce_rs": 0,
-        "allreduce_ag": 0,
-        "mixed_allreduce_rs": 0,
-        "mixed_allreduce_ag": 0,
-        "allgather": 0,
-        "mixed_allgather": 0,
-        "all_to_all": 1,
-        "mixed_all_to_all": 1,
+        "broadcast": C_BCAST_ROW_EAST,
+        "mixed_broadcast": C_BCAST_ROW_EAST,
+        "gather": C_GATHER_COL_NORTH,
+        "mixed_gather": C_GATHER_COL_NORTH,
+        "reduce": C_REDUCE_COL_NORTH,
+        "mixed_reduce": C_REDUCE_COL_NORTH,
+        "allgather": C_AG_ROW_EAST,
+        "mixed_allgather": C_AG_ROW_EAST,
+        "allreduce": C_AR_RS_ROW_EAST,
+        "allreduce_rs": C_AR_RS_ROW_EAST,
+        "allreduce_ag": C_AR_RS_ROW_EAST,
+        "mixed_allreduce_rs": C_AR_RS_ROW_EAST,
+        "mixed_allreduce_ag": C_AR_RS_ROW_EAST,
+        "systolic": C_UNICAST_XY,
+        "mixed_systolic": C_UNICAST_XY,
+        "all_to_all": C_UNICAST_YX,
+        "mixed_all_to_all": C_UNICAST_YX,
     }
 
 
@@ -437,12 +450,11 @@ from wsesim.network.color_catalog import (  # noqa: E402
     C_AR_AG_ROW_WEST,
     C_AR_RS_COL_SOUTH,
     C_AR_RS_ROW_EAST,
-    C_BCAST_COL_SOUTH,
-    C_BCAST_ROW_EAST,
-    C_GATHER_COL_NORTH,
-    C_GATHER_ROW_WEST,
-    C_REDUCE_COL_NORTH,
-    C_REDUCE_ROW_WEST,
+)
+from wsesim.network.color_usage import (  # noqa: E402
+    pick_broadcast_colors,
+    pick_reduce_colors,
+    pick_tree_colors,
 )
 
 IDEAL_PATTERNS = ["broadcast", "gather", "reduce", "allreduce", "allgather"]
@@ -485,17 +497,19 @@ def generate_baseline_collective(
 
 
 def generate_ideal_collective(
-    pattern: str, rows: int, cols: int, chunk_bytes: int
+    pattern: str, rows: int, cols: int, chunk_bytes: int, *, root: int = 0
 ) -> list[dict]:
     """Ideal static-route realisation on the color catalog."""
     chunk = max(1, int(chunk_bytes))
     pattern = pattern.lower()
     if pattern == "broadcast":
-        return _ideal_broadcast(rows, cols, chunk)
+        return _ideal_broadcast(rows, cols, chunk, root=root)
     if pattern == "gather":
-        return _ideal_tree_to_root(rows, cols, chunk, "gather", C_GATHER_COL_NORTH, C_GATHER_ROW_WEST)
+        row_c, col_c = pick_tree_colors(root, rows, cols, gather=True)
+        return _ideal_tree_to_root(rows, cols, chunk, "gather", col_c, row_c, root=root)
     if pattern == "reduce":
-        return _ideal_tree_to_root(rows, cols, chunk, "reduce", C_REDUCE_COL_NORTH, C_REDUCE_ROW_WEST)
+        row_c, col_c = pick_reduce_colors(root, rows, cols)
+        return _ideal_tree_to_root(rows, cols, chunk, "reduce", col_c, row_c, root=root)
     if pattern == "allgather":
         return _ideal_allgather(rows, cols, chunk)
     if pattern == "allreduce":
@@ -503,33 +517,78 @@ def generate_ideal_collective(
     raise ValueError(f"Unknown pattern {pattern!r}")
 
 
-def _ideal_broadcast(rows: int, cols: int, chunk: int) -> list[dict]:
-    """Spanning tree from corner (0,0): row-0 east ripple, then per-column south."""
+def _bus_direction(color_id: int) -> str:
+    from wsesim.network.color_catalog import CATALOG
+
+    _name, kind, spec = CATALOG[color_id]
+    if kind != "bus":
+        raise ValueError(f"Color {color_id} is not a directional bus")
+    return spec
+
+
+def _ideal_broadcast(rows: int, cols: int, chunk: int, *, root: int = 0) -> list[dict]:
+    """Spanning tree from root: row ripple then per-column column ripple."""
+    row_c, col_c = pick_broadcast_colors(root, rows, cols)
+    rr, rc = divmod(root, cols)
+    row_dir = _bus_direction(row_c)
+    col_dir = _bus_direction(col_c)
     pk: list[dict] = []
-    for c in range(cols - 1):
-        pk.append(_cedge(c, c + 1, chunk, "broadcast", c, C_BCAST_ROW_EAST))
-    for c in range(cols):
-        for r in range(rows - 1):
-            delay = c + 1 + r
-            pk.append(
-                _cedge(r * cols + c, (r + 1) * cols + c, chunk, "broadcast", delay, C_BCAST_COL_SOUTH)
-            )
+    if row_dir == "east":
+        for c in range(rc, cols - 1):
+            src = rr * cols + c
+            pk.append(_cedge(src, src + 1, chunk, "broadcast", c - rc, row_c))
+    else:
+        for c in range(rc, 0, -1):
+            src = rr * cols + c
+            pk.append(_cedge(src, src - 1, chunk, "broadcast", rc - c, row_c))
+    base = max(1, cols - 1)
+    if col_dir == "south":
+        for c in range(cols):
+            for r in range(rr, rows - 1):
+                pk.append(
+                    _cedge(r * cols + c, (r + 1) * cols + c, chunk, "broadcast", base + r - rr, col_c)
+                )
+    else:
+        for c in range(cols):
+            for r in range(rr, 0, -1):
+                pk.append(
+                    _cedge(r * cols + c, (r - 1) * cols + c, chunk, "broadcast", base + rr - r, col_c)
+                )
     return pk
 
 
 def _ideal_tree_to_root(
-    rows: int, cols: int, chunk: int, payload: str, col_color: int, row_color: int
+    rows: int,
+    cols: int,
+    chunk: int,
+    payload: str,
+    col_color: int,
+    row_color: int,
+    *,
+    root: int = 0,
 ) -> list[dict]:
-    """Reverse spanning tree to corner (0,0): columns converge north, then row 0 west."""
+    """Reverse spanning tree to root: columns converge then row converges."""
+    rr, rc = divmod(root, cols)
+    col_dir = _bus_direction(col_color)
+    row_dir = _bus_direction(row_color)
     pk: list[dict] = []
-    for c in range(cols):
-        for r in range(rows - 1, 0, -1):
-            level = (rows - 1) - r
-            pk.append(_cedge(r * cols + c, (r - 1) * cols + c, chunk, payload, level, col_color))
+    if col_dir == "north":
+        for c in range(cols):
+            for r in range(rows - 1, rr, -1):
+                level = (rows - 1) - r
+                pk.append(_cedge(r * cols + c, (r - 1) * cols + c, chunk, payload, level, col_color))
+    else:
+        for c in range(cols):
+            for r in range(0, rr):
+                level = rr - r - 1
+                pk.append(_cedge(r * cols + c, (r + 1) * cols + c, chunk, payload, level, col_color))
     base = max(0, rows - 1)
-    for c in range(cols - 1, 0, -1):
-        delay = base + (cols - 1 - c)
-        pk.append(_cedge(c, c - 1, chunk, payload, delay, row_color))
+    if row_dir == "west":
+        for c in range(cols - 1, rc, -1):
+            pk.append(_cedge(rr * cols + c, rr * cols + c - 1, chunk, payload, base + c - rc, row_color))
+    else:
+        for c in range(0, rc):
+            pk.append(_cedge(rr * cols + c, rr * cols + c + 1, chunk, payload, base + rc - c, row_color))
     return pk
 
 

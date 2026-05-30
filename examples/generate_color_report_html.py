@@ -139,6 +139,14 @@ def render_color_generation_section(num_colors: int = MAX_COLORS) -> str:
     return f"""
     <h2>Color 生成方法与依据</h2>
 
+    <h3>与 cerebras-cloud-sdk-python 的关系</h3>
+    <div class="callout">
+      <p><code>vendor/cerebras-cloud-sdk-python</code> 是 Cerebras Cloud <strong>REST 推理 API</strong>
+        （chat completions、models），<strong>不包含</strong>片上 NoC color 定义。
+         Color 路由是编译期 fabric 机制，由本仓库 <code>wsesim/network/</code> 与
+         <a href="color_usage_guide.md">color_usage_guide.md</a> 建模。</p>
+    </div>
+
     <h3>设计依据</h3>
     <div class="callout">
       <p>本仿真参照 Cerebras 专利 <strong>US10,515,303</strong> 的 Color 机制，并针对集合通信 workload
@@ -398,8 +406,9 @@ def render_html(
   <div class="wrap">
     <h1>Color NoC Simulation Report</h1>
     <p class="subtitle">
-      Ideal static-route color scheme (<code>color_ideal</code>, K={num_colors}) vs single-VN XY baseline on 2D mesh.
-      Patent background: <a href="color_mechanism_analysis.md">color_mechanism_analysis.md</a>
+      Ideal static-route color scheme (<code>color_ideal</code>, K={num_colors}) vs single-VN XY baseline.
+      Usage guide: <a href="color_usage_guide.md">color_usage_guide.md</a> ·
+      Patent: <a href="color_mechanism_analysis.md">color_mechanism_analysis.md</a>
     </p>
 
     <div class="cards">

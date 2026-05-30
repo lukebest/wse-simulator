@@ -68,8 +68,31 @@ def test_ideal_catalog_is_mesh_independent():
     p4 = build_ideal_plan(4, 4)
     p8 = build_ideal_plan(8, 8)
     assert p4.num_colors == p8.num_colors == MAX_COLORS
-    # Same semantic color names regardless of mesh size.
     assert [c.name for c in p4.colors] == [c.name for c in p8.colors]
+
+
+def test_validate_ideal_plan_bus_acyclic():
+    from wsesim.network.color_usage import validate_plan
+
+    plan = build_ideal_plan(4, 4)
+    assert validate_plan(plan) == {}
+
+
+def test_color_usage_scenarios_cover_collectives():
+    from wsesim.network.color_usage import COLLECTIVE_SCENARIOS, scenario_for
+
+    patterns = {s.pattern for s in COLLECTIVE_SCENARIOS}
+    assert {"broadcast", "gather", "reduce", "allgather", "allreduce"}.issubset(patterns)
+    assert scenario_for("broadcast") is not None
+
+
+def test_root_flexible_broadcast_colors():
+    from wsesim.network.color_catalog import C_BCAST_COL_NORTH, C_BCAST_ROW_WEST
+    from wsesim.network.color_usage import pick_broadcast_colors
+
+    row_c, col_c = pick_broadcast_colors(15, 4, 4)  # bottom-right on 4x4
+    assert row_c == C_BCAST_ROW_WEST
+    assert col_c == C_BCAST_COL_NORTH
 
 
 def test_ideal_bus_routes_toward_dest():

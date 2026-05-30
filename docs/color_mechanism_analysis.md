@@ -1,5 +1,10 @@
 # Color Mechanism Analysis (US10,515,303)
 
+> **Cloud SDK note:** `vendor/cerebras-cloud-sdk-python` is the Cerebras Cloud REST
+> inference API and does **not** define on-wafer NoC colors. Color routing is modeled
+> in `wsesim/network/` per the patent below. See `docs/color_usage_guide.md` for
+> per-collective usage (broadcast, gather, reduce, allreduce, allgather).
+
 ## Core concept
 
 A **color** is a virtual network overlaid on one physical 2D mesh. The Cerebras fabric uses ~16 colors (also 8/24/32). Each color has:

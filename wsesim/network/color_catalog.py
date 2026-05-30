@@ -42,10 +42,10 @@ C_BCAST_ROW_WEST = 16    # broadcast: row spread east->west (root on right)
 C_BCAST_COL_NORTH = 17   # broadcast: column spread south->north
 C_GATHER_COL_SOUTH = 18  # gather toward bottom row
 C_GATHER_ROW_EAST = 19   # gather toward right column
-C_SPARE_XY_0 = 20
-C_SPARE_YX_0 = 21
-C_SPARE_XY_1 = 22
-C_SPARE_YX_1 = 23
+C_REDUCE_COL_SOUTH = 20  # reduce toward bottom row
+C_REDUCE_ROW_EAST = 21   # reduce toward right column
+C_SPARE_XY_0 = 22
+C_SPARE_YX_0 = 23
 
 
 # direction -> (dr, dc)
@@ -80,10 +80,10 @@ CATALOG: dict[int, tuple[str, str, str]] = {
     C_BCAST_COL_NORTH: ("bcast_col_north", "bus", "north"),
     C_GATHER_COL_SOUTH: ("gather_col_south", "bus", "south"),
     C_GATHER_ROW_EAST: ("gather_row_east", "bus", "east"),
+    C_REDUCE_COL_SOUTH: ("reduce_col_south", "bus", "south"),
+    C_REDUCE_ROW_EAST: ("reduce_row_east", "bus", "east"),
     C_SPARE_XY_0: ("spare_xy_0", "unicast", "xy"),
     C_SPARE_YX_0: ("spare_yx_0", "unicast", "yx"),
-    C_SPARE_XY_1: ("spare_xy_1", "unicast", "xy"),
-    C_SPARE_YX_1: ("spare_yx_1", "unicast", "yx"),
 }
 
 
