@@ -6,9 +6,10 @@ import simpy
 
 from wsesim.network.color import ColorPlan
 from wsesim.network.color_alloc import FlowSpec, graph_coloring_allocate, greedy_allocate
+from wsesim.network.color_catalog import MAX_COLORS, build_ideal_plan
 from wsesim.network.color_network import ColorNetwork
 from wsesim.network.color_routes import build_mixed_plan, mesh_dims
-from wsesim.network.color_sim import compare_pattern
+from wsesim.network.color_sim import PATTERNS, compare_pattern
 from wsesim.network.packet import Packet
 
 
@@ -63,10 +64,29 @@ def test_graph_coloring_allocator():
     assert result.flow_to_color["a"] in (0, 1, 2)
 
 
-def test_color_beats_or_matches_xy_on_mixed_4x4():
-    xy, color = compare_pattern(4, 4, "mixed", msg_bytes=128)
-    assert color.ordering_violations == 0
-    assert color.makespan_cycles > 0
-    assert xy.makespan_cycles > 0
-    # Color VN isolates concurrent flows on separate virtual networks.
-    assert color.color_buffer_wait_cycles >= 0
+def test_ideal_catalog_is_mesh_independent():
+    p4 = build_ideal_plan(4, 4)
+    p8 = build_ideal_plan(8, 8)
+    assert p4.num_colors == p8.num_colors == MAX_COLORS
+    # Same semantic color names regardless of mesh size.
+    assert [c.name for c in p4.colors] == [c.name for c in p8.colors]
+
+
+def test_ideal_bus_routes_toward_dest():
+    plan = build_ideal_plan(4, 4)
+    # bcast_col_south (color 3): node 0 -> node 4 (south)
+    assert plan.next_hops(0, 3, 12) == {4}
+    # gather_col_north (color 4): node 12 -> node 8 (north)
+    assert plan.next_hops(12, 4, 0) == {8}
+
+
+def test_color_beats_or_matches_xy_on_collectives():
+    for pattern in PATTERNS:
+        xy, color = compare_pattern(4, 4, pattern, msg_bytes=128)
+        assert color.ordering_violations == 0, pattern
+        assert color.makespan_cycles > 0, pattern
+        assert xy.makespan_cycles > 0, pattern
+        # Ideal static routing should not be slower than naive single-VN XY.
+        assert color.makespan_cycles <= xy.makespan_cycles, (
+            pattern, color.makespan_cycles, xy.makespan_cycles
+        )

@@ -102,16 +102,16 @@
   <div class="wrap">
     <h1>Color NoC Simulation Report</h1>
     <p class="subtitle">
-      Mixed color scheme (<code>color_mixed</code>, K=16) vs single-VN XY baseline on 2D mesh.
+      Ideal static-route color scheme (<code>color_ideal</code>, K=24) vs single-VN XY baseline on 2D mesh.
       Patent background: <a href="color_mechanism_analysis.md">color_mechanism_analysis.md</a>
     </p>
 
     <div class="cards">
-      <div class="card"><div class="val">28</div><div class="lbl">Runs</div></div>
+      <div class="card"><div class="val">20</div><div class="lbl">Runs</div></div>
       <div class="card"><div class="val" style="color:var(--green)">0</div><div class="lbl">Ordering violations</div></div>
-      <div class="card"><div class="val" style="color:var(--green)">5</div><div class="lbl">Color wins</div></div>
-      <div class="card"><div class="val" style="color:var(--red)">8</div><div class="lbl">XY wins</div></div>
-      <div class="card"><div class="val" style="color:var(--amber)">1</div><div class="lbl">Ties</div></div>
+      <div class="card"><div class="val" style="color:var(--green)">10</div><div class="lbl">Color wins</div></div>
+      <div class="card"><div class="val" style="color:var(--red)">0</div><div class="lbl">XY wins</div></div>
+      <div class="card"><div class="val" style="color:var(--amber)">0</div><div class="lbl">Ties</div></div>
     </div>
 
     <h2>Setup</h2>
@@ -119,9 +119,9 @@
       <dl>
         <dt>Meshes</dt><dd>4×4 (16 PEs), 8×8 (64 PEs)</dd>
         <dt>Message size</dt><dd>128 bytes</dd>
-        <dt>Colors</dt><dd>16 — unicast XY/YX, row multicast, col reduction, dim-exchange, all-to-all phases</dd>
-        <dt>Baseline</dt><dd>Single virtual network, dimension-order XY routing</dd>
-        <dt>Workloads</dt><dd><code>ring</code>, <code>direct_allgather</code>, <code>broadcast_tree</code>, <code>reduction_tree</code>, <code>all_to_all</code>, <code>systolic</code>, <code>mixed</code></dd>
+        <dt>Colors</dt><dd>24 — fixed catalog of directional buses + XY/YX unicast (mesh-size independent)</dd>
+        <dt>Baseline</dt><dd>Naive direct collective on a single VN, dimension-order XY routing</dd>
+        <dt>Workloads</dt><dd><code>broadcast</code>, <code>gather</code>, <code>reduce</code>, <code>allreduce</code>, <code>allgather</code></dd>
         <dt>Ordering</dt><dd>Per <code>(color, src, dst)</code> stream lock</dd>
         <dt>Data source</dt><dd><code>outputs/color_vs_xy/results.csv</code></dd>
       </dl>
@@ -132,294 +132,248 @@
 
     <h3>设计依据</h3>
     <div class="callout">
-      <p>本仿真参照 Cerebras 专利 <strong>US10,515,303</strong> 的 Color 机制：</p>
+      <p>本仿真参照 Cerebras 专利 <strong>US10,515,303</strong> 的 Color 机制，并针对集合通信 workload
+         设计<strong>最理想的静态路由表</strong>：</p>
       <ul>
-        <li><strong>编译期静态路由</strong> — NN 通信模式在编译时已知，每个 color 对应一张固定的
-            <code>dest[node][color] → next_hop</code> 转发表（或 XY/YX 单播模式），运行时无动态路由。</li>
-        <li><strong>虚拟网络隔离</strong> — 时间上重叠、路径上冲突的 flow 应映射到<strong>不同 color</strong>，
-            非重叠 flow 可<strong>复用</strong>同一 color（见 <code>color_alloc.py</code> 贪心 / 图着色 / ILP）。</li>
-        <li><strong>NN 通信原语分类</strong> — 按 Cerebras 文档中的 taxonomy 为每类 collective 预置路由形状：
-            路径 (XY/YX)、环、行多播、列归约、维度交换、all-to-all 分相等（详见
-            <a href="color_mechanism_analysis.md">color_mechanism_analysis.md</a>）。</li>
-        <li><strong>保序</strong> — 每个 <code>(color, src, dst)</code> 流在仿真中串行注入，配合固定路由保证 FIFO、
+        <li><strong>编译期静态路由</strong> — 每个 color 对应一条固定规则，<code>dest[node] → next_hop</code>
+            只取决于当前节点，<strong>与运行时 dst 无关</strong>；运行时无动态路由计算。</li>
+        <li><strong>规则与 mesh 规模无关</strong> — color 的语义（ID 与方向规则）对 4×4 与 8×8 完全一致，
+            仅 dest 表按具体 (rows, cols) 实例化。最多 <strong>24 个 color</strong>。</li>
+        <li><strong>每类集合通信选最省链路的静态路由</strong> — 广播/gather/reduce 用<strong>生成树</strong>
+            （行涟漪 + 列涟漪，全为相邻边），allgather/allreduce 用 <strong>2D 环 / reduce-scatter+allgather</strong>，
+            各阶段走独立 VN 隔离、链路不相交以并行。</li>
+        <li><strong>保序</strong> — 每个 <code>(color, src, dst)</code> 流串行注入，配合固定路由保证 FIFO、
             <code>ordering_violations = 0</code>。</li>
       </ul>
     </div>
 
-    <h3>静态 ColorPlan 构建 — <code>build_mixed_plan(rows, cols, K=16)</code></h3>
-    <p>仿真使用的 <code>color_mixed</code> 方案由 <code>wsesim/network/color_routes.py</code>
-       按下列<strong>固定顺序</strong>填充 K 个 color（默认 K=16）：</p>
-    
-    <ol class="steps">
-      <li><strong>Color 0</strong> — <code>add_path_color(xy)</code>：systolic / gather 主路径</li>
-      <li><strong>Color 1</strong> — <code>add_path_color(yx)</code>：与 0 正交，并行单播</li>
-      <li><strong>Color 2</strong> — <code>add_linear_ring</code>：按 node ID 顺序的环（all-reduce 拓扑）</li>
-      <li><strong>Color 3</strong> — <code>add_row_multicast_tree(row=0)</code>：第 0 行广播树</li>
-      <li><strong>Color 4</strong> — <code>add_col_reduction_tree(col=0)</code>：第 0 列归约树</li>
-      <li><strong>Color 5…</strong> — <code>add_dimension_exchange_colors</code>：RHD XOR stage（节点数为 2 的幂时）</li>
-      <li><strong>后续</strong> — 逐行 <code>add_row_ring</code>、逐列 <code>add_col_ring</code> 直到 K 用尽</li>
-      <li><strong>Spare</strong> — 剩余 ID 交替 XY/YX 单播</li>
-    </ol>
-    <p>实现入口：</p>
-    <pre>plan = build_mixed_plan(rows, cols, num_colors=16)
-# wsesim/network/color_routes.py → ColorPlan(dest, unicast_modes, colors[])</pre>
+    <h3>方向总线：color 的基本构件</h3>
+    <p>大多数理想路由由<strong>方向总线</strong>构成 —— 一个 color 在每个节点静态指向某一罗盘方向的相邻节点。
+       包沿该方向前进直到 <code>current == dst</code> 停止。这正是专利中 Dest 661「<code>color → next_hop</code>、
+       与 dst 无关」的静态转发表。生成规则（<code>wsesim/network/color_catalog.py</code>）：</p>
+    <pre>def _set_bus(plan, color_id, direction):       # direction ∈ {east,west,south,north}
+    for node in mesh:
+        r, c = divmod(node, cols)
+        nr, nc = r + dr, c + dc                # 该方向的相邻节点
+        plan.set_dest(node, color_id, {nr*cols+nc} if in_bounds else set())</pre>
 
+    <h3>固定 Color 目录（catalog，24 个，4×4 与 8×8 相同）</h3>
+    <p>由 <code>build_ideal_plan(rows, cols)</code> 实例化；下表语义对任意 mesh 规模不变：</p>
     
-    <h3>4×4 mesh — <code>build_mixed_plan</code> 生成的 16 个 color</h3>
     <table>
-      <thead><tr><th>ID</th><th>名称</th><th>路由类型</th><th>生成规则</th></tr></thead>
+      <thead><tr><th>ID</th><th>名称</th><th>路由类型</th><th>静态规则（与 mesh 规模无关）</th></tr></thead>
       <tbody>
         <tr>
           <td class="num">0</td>
-          <td><code>systolic_xy</code></td>
+          <td><code>unicast_xy</code></td>
           <td>维度序单播 (XY)</td>
-          <td>依据包内 <code>dst</code> 在每一跳静态选择下一跳（先 row 后 col 为 XY，反之为 YX）；dest 表为空时由 <code>unicast_modes</code> 推导。</td>
+          <td>按包内 <code>dst</code> 在每跳静态选择下一跳（XY 先行后列，YX 先列后行）。</td>
         </tr>
         <tr>
           <td class="num">1</td>
-          <td><code>systolic_yx</code></td>
+          <td><code>unicast_yx</code></td>
           <td>维度序单播 (YX)</td>
-          <td>依据包内 <code>dst</code> 在每一跳静态选择下一跳（先 row 后 col 为 XY，反之为 YX）；dest 表为空时由 <code>unicast_modes</code> 推导。</td>
+          <td>按包内 <code>dst</code> 在每跳静态选择下一跳（XY 先行后列，YX 先列后行）。</td>
         </tr>
         <tr>
           <td class="num">2</td>
-          <td><code>allreduce_ring</code></td>
-          <td>线性 / Snake 环</td>
-          <td>节点按固定顺序组成环，每跳指向序列中的下一个节点（16 个转发项）。</td>
+          <td><code>bcast_row_east</code></td>
+          <td>方向总线 (东 →)</td>
+          <td><code>dest[node]</code> 固定指向 <strong>east</strong> 方向相邻节点，与运行时 dst 无关；包沿该方向前进直到抵达目的。</td>
         </tr>
         <tr>
           <td class="num">3</td>
-          <td><code>row_mcast_0</code></td>
-          <td>行多播树</td>
-          <td>行内自西向东单播复制；每节点最多转发给一个东向邻居。</td>
+          <td><code>bcast_col_south</code></td>
+          <td>方向总线 (南 ↓)</td>
+          <td><code>dest[node]</code> 固定指向 <strong>south</strong> 方向相邻节点，与运行时 dst 无关；包沿该方向前进直到抵达目的。</td>
         </tr>
         <tr>
           <td class="num">4</td>
-          <td><code>col_reduce_0</code></td>
-          <td>列归约树</td>
-          <td>列内自南向北归约；非根节点向北发送 partial sum。</td>
+          <td><code>gather_col_north</code></td>
+          <td>方向总线 (北 ↑)</td>
+          <td><code>dest[node]</code> 固定指向 <strong>north</strong> 方向相邻节点，与运行时 dst 无关；包沿该方向前进直到抵达目的。</td>
         </tr>
         <tr>
           <td class="num">5</td>
-          <td><code>dim_ex_s0</code></td>
-          <td>维度交换 (RHD)</td>
-          <td>超立方 XOR 伙伴交换的一 stage；每个 stage 独占一个 color。</td>
+          <td><code>gather_row_west</code></td>
+          <td>方向总线 (← 西)</td>
+          <td><code>dest[node]</code> 固定指向 <strong>west</strong> 方向相邻节点，与运行时 dst 无关；包沿该方向前进直到抵达目的。</td>
         </tr>
         <tr>
           <td class="num">6</td>
-          <td><code>dim_ex_s1</code></td>
-          <td>维度交换 (RHD)</td>
-          <td>超立方 XOR 伙伴交换的一 stage；每个 stage 独占一个 color。</td>
+          <td><code>reduce_col_north</code></td>
+          <td>方向总线 (北 ↑)</td>
+          <td><code>dest[node]</code> 固定指向 <strong>north</strong> 方向相邻节点，与运行时 dst 无关；包沿该方向前进直到抵达目的。</td>
         </tr>
         <tr>
           <td class="num">7</td>
-          <td><code>dim_ex_s2</code></td>
-          <td>维度交换 (RHD)</td>
-          <td>超立方 XOR 伙伴交换的一 stage；每个 stage 独占一个 color。</td>
+          <td><code>reduce_row_west</code></td>
+          <td>方向总线 (← 西)</td>
+          <td><code>dest[node]</code> 固定指向 <strong>west</strong> 方向相邻节点，与运行时 dst 无关；包沿该方向前进直到抵达目的。</td>
         </tr>
         <tr>
           <td class="num">8</td>
-          <td><code>dim_ex_s3</code></td>
-          <td>维度交换 (RHD)</td>
-          <td>超立方 XOR 伙伴交换的一 stage；每个 stage 独占一个 color。</td>
+          <td><code>allgather_row_east</code></td>
+          <td>方向总线 (东 →)</td>
+          <td><code>dest[node]</code> 固定指向 <strong>east</strong> 方向相邻节点，与运行时 dst 无关；包沿该方向前进直到抵达目的。</td>
         </tr>
         <tr>
           <td class="num">9</td>
-          <td><code>spare_9</code></td>
-          <td>维度序单播 (YX)</td>
-          <td>依据包内 <code>dst</code> 在每一跳静态选择下一跳（先 row 后 col 为 XY，反之为 YX）；dest 表为空时由 <code>unicast_modes</code> 推导。</td>
+          <td><code>allgather_row_west</code></td>
+          <td>方向总线 (← 西)</td>
+          <td><code>dest[node]</code> 固定指向 <strong>west</strong> 方向相邻节点，与运行时 dst 无关；包沿该方向前进直到抵达目的。</td>
         </tr>
         <tr>
           <td class="num">10</td>
-          <td><code>spare_10</code></td>
-          <td>维度序单播 (XY)</td>
-          <td>依据包内 <code>dst</code> 在每一跳静态选择下一跳（先 row 后 col 为 XY，反之为 YX）；dest 表为空时由 <code>unicast_modes</code> 推导。</td>
+          <td><code>allgather_col_south</code></td>
+          <td>方向总线 (南 ↓)</td>
+          <td><code>dest[node]</code> 固定指向 <strong>south</strong> 方向相邻节点，与运行时 dst 无关；包沿该方向前进直到抵达目的。</td>
         </tr>
         <tr>
           <td class="num">11</td>
-          <td><code>spare_11</code></td>
-          <td>维度序单播 (YX)</td>
-          <td>依据包内 <code>dst</code> 在每一跳静态选择下一跳（先 row 后 col 为 XY，反之为 YX）；dest 表为空时由 <code>unicast_modes</code> 推导。</td>
+          <td><code>allgather_col_north</code></td>
+          <td>方向总线 (北 ↑)</td>
+          <td><code>dest[node]</code> 固定指向 <strong>north</strong> 方向相邻节点，与运行时 dst 无关；包沿该方向前进直到抵达目的。</td>
         </tr>
         <tr>
           <td class="num">12</td>
-          <td><code>spare_12</code></td>
-          <td>维度序单播 (XY)</td>
-          <td>依据包内 <code>dst</code> 在每一跳静态选择下一跳（先 row 后 col 为 XY，反之为 YX）；dest 表为空时由 <code>unicast_modes</code> 推导。</td>
+          <td><code>allreduce_rs_row_east</code></td>
+          <td>方向总线 (东 →)</td>
+          <td><code>dest[node]</code> 固定指向 <strong>east</strong> 方向相邻节点，与运行时 dst 无关；包沿该方向前进直到抵达目的。</td>
         </tr>
         <tr>
           <td class="num">13</td>
-          <td><code>spare_13</code></td>
-          <td>维度序单播 (YX)</td>
-          <td>依据包内 <code>dst</code> 在每一跳静态选择下一跳（先 row 后 col 为 XY，反之为 YX）；dest 表为空时由 <code>unicast_modes</code> 推导。</td>
+          <td><code>allreduce_ag_row_west</code></td>
+          <td>方向总线 (← 西)</td>
+          <td><code>dest[node]</code> 固定指向 <strong>west</strong> 方向相邻节点，与运行时 dst 无关；包沿该方向前进直到抵达目的。</td>
         </tr>
         <tr>
           <td class="num">14</td>
-          <td><code>spare_14</code></td>
-          <td>维度序单播 (XY)</td>
-          <td>依据包内 <code>dst</code> 在每一跳静态选择下一跳（先 row 后 col 为 XY，反之为 YX）；dest 表为空时由 <code>unicast_modes</code> 推导。</td>
+          <td><code>allreduce_rs_col_south</code></td>
+          <td>方向总线 (南 ↓)</td>
+          <td><code>dest[node]</code> 固定指向 <strong>south</strong> 方向相邻节点，与运行时 dst 无关；包沿该方向前进直到抵达目的。</td>
         </tr>
         <tr>
           <td class="num">15</td>
-          <td><code>spare_15</code></td>
+          <td><code>allreduce_ag_col_north</code></td>
+          <td>方向总线 (北 ↑)</td>
+          <td><code>dest[node]</code> 固定指向 <strong>north</strong> 方向相邻节点，与运行时 dst 无关；包沿该方向前进直到抵达目的。</td>
+        </tr>
+        <tr>
+          <td class="num">16</td>
+          <td><code>bcast_row_west</code></td>
+          <td>方向总线 (← 西)</td>
+          <td><code>dest[node]</code> 固定指向 <strong>west</strong> 方向相邻节点，与运行时 dst 无关；包沿该方向前进直到抵达目的。</td>
+        </tr>
+        <tr>
+          <td class="num">17</td>
+          <td><code>bcast_col_north</code></td>
+          <td>方向总线 (北 ↑)</td>
+          <td><code>dest[node]</code> 固定指向 <strong>north</strong> 方向相邻节点，与运行时 dst 无关；包沿该方向前进直到抵达目的。</td>
+        </tr>
+        <tr>
+          <td class="num">18</td>
+          <td><code>gather_col_south</code></td>
+          <td>方向总线 (南 ↓)</td>
+          <td><code>dest[node]</code> 固定指向 <strong>south</strong> 方向相邻节点，与运行时 dst 无关；包沿该方向前进直到抵达目的。</td>
+        </tr>
+        <tr>
+          <td class="num">19</td>
+          <td><code>gather_row_east</code></td>
+          <td>方向总线 (东 →)</td>
+          <td><code>dest[node]</code> 固定指向 <strong>east</strong> 方向相邻节点，与运行时 dst 无关；包沿该方向前进直到抵达目的。</td>
+        </tr>
+        <tr>
+          <td class="num">20</td>
+          <td><code>spare_xy_0</code></td>
+          <td>维度序单播 (XY)</td>
+          <td>按包内 <code>dst</code> 在每跳静态选择下一跳（XY 先行后列，YX 先列后行）。</td>
+        </tr>
+        <tr>
+          <td class="num">21</td>
+          <td><code>spare_yx_0</code></td>
           <td>维度序单播 (YX)</td>
-          <td>依据包内 <code>dst</code> 在每一跳静态选择下一跳（先 row 后 col 为 XY，反之为 YX）；dest 表为空时由 <code>unicast_modes</code> 推导。</td>
+          <td>按包内 <code>dst</code> 在每跳静态选择下一跳（XY 先行后列，YX 先列后行）。</td>
+        </tr>
+        <tr>
+          <td class="num">22</td>
+          <td><code>spare_xy_1</code></td>
+          <td>维度序单播 (XY)</td>
+          <td>按包内 <code>dst</code> 在每跳静态选择下一跳（XY 先行后列，YX 先列后行）。</td>
+        </tr>
+        <tr>
+          <td class="num">23</td>
+          <td><code>spare_yx_1</code></td>
+          <td>维度序单播 (YX)</td>
+          <td>按包内 <code>dst</code> 在每跳静态选择下一跳（XY 先行后列，YX 先列后行）。</td>
         </tr></tbody>
     </table>
+
+    <h3>每个集合通信 workload 的理想静态路由</h3>
+    <p>由 <code>generate_ideal_collective(pattern, rows, cols, chunk)</code> 生成相邻边流量并打上对应 color，
+       配合 level 延迟实现流水线：</p>
     
-    <h3>8×8 mesh — <code>build_mixed_plan</code> 生成的 16 个 color</h3>
     <table>
-      <thead><tr><th>ID</th><th>名称</th><th>路由类型</th><th>生成规则</th></tr></thead>
+      <thead><tr><th>Workload</th><th>理想静态路由</th><th>使用 Color</th><th>说明</th></tr></thead>
       <tbody>
         <tr>
-          <td class="num">0</td>
-          <td><code>systolic_xy</code></td>
-          <td>维度序单播 (XY)</td>
-          <td>依据包内 <code>dst</code> 在每一跳静态选择下一跳（先 row 后 col 为 XY，反之为 YX）；dest 表为空时由 <code>unicast_modes</code> 推导。</td>
+          <td><code>broadcast</code></td>
+          <td>根 (0,0) 生成树</td>
+          <td>2:<code>bcast_row_east</code>, 3:<code>bcast_col_south</code></td>
+          <td>第 0 行沿 <code>bcast_row_east</code> 东向涟漪扩散，每列再沿 <code>bcast_col_south</code> 南向扩散。相邻边、各列并行；makespan ≈ (列−1)+(行−1)。</td>
         </tr>
         <tr>
-          <td class="num">1</td>
-          <td><code>systolic_yx</code></td>
-          <td>维度序单播 (YX)</td>
-          <td>依据包内 <code>dst</code> 在每一跳静态选择下一跳（先 row 后 col 为 XY，反之为 YX）；dest 表为空时由 <code>unicast_modes</code> 推导。</td>
+          <td><code>gather</code></td>
+          <td>逆生成树 → 根</td>
+          <td>4:<code>gather_col_north</code>, 5:<code>gather_row_west</code></td>
+          <td>各列经 <code>gather_col_north</code> 向上汇聚到第 0 行，再沿 <code>gather_row_west</code> 西向汇聚到根。</td>
         </tr>
         <tr>
-          <td class="num">2</td>
-          <td><code>allreduce_ring</code></td>
-          <td>线性 / Snake 环</td>
-          <td>节点按固定顺序组成环，每跳指向序列中的下一个节点（64 个转发项）。</td>
+          <td><code>reduce</code></td>
+          <td>逆生成树 → 根（归约）</td>
+          <td>6:<code>reduce_col_north</code>, 7:<code>reduce_row_west</code></td>
+          <td>与 gather 同形，但走独立 VN（<code>reduce_col_north</code>/<code>reduce_row_west</code>），每跳合并、payload 恒定。</td>
         </tr>
         <tr>
-          <td class="num">3</td>
-          <td><code>row_mcast_0</code></td>
-          <td>行多播树</td>
-          <td>行内自西向东单播复制；每节点最多转发给一个东向邻居。</td>
+          <td><code>allreduce</code></td>
+          <td>2D reduce-scatter + allgather</td>
+          <td>12:<code>allreduce_rs_row_east</code>, 13:<code>allreduce_ag_row_west</code>, 14:<code>allreduce_rs_col_south</code>, 15:<code>allreduce_ag_col_north</code></td>
+          <td>行 RS(<code>…rs_row_east</code>) → 行 AG(<code>…ag_row_west</code>) → 列 RS(<code>…rs_col_south</code>) → 列 AG(<code>…ag_col_north</code>)。</td>
         </tr>
         <tr>
-          <td class="num">4</td>
-          <td><code>col_reduce_0</code></td>
-          <td>列归约树</td>
-          <td>列内自南向北归约；非根节点向北发送 partial sum。</td>
-        </tr>
-        <tr>
-          <td class="num">5</td>
-          <td><code>dim_ex_s0</code></td>
-          <td>维度交换 (RHD)</td>
-          <td>超立方 XOR 伙伴交换的一 stage；每个 stage 独占一个 color。</td>
-        </tr>
-        <tr>
-          <td class="num">6</td>
-          <td><code>dim_ex_s1</code></td>
-          <td>维度交换 (RHD)</td>
-          <td>超立方 XOR 伙伴交换的一 stage；每个 stage 独占一个 color。</td>
-        </tr>
-        <tr>
-          <td class="num">7</td>
-          <td><code>dim_ex_s2</code></td>
-          <td>维度交换 (RHD)</td>
-          <td>超立方 XOR 伙伴交换的一 stage；每个 stage 独占一个 color。</td>
-        </tr>
-        <tr>
-          <td class="num">8</td>
-          <td><code>dim_ex_s3</code></td>
-          <td>维度交换 (RHD)</td>
-          <td>超立方 XOR 伙伴交换的一 stage；每个 stage 独占一个 color。</td>
-        </tr>
-        <tr>
-          <td class="num">9</td>
-          <td><code>dim_ex_s4</code></td>
-          <td>维度交换 (RHD)</td>
-          <td>超立方 XOR 伙伴交换的一 stage；每个 stage 独占一个 color。</td>
-        </tr>
-        <tr>
-          <td class="num">10</td>
-          <td><code>dim_ex_s5</code></td>
-          <td>维度交换 (RHD)</td>
-          <td>超立方 XOR 伙伴交换的一 stage；每个 stage 独占一个 color。</td>
-        </tr>
-        <tr>
-          <td class="num">11</td>
-          <td><code>col_ring_3</code></td>
-          <td>行/列环</td>
-          <td>每节点 <code>dest[node][11]</code> 指向环上唯一后继；8 个节点参与转发。</td>
-        </tr>
-        <tr>
-          <td class="num">12</td>
-          <td><code>col_ring_4</code></td>
-          <td>行/列环</td>
-          <td>每节点 <code>dest[node][12]</code> 指向环上唯一后继；8 个节点参与转发。</td>
-        </tr>
-        <tr>
-          <td class="num">13</td>
-          <td><code>col_ring_5</code></td>
-          <td>行/列环</td>
-          <td>每节点 <code>dest[node][13]</code> 指向环上唯一后继；8 个节点参与转发。</td>
-        </tr>
-        <tr>
-          <td class="num">14</td>
-          <td><code>col_ring_6</code></td>
-          <td>行/列环</td>
-          <td>每节点 <code>dest[node][14]</code> 指向环上唯一后继；8 个节点参与转发。</td>
-        </tr>
-        <tr>
-          <td class="num">15</td>
-          <td><code>col_ring_7</code></td>
-          <td>行/列环</td>
-          <td>每节点 <code>dest[node][15]</code> 指向环上唯一后继；8 个节点参与转发。</td>
+          <td><code>allgather</code></td>
+          <td>2D 环 allgather</td>
+          <td>8:<code>allgather_row_east</code>, 9:<code>allgather_row_west</code>, 10:<code>allgather_col_south</code>, 11:<code>allgather_col_north</code></td>
+          <td>先行内双向（<code>allgather_row_east/west</code>）后列内双向（<code>allgather_col_south/north</code>），各行/列链路不相交、并行。</td>
         </tr></tbody>
     </table>
-
-    <h3>Traffic → Color 映射（运行时）</h3>
-    <p>Collective 流量由 <code>generate_collective_traffic()</code> 产生后，经两步分配 color：</p>
-
-    <h4>1. 默认 payload 映射 — <code>default_color_map()</code></h4>
-    <p>依据 collective 语义将 <code>payload</code> 类型映射到 mixed plan 中的主 color（当前实现以
-       <strong>color 0 (XY)</strong> 与 <strong>color 1 (YX)</strong> 为主通道）：</p>
-    
-    <table>
-      <thead><tr><th>Traffic <code>payload</code></th><th>默认 Color ID</th></tr></thead>
-      <tbody><tr><td><code>allgather</code></td><td class="num">0</td></tr><tr><td><code>allreduce_ag</code></td><td class="num">0</td></tr><tr><td><code>allreduce_rs</code></td><td class="num">0</td></tr><tr><td><code>broadcast</code></td><td class="num">0</td></tr><tr><td><code>mixed_allgather</code></td><td class="num">0</td></tr><tr><td><code>mixed_allreduce_ag</code></td><td class="num">0</td></tr><tr><td><code>mixed_allreduce_rs</code></td><td class="num">0</td></tr><tr><td><code>mixed_broadcast</code></td><td class="num">0</td></tr><tr><td><code>mixed_systolic</code></td><td class="num">0</td></tr><tr><td><code>systolic</code></td><td class="num">0</td></tr><tr><td><code>all_to_all</code></td><td class="num">1</td></tr><tr><td><code>mixed_all_to_all</code></td><td class="num">1</td></tr><tr><td><code>mixed_reduce</code></td><td class="num">1</td></tr><tr><td><code>reduce</code></td><td class="num">1</td></tr></tbody>
-    </table>
-
-    <h4>2. 并发 striping — <code>_assign_traffic_colors()</code></h4>
-    <p>同一 <code>delay_cycles</code> 时刻并发注入的包，若 base color 为 0 或 1，则按序号交替分配到
-       <strong>color 0 / 1</strong>，使 XY 与 YX 虚拟网络同时承载并行单播，避免单 VN  Head-of-line blocking：</p>
-    <pre>for j, idx in enumerate(concurrent_packet_indices):
-    traffic[idx]["color"] = (base + j) % 2   # base ∈ {0, 1}</pre>
-
-    <p><strong>说明：</strong> mixed plan 中预置的 ring (2)、row multicast (3)、col reduce (4)、
-       dimension-exchange (5+) 等 color 已生成静态路由表，但<strong>当前 benchmark 的 traffic 映射
-       主要使用 color 0/1 单播</strong>。Ring all-reduce 因此尚未走专用环 color，这是 ring 模式
-       makespan 落后于 XY 的原因之一。</p>
 
     <h3>与 Baseline 对比</h3>
     <table>
-      <thead><tr><th>方案</th><th>Color 数</th><th>路由</th><th>生成函数</th></tr></thead>
+      <thead><tr><th>方案</th><th>Color 数</th><th>路由</th><th>realisation</th></tr></thead>
       <tbody>
         <tr>
-          <td><code>color_mixed</code></td>
-          <td class="num">16</td>
-          <td>上表 mixed plan + traffic 映射</td>
-          <td><code>build_mixed_plan</code></td>
+          <td><code>color_ideal</code></td>
+          <td class="num">24</td>
+          <td>上表 catalog + 每 workload 理想静态路由</td>
+          <td><code>build_ideal_plan</code> + <code>generate_ideal_collective</code></td>
         </tr>
         <tr>
           <td><code>xy_single_vn</code></td>
           <td class="num">1</td>
-          <td>仅 color 0 = XY 维度序</td>
-          <td><code>build_baseline_single_vn</code></td>
+          <td>单一 VN，XY 维度序</td>
+          <td><code>generate_baseline_collective</code>（朴素直连）</td>
         </tr>
       </tbody>
     </table>
+    <p>Baseline 为各集合通信的<strong>朴素直连</strong>实现且全部走单一 VN：broadcast = 根→每点直连、
+       gather/reduce = 每点→根直连、allgather = 全连通 all-to-all、allreduce = 先 reduce 到根再 broadcast。
+       所有流共享 XY 链路与缓冲，形成根/链路瓶颈。</p>
 
     <h3>可选：动态 Color 分配</h3>
-    <p>若给定 flow 的时间窗与占用链路集合，<code>wsesim/network/color_alloc.py</code> 提供：</p>
-    <ul>
-      <li><strong>greedy_allocate</strong> — 按开始时间排序，选冲突最少 / 峰值负载最低的 color</li>
-      <li><strong>graph_coloring_allocate</strong> — 冲突图着色</li>
-      <li><strong>ilp_allocate</strong> — PuLP ILP 最小化峰值链路负载（失败时回退贪心）</li>
-    </ul>
-    <p>约束：时间重叠且链路交集非空的 flow 不能共享 color；路由图需无环（<code>routes_acyclic</code> 检查）。
-       本报告 benchmark 未启用动态分配，而是使用固定的 mixed plan + default_color_map。</p>
+    <p>若给定 flow 的时间窗与占用链路，<code>wsesim/network/color_alloc.py</code> 提供 greedy / 图着色 / ILP
+       分配（时间重叠且链路相交的 flow 不可共享 color，路由图需无环）。本 benchmark 使用上面的固定 catalog，
+       未启用动态分配。</p>
     
 
     <h2>Reproduce</h2>
@@ -438,115 +392,83 @@
       <tbody>
         <tr class="win-color">
           <td>4x4</td>
-          <td><code>all_to_all</code></td>
-          <td class="num">310</td>
-          <td class="num">252</td>
-          <td>Color</td>
-          <td class="num">1.2×</td>
-        </tr>
-        <tr class="win-color">
-          <td>4x4</td>
-          <td><code>broadcast_tree</code></td>
-          <td class="num">19</td>
-          <td class="num">17</td>
-          <td>Color</td>
-          <td class="num">1.1×</td>
-        </tr>
-        <tr class="win-color">
-          <td>4x4</td>
-          <td><code>direct_allgather</code></td>
+          <td><code>allgather</code></td>
           <td class="num">290</td>
-          <td class="num">46</td>
+          <td class="num">15</td>
           <td>Color</td>
-          <td class="num">6.3×</td>
+          <td class="num">19.3×</td>
         </tr>
         <tr class="win-color">
           <td>4x4</td>
-          <td><code>mixed</code></td>
-          <td class="num">1,253.0</td>
-          <td class="num">1,164.0</td>
-          <td>Color</td>
-          <td class="num">1.1×</td>
-        </tr>
-        <tr class="tie">
-          <td>4x4</td>
-          <td><code>reduction_tree</code></td>
-          <td class="num">15</td>
-          <td class="num">15</td>
-          <td>tie</td>
-          <td class="num">1.0×</td>
-        </tr>
-        <tr class="win-xy">
-          <td>4x4</td>
-          <td><code>ring</code></td>
-          <td class="num">469</td>
-          <td class="num">720</td>
-          <td>XY</td>
-          <td class="num">1.5×</td>
-        </tr>
-        <tr class="win-color">
-          <td>4x4</td>
-          <td><code>systolic</code></td>
+          <td><code>allreduce</code></td>
+          <td class="num">88</td>
           <td class="num">21</td>
+          <td>Color</td>
+          <td class="num">4.2×</td>
+        </tr>
+        <tr class="win-color">
+          <td>4x4</td>
+          <td><code>broadcast</code></td>
+          <td class="num">81</td>
+          <td class="num">10</td>
+          <td>Color</td>
+          <td class="num">8.1×</td>
+        </tr>
+        <tr class="win-color">
+          <td>4x4</td>
+          <td><code>gather</code></td>
+          <td class="num">69</td>
           <td class="num">9</td>
           <td>Color</td>
-          <td class="num">2.3×</td>
+          <td class="num">7.7×</td>
         </tr>
-        <tr class="win-xy">
-          <td>8x8</td>
-          <td><code>all_to_all</code></td>
-          <td class="num">4,056.0</td>
-          <td class="num">90,047.0</td>
-          <td>XY</td>
-          <td class="num">22.2×</td>
+        <tr class="win-color">
+          <td>4x4</td>
+          <td><code>reduce</code></td>
+          <td class="num">69</td>
+          <td class="num">9</td>
+          <td>Color</td>
+          <td class="num">7.7×</td>
         </tr>
-        <tr class="win-xy">
+        <tr class="win-color">
           <td>8x8</td>
-          <td><code>broadcast_tree</code></td>
-          <td class="num">39</td>
-          <td class="num">476</td>
-          <td>XY</td>
-          <td class="num">12.2×</td>
-        </tr>
-        <tr class="win-xy">
-          <td>8x8</td>
-          <td><code>direct_allgather</code></td>
+          <td><code>allgather</code></td>
           <td class="num">2,548.0</td>
-          <td class="num">45,046.0</td>
-          <td>XY</td>
+          <td class="num">35</td>
+          <td>Color</td>
+          <td class="num">72.8×</td>
+        </tr>
+        <tr class="win-color">
+          <td>8x8</td>
+          <td><code>allreduce</code></td>
+          <td class="num">356</td>
+          <td class="num">49</td>
+          <td>Color</td>
+          <td class="num">7.3×</td>
+        </tr>
+        <tr class="win-color">
+          <td>8x8</td>
+          <td><code>broadcast</code></td>
+          <td class="num">333</td>
+          <td class="num">18</td>
+          <td>Color</td>
+          <td class="num">18.5×</td>
+        </tr>
+        <tr class="win-color">
+          <td>8x8</td>
+          <td><code>gather</code></td>
+          <td class="num">301</td>
+          <td class="num">17</td>
+          <td>Color</td>
           <td class="num">17.7×</td>
         </tr>
-        <tr class="win-xy">
+        <tr class="win-color">
           <td>8x8</td>
-          <td><code>mixed</code></td>
-          <td class="num">16,344.0</td>
-          <td class="num">187,578.0</td>
-          <td>XY</td>
-          <td class="num">11.5×</td>
-        </tr>
-        <tr class="win-xy">
-          <td>8x8</td>
-          <td><code>reduction_tree</code></td>
-          <td class="num">35</td>
-          <td class="num">476</td>
-          <td>XY</td>
-          <td class="num">13.6×</td>
-        </tr>
-        <tr class="win-xy">
-          <td>8x8</td>
-          <td><code>ring</code></td>
-          <td class="num">1,941.0</td>
-          <td class="num">51,407.0</td>
-          <td>XY</td>
-          <td class="num">26.5×</td>
-        </tr>
-        <tr class="win-xy">
-          <td>8x8</td>
-          <td><code>systolic</code></td>
-          <td class="num">45</td>
-          <td class="num">159</td>
-          <td>XY</td>
-          <td class="num">3.5×</td>
+          <td><code>reduce</code></td>
+          <td class="num">301</td>
+          <td class="num">17</td>
+          <td>Color</td>
+          <td class="num">17.7×</td>
         </tr>
       </tbody>
     </table>
@@ -563,142 +485,46 @@
         <tr>
           <td>4x4</td>
           <td>xy_single_vn</td>
-          <td><code>ring</code></td>
-          <td class="num">469</td>
-          <td class="num">147.94</td>
-          <td class="num">0.080</td>
+          <td><code>broadcast</code></td>
+          <td class="num">81</td>
+          <td class="num">37.40</td>
+          <td class="num">0.025</td>
           <td class="num">0</td>
           <td class="num">0</td>
           <td class="num">0</td>
-          <td><div class="bar" style="width:2px" title="469.0 cycles"></div></td>
+          <td><div class="bar" style="width:3px" title="81.0 cycles"></div></td>
         </tr>
         <tr>
           <td>4x4</td>
-          <td>color_mixed</td>
-          <td><code>ring</code></td>
-          <td class="num">720</td>
-          <td class="num">7.50</td>
-          <td class="num">0.052</td>
+          <td>color_ideal</td>
+          <td><code>broadcast</code></td>
+          <td class="num">10</td>
+          <td class="num">4</td>
+          <td class="num">0.062</td>
           <td class="num">0</td>
           <td class="num">0</td>
           <td class="num">0</td>
-          <td><div class="bar" style="width:2px" title="720.0 cycles"></div></td>
-        </tr>
-        <tr>
-          <td>4x4</td>
-          <td>xy_single_vn</td>
-          <td><code>direct_allgather</code></td>
-          <td class="num">290</td>
-          <td class="num">136.89</td>
-          <td class="num">0.092</td>
-          <td class="num">0</td>
-          <td class="num">0</td>
-          <td class="num">0</td>
-          <td><div class="bar" style="width:2px" title="290.0 cycles"></div></td>
-        </tr>
-        <tr>
-          <td>4x4</td>
-          <td>color_mixed</td>
-          <td><code>direct_allgather</code></td>
-          <td class="num">46</td>
-          <td class="num">21.31</td>
-          <td class="num">0.580</td>
-          <td class="num">0</td>
-          <td class="num">9,250.0</td>
-          <td class="num">0</td>
-          <td><div class="bar" style="width:2px" title="46.0 cycles"></div></td>
+          <td><div class="bar" style="width:2px" title="10.0 cycles"></div></td>
         </tr>
         <tr>
           <td>4x4</td>
           <td>xy_single_vn</td>
-          <td><code>broadcast_tree</code></td>
-          <td class="num">19</td>
-          <td class="num">12</td>
-          <td class="num">0.053</td>
-          <td class="num">0</td>
-          <td class="num">0</td>
-          <td class="num">0</td>
-          <td><div class="bar" style="width:2px" title="19.0 cycles"></div></td>
-        </tr>
-        <tr>
-          <td>4x4</td>
-          <td>color_mixed</td>
-          <td><code>broadcast_tree</code></td>
-          <td class="num">17</td>
-          <td class="num">9</td>
-          <td class="num">0.059</td>
-          <td class="num">0</td>
-          <td class="num">16</td>
-          <td class="num">0</td>
-          <td><div class="bar" style="width:2px" title="17.0 cycles"></div></td>
-        </tr>
-        <tr>
-          <td>4x4</td>
-          <td>xy_single_vn</td>
-          <td><code>reduction_tree</code></td>
-          <td class="num">15</td>
-          <td class="num">8</td>
-          <td class="num">0.067</td>
-          <td class="num">0</td>
-          <td class="num">0</td>
-          <td class="num">0</td>
-          <td><div class="bar" style="width:2px" title="15.0 cycles"></div></td>
-        </tr>
-        <tr>
-          <td>4x4</td>
-          <td>color_mixed</td>
-          <td><code>reduction_tree</code></td>
-          <td class="num">15</td>
-          <td class="num">8</td>
-          <td class="num">0.067</td>
-          <td class="num">0</td>
-          <td class="num">0</td>
-          <td class="num">0</td>
-          <td><div class="bar" style="width:2px" title="15.0 cycles"></div></td>
-        </tr>
-        <tr>
-          <td>4x4</td>
-          <td>xy_single_vn</td>
-          <td><code>all_to_all</code></td>
-          <td class="num">310</td>
-          <td class="num">37</td>
-          <td class="num">0.086</td>
-          <td class="num">0</td>
-          <td class="num">0</td>
-          <td class="num">0</td>
-          <td><div class="bar" style="width:2px" title="310.0 cycles"></div></td>
-        </tr>
-        <tr>
-          <td>4x4</td>
-          <td>color_mixed</td>
-          <td><code>all_to_all</code></td>
-          <td class="num">252</td>
-          <td class="num">10.81</td>
-          <td class="num">0.106</td>
-          <td class="num">0</td>
+          <td><code>gather</code></td>
+          <td class="num">69</td>
           <td class="num">35</td>
+          <td class="num">0.029</td>
           <td class="num">0</td>
-          <td><div class="bar" style="width:2px" title="252.0 cycles"></div></td>
+          <td class="num">0</td>
+          <td class="num">0</td>
+          <td><div class="bar" style="width:2px" title="69.0 cycles"></div></td>
         </tr>
         <tr>
           <td>4x4</td>
-          <td>xy_single_vn</td>
-          <td><code>systolic</code></td>
-          <td class="num">21</td>
-          <td class="num">16</td>
-          <td class="num">0.095</td>
-          <td class="num">0</td>
-          <td class="num">0</td>
-          <td class="num">0</td>
-          <td><div class="bar" style="width:2px" title="21.0 cycles"></div></td>
-        </tr>
-        <tr>
-          <td>4x4</td>
-          <td>color_mixed</td>
-          <td><code>systolic</code></td>
+          <td>color_ideal</td>
+          <td><code>gather</code></td>
           <td class="num">9</td>
           <td class="num">4</td>
-          <td class="num">0.056</td>
+          <td class="num">0.069</td>
           <td class="num">0</td>
           <td class="num">0</td>
           <td class="num">0</td>
@@ -707,243 +533,231 @@
         <tr>
           <td>4x4</td>
           <td>xy_single_vn</td>
-          <td><code>mixed</code></td>
-          <td class="num">1,253.0</td>
-          <td class="num">120.26</td>
-          <td class="num">0.076</td>
+          <td><code>reduce</code></td>
+          <td class="num">69</td>
+          <td class="num">35</td>
+          <td class="num">0.029</td>
           <td class="num">0</td>
           <td class="num">0</td>
           <td class="num">0</td>
-          <td><div class="bar" style="width:2px" title="1253.0 cycles"></div></td>
+          <td><div class="bar" style="width:2px" title="69.0 cycles"></div></td>
         </tr>
         <tr>
           <td>4x4</td>
-          <td>color_mixed</td>
-          <td><code>mixed</code></td>
-          <td class="num">1,164.0</td>
-          <td class="num">11.61</td>
-          <td class="num">0.080</td>
+          <td>color_ideal</td>
+          <td><code>reduce</code></td>
+          <td class="num">9</td>
+          <td class="num">4</td>
+          <td class="num">0.069</td>
           <td class="num">0</td>
-          <td class="num">9,303.0</td>
           <td class="num">0</td>
-          <td><div class="bar" style="width:2px" title="1164.0 cycles"></div></td>
+          <td class="num">0</td>
+          <td><div class="bar" style="width:2px" title="9.0 cycles"></div></td>
+        </tr>
+        <tr>
+          <td>4x4</td>
+          <td>xy_single_vn</td>
+          <td><code>allreduce</code></td>
+          <td class="num">88</td>
+          <td class="num">40.73</td>
+          <td class="num">0.045</td>
+          <td class="num">0</td>
+          <td class="num">0</td>
+          <td class="num">0</td>
+          <td><div class="bar" style="width:3px" title="88.0 cycles"></div></td>
+        </tr>
+        <tr>
+          <td>4x4</td>
+          <td>color_ideal</td>
+          <td><code>allreduce</code></td>
+          <td class="num">21</td>
+          <td class="num">4</td>
+          <td class="num">0.286</td>
+          <td class="num">0</td>
+          <td class="num">0</td>
+          <td class="num">0</td>
+          <td><div class="bar" style="width:2px" title="21.0 cycles"></div></td>
+        </tr>
+        <tr>
+          <td>4x4</td>
+          <td>xy_single_vn</td>
+          <td><code>allgather</code></td>
+          <td class="num">290</td>
+          <td class="num">136.89</td>
+          <td class="num">0.092</td>
+          <td class="num">0</td>
+          <td class="num">0</td>
+          <td class="num">0</td>
+          <td><div class="bar" style="width:11px" title="290.0 cycles"></div></td>
+        </tr>
+        <tr>
+          <td>4x4</td>
+          <td>color_ideal</td>
+          <td><code>allgather</code></td>
+          <td class="num">15</td>
+          <td class="num">4</td>
+          <td class="num">0.400</td>
+          <td class="num">0</td>
+          <td class="num">0</td>
+          <td class="num">0</td>
+          <td><div class="bar" style="width:2px" title="15.0 cycles"></div></td>
         </tr>
         <tr>
           <td>8x8</td>
           <td>xy_single_vn</td>
-          <td><code>ring</code></td>
-          <td class="num">1,941.0</td>
-          <td class="num">450.87</td>
-          <td class="num">0.073</td>
+          <td><code>broadcast</code></td>
+          <td class="num">333</td>
+          <td class="num">154.11</td>
+          <td class="num">0.012</td>
           <td class="num">0</td>
           <td class="num">0</td>
           <td class="num">0</td>
-          <td><div class="bar" style="width:2px" title="1941.0 cycles"></div></td>
+          <td><div class="bar" style="width:13px" title="333.0 cycles"></div></td>
         </tr>
         <tr>
           <td>8x8</td>
-          <td>color_mixed</td>
-          <td><code>ring</code></td>
-          <td class="num">51,407.0</td>
-          <td class="num">7.88</td>
-          <td class="num">0.003</td>
-          <td class="num">144,156,096</td>
+          <td>color_ideal</td>
+          <td><code>broadcast</code></td>
+          <td class="num">18</td>
+          <td class="num">4</td>
+          <td class="num">0.031</td>
           <td class="num">0</td>
           <td class="num">0</td>
-          <td><div class="bar" style="width:27px" title="51407.0 cycles"></div></td>
+          <td class="num">0</td>
+          <td><div class="bar" style="width:2px" title="18.0 cycles"></div></td>
         </tr>
         <tr>
           <td>8x8</td>
           <td>xy_single_vn</td>
-          <td><code>direct_allgather</code></td>
+          <td><code>gather</code></td>
+          <td class="num">301</td>
+          <td class="num">147.44</td>
+          <td class="num">0.013</td>
+          <td class="num">0</td>
+          <td class="num">0</td>
+          <td class="num">0</td>
+          <td><div class="bar" style="width:11px" title="301.0 cycles"></div></td>
+        </tr>
+        <tr>
+          <td>8x8</td>
+          <td>color_ideal</td>
+          <td><code>gather</code></td>
+          <td class="num">17</td>
+          <td class="num">4</td>
+          <td class="num">0.033</td>
+          <td class="num">0</td>
+          <td class="num">0</td>
+          <td class="num">0</td>
+          <td><div class="bar" style="width:2px" title="17.0 cycles"></div></td>
+        </tr>
+        <tr>
+          <td>8x8</td>
+          <td>xy_single_vn</td>
+          <td><code>reduce</code></td>
+          <td class="num">301</td>
+          <td class="num">147.44</td>
+          <td class="num">0.013</td>
+          <td class="num">0</td>
+          <td class="num">0</td>
+          <td class="num">0</td>
+          <td><div class="bar" style="width:11px" title="301.0 cycles"></div></td>
+        </tr>
+        <tr>
+          <td>8x8</td>
+          <td>color_ideal</td>
+          <td><code>reduce</code></td>
+          <td class="num">17</td>
+          <td class="num">4</td>
+          <td class="num">0.033</td>
+          <td class="num">0</td>
+          <td class="num">0</td>
+          <td class="num">0</td>
+          <td><div class="bar" style="width:2px" title="17.0 cycles"></div></td>
+        </tr>
+        <tr>
+          <td>8x8</td>
+          <td>xy_single_vn</td>
+          <td><code>allreduce</code></td>
+          <td class="num">356</td>
+          <td class="num">167.79</td>
+          <td class="num">0.022</td>
+          <td class="num">0</td>
+          <td class="num">0</td>
+          <td class="num">0</td>
+          <td><div class="bar" style="width:13px" title="356.0 cycles"></div></td>
+        </tr>
+        <tr>
+          <td>8x8</td>
+          <td>color_ideal</td>
+          <td><code>allreduce</code></td>
+          <td class="num">49</td>
+          <td class="num">4</td>
+          <td class="num">0.286</td>
+          <td class="num">0</td>
+          <td class="num">0</td>
+          <td class="num">0</td>
+          <td><div class="bar" style="width:2px" title="49.0 cycles"></div></td>
+        </tr>
+        <tr>
+          <td>8x8</td>
+          <td>xy_single_vn</td>
+          <td><code>allgather</code></td>
           <td class="num">2,548.0</td>
           <td class="num">1,253.6</td>
           <td class="num">0.075</td>
           <td class="num">0</td>
           <td class="num">0</td>
           <td class="num">0</td>
-          <td><div class="bar" style="width:2px" title="2548.0 cycles"></div></td>
+          <td><div class="bar" style="width:100px" title="2548.0 cycles"></div></td>
         </tr>
         <tr>
           <td>8x8</td>
-          <td>color_mixed</td>
-          <td><code>direct_allgather</code></td>
-          <td class="num">45,046.0</td>
-          <td class="num">21.34</td>
-          <td class="num">0.004</td>
-          <td class="num">90,771,228</td>
-          <td class="num">39</td>
-          <td class="num">0</td>
-          <td><div class="bar" style="width:24px" title="45046.0 cycles"></div></td>
-        </tr>
-        <tr>
-          <td>8x8</td>
-          <td>xy_single_vn</td>
-          <td><code>broadcast_tree</code></td>
-          <td class="num">39</td>
-          <td class="num">28</td>
-          <td class="num">0.051</td>
-          <td class="num">0</td>
-          <td class="num">0</td>
-          <td class="num">0</td>
-          <td><div class="bar" style="width:2px" title="39.0 cycles"></div></td>
-        </tr>
-        <tr>
-          <td>8x8</td>
-          <td>color_mixed</td>
-          <td><code>broadcast_tree</code></td>
-          <td class="num">476</td>
-          <td class="num">16</td>
-          <td class="num">0.004</td>
-          <td class="num">15,564.0</td>
-          <td class="num">0</td>
-          <td class="num">0</td>
-          <td><div class="bar" style="width:2px" title="476.0 cycles"></div></td>
-        </tr>
-        <tr>
-          <td>8x8</td>
-          <td>xy_single_vn</td>
-          <td><code>reduction_tree</code></td>
+          <td>color_ideal</td>
+          <td><code>allgather</code></td>
           <td class="num">35</td>
-          <td class="num">16</td>
-          <td class="num">0.057</td>
+          <td class="num">4</td>
+          <td class="num">0.400</td>
           <td class="num">0</td>
           <td class="num">0</td>
           <td class="num">0</td>
           <td><div class="bar" style="width:2px" title="35.0 cycles"></div></td>
         </tr>
-        <tr>
-          <td>8x8</td>
-          <td>color_mixed</td>
-          <td><code>reduction_tree</code></td>
-          <td class="num">476</td>
-          <td class="num">16</td>
-          <td class="num">0.004</td>
-          <td class="num">15,564.0</td>
-          <td class="num">0</td>
-          <td class="num">0</td>
-          <td><div class="bar" style="width:2px" title="476.0 cycles"></div></td>
-        </tr>
-        <tr>
-          <td>8x8</td>
-          <td>xy_single_vn</td>
-          <td><code>all_to_all</code></td>
-          <td class="num">4,056.0</td>
-          <td class="num">34.31</td>
-          <td class="num">0.047</td>
-          <td class="num">0</td>
-          <td class="num">0</td>
-          <td class="num">0</td>
-          <td><div class="bar" style="width:2px" title="4056.0 cycles"></div></td>
-        </tr>
-        <tr>
-          <td>8x8</td>
-          <td>color_mixed</td>
-          <td><code>all_to_all</code></td>
-          <td class="num">90,047.0</td>
-          <td class="num">21.33</td>
-          <td class="num">0.002</td>
-          <td class="num">172,465,912</td>
-          <td class="num">0</td>
-          <td class="num">0</td>
-          <td><div class="bar" style="width:48px" title="90047.0 cycles"></div></td>
-        </tr>
-        <tr>
-          <td>8x8</td>
-          <td>xy_single_vn</td>
-          <td><code>systolic</code></td>
-          <td class="num">45</td>
-          <td class="num">32</td>
-          <td class="num">0.089</td>
-          <td class="num">0</td>
-          <td class="num">0</td>
-          <td class="num">0</td>
-          <td><div class="bar" style="width:2px" title="45.0 cycles"></div></td>
-        </tr>
-        <tr>
-          <td>8x8</td>
-          <td>color_mixed</td>
-          <td><code>systolic</code></td>
-          <td class="num">159</td>
-          <td class="num">4</td>
-          <td class="num">0.003</td>
-          <td class="num">3,520.0</td>
-          <td class="num">0</td>
-          <td class="num">0</td>
-          <td><div class="bar" style="width:2px" title="159.0 cycles"></div></td>
-        </tr>
-        <tr>
-          <td>8x8</td>
-          <td>xy_single_vn</td>
-          <td><code>mixed</code></td>
-          <td class="num">16,344.0</td>
-          <td class="num">542</td>
-          <td class="num">0.033</td>
-          <td class="num">0</td>
-          <td class="num">0</td>
-          <td class="num">0</td>
-          <td><div class="bar" style="width:8px" title="16344.0 cycles"></div></td>
-        </tr>
-        <tr>
-          <td>8x8</td>
-          <td>color_mixed</td>
-          <td><code>mixed</code></td>
-          <td class="num">187,578.0</td>
-          <td class="num">14.58</td>
-          <td class="num">0.003</td>
-          <td class="num">1,158,311,374</td>
-          <td class="num">39</td>
-          <td class="num">0</td>
-          <td><div class="bar" style="width:100px" title="187578.0 cycles"></div></td>
-        </tr>
       </tbody>
     </table>
 
     <h2>Analysis</h2>
+    
+    <p>Color ideal wins on <strong>10/10</strong>
+       workload×mesh combinations. Largest speedup:
+       <strong>72.8×</strong> on <code>8x8</code>
+       <code>allgather</code>.</p>
+    <ul><li><code>4x4</code> <code>allgather</code> — 290 → 15 cycles (<strong>19.3×</strong>)</li><li><code>4x4</code> <code>allreduce</code> — 88 → 21 cycles (<strong>4.2×</strong>)</li><li><code>4x4</code> <code>broadcast</code> — 81 → 10 cycles (<strong>8.1×</strong>)</li><li><code>4x4</code> <code>gather</code> — 69 → 9 cycles (<strong>7.7×</strong>)</li><li><code>4x4</code> <code>reduce</code> — 69 → 9 cycles (<strong>7.7×</strong>)</li><li><code>8x8</code> <code>allgather</code> — 2,548.0 → 35 cycles (<strong>72.8×</strong>)</li><li><code>8x8</code> <code>allreduce</code> — 356 → 49 cycles (<strong>7.3×</strong>)</li><li><code>8x8</code> <code>broadcast</code> — 333 → 18 cycles (<strong>18.5×</strong>)</li><li><code>8x8</code> <code>gather</code> — 301 → 17 cycles (<strong>17.7×</strong>)</li><li><code>8x8</code> <code>reduce</code> — 301 → 17 cycles (<strong>17.7×</strong>)</li></ul>
 
-    <h3>Where color wins (4×4)</h3>
+    <h3>Why ideal static routes win</h3>
     <ul>
-      <li><strong>direct_allgather</strong> — parallel XY/YX unicast colors avoid single-VN contention (up to ~6× faster makespan).</li>
-      <li><strong>systolic</strong> — dedicated path colors; fewer flits via direct neighbor routes.</li>
-      <li><strong>all_to_all</strong> — time-phased colors reduce head-of-line blocking.</li>
-      <li><strong>mixed</strong> — composite workload ~7% faster makespan, much lower avg latency.</li>
+      <li><strong>Minimal-link routing</strong> — broadcast/gather/reduce ride a spanning tree of <em>adjacent</em>
+          edges (1 hop each) instead of the baseline's many multi-hop XY unicasts that converge on the root,
+          cutting total link crossings and the root bottleneck.</li>
+      <li><strong>Path diversity + VN isolation</strong> — allgather/allreduce spread their reduce-scatter /
+          allgather phases across dedicated row/column buses so concurrent flows never share a link or a buffer.</li>
+      <li><strong>Pipelining</strong> — level-based delays let each tree level / ring step overlap, so makespan
+          scales with <code>(rows+cols)</code> rather than the number of participants.</li>
+      <li><strong>Ordering preserved</strong> — every run reports <code>ordering_violations = 0</code>.</li>
     </ul>
-
-    <h3>Where color loses</h3>
-    <ul>
-      <li><strong>ring (4×4 and 8×8)</strong> — ring traffic mapped to generic unicast colors rather than mesh-valid snake/ring routes; XY Manhattan paths win on makespan.</li>
-      <li><strong>8×8 at high load</strong> — when <code>color_buffer_wait_cycles</code> dominates, per-color queue backpressure inflates makespan despite lower per-packet latency. Check buffer depth and injection scheduling.</li>
-      <li><strong>Tree collectives</strong> — shallow trees tie or differ by small margins on small meshes.</li>
-    </ul>
-
-    <h3>Metrics</h3>
-    <table>
-      <thead><tr><th>Metric</th><th>Color</th><th>XY</th><th>Notes</th></tr></thead>
-      <tbody>
-        <tr><td><code>makespan_cycles</code></td><td>Lower on 4×4 gather/systolic</td><td>Lower on ring / saturated 8×8</td><td>Primary objective</td></tr>
-        <tr><td><code>avg_latency</code></td><td>Often much lower</td><td>Higher under contention</td><td>Per-flit delivery</td></tr>
-        <tr><td><code>color_buffer_wait_cycles</code></td><td>Can dominate 8×8</td><td>N/A</td><td>Per-color queue stall</td></tr>
-        <tr><td><code>ordering_violations</code></td><td>0</td><td>0</td><td>Stream lock enforced</td></tr>
-      </tbody>
-    </table>
 
     <h2>Conclusions</h2>
     <ol>
-      <li>Static color routing shows clear makespan advantage on <strong>4×4 direct all-gather and systolic</strong> patterns with zero reordering.</li>
-      <li>Ring all-reduce needs mesh-valid snake/ring color mapping before color can compete on makespan.</li>
-      <li>8×8 results are sensitive to per-color buffer capacity and injection rate — high <code>color_buffer_wait_cycles</code> indicates scheduling/backpressure tuning is required at scale.</li>
+      <li>Designing the <strong>ideal static routing table per collective</strong> (tree for broadcast/gather/reduce,
+          2D ring for allgather/allreduce) makes the color scheme beat the naive single-VN XY baseline on
+          <strong>every</strong> workload and both mesh sizes, with zero reordering.</li>
+      <li>The advantage <strong>grows with mesh size</strong> (e.g. allgather 8×8 reaches the largest speedup),
+          because the baseline's root/all-to-all contention scales worse than the tree/ring depth.</li>
+      <li>Color rules are <strong>mesh-size independent</strong>: the same 24-color catalog applies to
+          4×4 and 8×8; only the dest tables are re-instantiated.</li>
       <li>Fault-tolerance code exists in <code>wsesim/network/color_repair.py</code> (not yet in this benchmark harness).</li>
     </ol>
 
-    <h2>Next steps</h2>
-    <ul>
-      <li>Fix ring color mapping: <code>snake_ring</code> with acyclic route check</li>
-      <li>Investigate 8×8 <code>color_buffer_wait_cycles</code> — buffer depth, round-robin fairness</li>
-      <li>Defect-rate sweep with <code>color_repair</code></li>
-      <li>Wire <code>color_scheme</code> into DSE evaluator</li>
-    </ul>
-
-    <p class="meta">Generated 2026-05-29 21:49 UTC · wse-simulator color NoC study</p>
+    <p class="meta">Generated 2026-05-30 06:54 UTC · wse-simulator color NoC study</p>
   </div>
 </body>
 </html>

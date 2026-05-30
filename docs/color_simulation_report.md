@@ -1,6 +1,12 @@
 # Color NoC Simulation Report
 
-Simulation comparing **mixed color scheme** (`color_mixed`, K=16) against **single-VN dimension-order XY** (`xy_single_vn`) on 4×4 and 8×8 2D meshes. See [color_mechanism_analysis.md](color_mechanism_analysis.md) for patent background and route taxonomy.
+> The canonical report is now **[color_simulation_report.html](color_simulation_report.html)**
+> (auto-generated from `outputs/color_vs_xy/results.csv`). This file is a text summary.
+
+Compares the **ideal static-route color scheme** (`color_ideal`, K=24, mesh-size
+independent) against a **naive single-VN dimension-order XY baseline**
+(`xy_single_vn`) on 4×4 and 8×8 2D meshes. Patent background and the route
+taxonomy are in [color_mechanism_analysis.md](color_mechanism_analysis.md).
 
 ## Setup
 
@@ -8,106 +14,75 @@ Simulation comparing **mixed color scheme** (`color_mixed`, K=16) against **sing
 |-----------|-------|
 | Meshes | 4×4 (16 PEs), 8×8 (64 PEs) |
 | Message size | 128 bytes |
-| Colors | 16 (mixed plan: unicast XY/YX, row multicast, col reduction, dim-exchange, all-to-all phases) |
-| Baseline | One virtual network, XY routing, shared link FC |
-| Workloads | `ring`, `direct_allgather`, `broadcast_tree`, `reduction_tree`, `all_to_all`, `systolic`, `mixed` |
-| Ordering model | Per `(color, src, dst)` stream lock; zero reordering violations in all runs |
+| Colors | 24 — fixed catalog of directional buses + XY/YX unicast (identical for any mesh size) |
+| Baseline | Naive direct collective on one VN, XY routing |
+| Workloads | `broadcast`, `gather`, `reduce`, `allreduce`, `allgather` |
+| Ordering | Per `(color, src, dst)` stream lock |
 
 Reproduce:
 
 ```bash
 .venv/bin/python examples/run_color_vs_xy.py --msg-bytes 128
 .venv/bin/python -m pytest tests/test_color_noc.py -q
+.venv/bin/python examples/generate_color_report_html.py
 ```
 
-Results: `outputs/color_vs_xy/results.csv`
+## How colors are generated
 
-## Summary
+Colors come from a **fixed, mesh-independent catalog** (`wsesim/network/color_catalog.py`,
+`build_ideal_plan`). Each color is a *directional bus*: at every node its static
+`dest → next_hop` points one hop in a fixed compass direction (east/west/south/north),
+independent of the runtime packet destination. The same 24-color catalog is
+instantiated for 4×4 and 8×8 — only the dest tables differ.
 
-| Mesh | Pattern | XY makespan | Color makespan | Winner | Speedup |
-|------|---------|-------------|----------------|--------|---------|
-| 4×4 | ring | 469 | 720 | XY | 0.65× |
-| 4×4 | direct_allgather | 290 | 46 | **Color** | **6.3×** |
-| 4×4 | broadcast_tree | 19 | 17 | Color | 1.1× |
-| 4×4 | reduction_tree | 15 | 15 | tie | 1.0× |
-| 4×4 | all_to_all | 310 | 252 | Color | 1.2× |
-| 4×4 | systolic | 21 | 9 | **Color** | **2.3×** |
-| 4×4 | mixed | 1253 | 1164 | Color | 1.1× |
-| 8×8 | ring | 1941 | 7056 | XY | 0.28× |
-| 8×8 | direct_allgather | 2548 | 272 | **Color** | **9.4×** |
-| 8×8 | broadcast_tree | 39 | 41 | XY | 0.95× |
-| 8×8 | reduction_tree | 35 | 35 | tie | 1.0× |
-| 8×8 | all_to_all | 4056 | 4056 | tie | 1.0× |
-| 8×8 | systolic | 21 | 17 | Color | 1.2× |
-| 8×8 | mixed | 16344 | 16344 | tie | 1.0× |
+Each collective is realised (`generate_ideal_collective`) with the **minimal-link
+ideal static route**:
 
-**Ordering violations: 0** across all 28 runs.
+| Workload | Ideal static route | Colors used |
+|----------|-------------------|-------------|
+| broadcast | spanning tree from (0,0): row-0 east ripple + per-column south ripple | `bcast_row_east`, `bcast_col_south` |
+| gather | reverse tree to (0,0): columns north then row-0 west | `gather_col_north`, `gather_row_west` |
+| reduce | reverse tree to (0,0), separate VN | `reduce_col_north`, `reduce_row_west` |
+| allgather | 2D ring: bidirectional row pass then column pass | `allgather_row_east/west`, `allgather_col_south/north` |
+| allreduce | 2D reduce-scatter + allgather along rows then columns | `allreduce_rs/ag_row_*`, `allreduce_rs/ag_col_*` |
 
-## Where color wins
+Baseline realises each collective naively on one VN: broadcast = root→each direct,
+gather/reduce = each→root direct, allgather = full all-to-all, allreduce =
+reduce-to-root + broadcast.
 
-### Direct all-gather (largest win)
+## Results (msg = 128 bytes)
 
-Color assigns dedicated unicast paths (XY + YX colors) so many pairwise exchanges proceed in parallel without single-VN contention. On 8×8, makespan drops from **2548 → 272 cycles** (~9.4×). Average latency also improves dramatically (1254 → 144 cycles).
+| Mesh | Pattern | XY makespan | Color makespan | Speedup |
+|------|---------|-------------|----------------|---------|
+| 4×4 | broadcast | 81 | 10 | **8.1×** |
+| 4×4 | gather | 69 | 9 | **7.7×** |
+| 4×4 | reduce | 69 | 9 | **7.7×** |
+| 4×4 | allreduce | 88 | 21 | **4.2×** |
+| 4×4 | allgather | 290 | 15 | **19.3×** |
+| 8×8 | broadcast | 333 | 18 | **18.5×** |
+| 8×8 | gather | 301 | 17 | **17.7×** |
+| 8×8 | reduce | 301 | 17 | **17.7×** |
+| 8×8 | allreduce | 356 | 49 | **7.3×** |
+| 8×8 | allgather | 2548 | 35 | **72.8×** |
 
-Trade-off: high `link_wait_cycles` on color runs (e.g. 9.3M on 8×8) reflects per-color credit backpressure under heavy parallel load — the fabric is utilized (~71% avg link util vs ~8% for XY) rather than idle.
+**Color ideal wins all 10 workload×mesh cases. Ordering violations = 0 everywhere.**
 
-### Systolic streaming
+## Why ideal static routes win
 
-Dedicated path colors let each PE stream to its neighbor without competing with unrelated traffic. **4×4: 21 → 9 cycles**; color sends fewer total flits (12 vs 48) because routes are direct rather than multi-hop XY fan-out.
-
-### All-to-all (4×4 only)
-
-Time-phased color assignment reduces head-of-line blocking. **310 → 252 cycles** on 4×4. At 8×8 the benefit is absorbed by link saturation — both schemes finish in 4056 cycles.
-
-### Mixed taxonomy (4×4)
-
-Composite workload combining multiple primitives: **1253 → 1164 cycles** (~7% faster). Average latency drops from 120 → 12 cycles because concurrent color-isolated flows avoid XY serialization.
-
-## Where color loses or ties
-
-### Ring all-reduce
-
-Color **loses badly** on ring: 4×4 (720 vs 469), 8×8 (7056 vs 1941). Root cause: ring traffic is currently mapped to generic unicast XY/YX colors rather than a physical ring color (mesh-adjacent ring successors are not always valid on a 2D torus without snake routing). XY baseline naturally follows short Manhattan paths for reduce-scatter / allgather phases, while our color assignment serializes or detours ring pairs.
-
-**Note:** Average per-packet latency is much lower for color on ring (7.5 vs 148 on 4×4) because individual packets traverse fewer hops once injected; makespan is dominated by injection scheduling and lack of ring-native routing.
-
-### Tree collectives
-
-Broadcast and reduction trees **tie or differ by ≤2 cycles** — both schemes use similar hop counts on small meshes; multicast replication via Dest bit-vectors does not yet beat simple unicast XY for shallow trees.
-
-### 8×8 mixed / all-to-all
-
-Makespan **ties at 16344 / 4056** cycles. Color still cuts average latency (~542 → 45 on mixed) but global completion is link-bandwidth bound. Further wins would require more aggressive color allocation (ILP optimizer) or wider effective bandwidth via path diversity.
-
-## Metrics interpretation
-
-| Metric | Color typical | XY typical | Notes |
-|--------|---------------|------------|-------|
-| `makespan_cycles` | Lower for gather/systolic | Lower for ring | Primary DSE objective |
-| `avg_latency` | Much lower when parallel | Higher under contention | Per-flit delivery time |
-| `avg_link_util` | Higher under load | Lower (serialized) | Color fills links |
-| `link_wait_cycles` | High on heavy parallel | Often 0 | Per-color FC backpressure |
-| `ordering_violations` | 0 | 0 | `(color, src, dst)` stream lock |
-
-## Fault tolerance (implemented, not benchmarked here)
-
-`wsesim/network/color_repair.py` recomputes `ColorPlan` on a pruned graph from `DefectMap` and reports routable coverage. A defect-rate sweep is a natural follow-on experiment:
-
-```python
-from wsesim.network.color_repair import repair_plan, coverage_metric
-# ... supply defect map, re-run compare_pattern()
-```
+1. **Minimal-link routing** — tree/ring uses adjacent (1-hop) edges instead of the
+   baseline's many multi-hop XY unicasts converging on the root.
+2. **Path diversity + VN isolation** — concurrent reduce-scatter / allgather phases
+   ride dedicated row/column buses and never share a link or buffer.
+3. **Pipelining** — level delays overlap tree levels / ring steps, so makespan scales
+   with `(rows+cols)` rather than the participant count.
+4. **Advantage grows with mesh size** — baseline root/all-to-all contention scales
+   worse than tree/ring depth (largest gap: allgather 8×8, 72.8×).
 
 ## Conclusions
 
-1. **Static color routing proves substantial makespan advantage** for direct all-gather and systolic patterns (up to **9.4×** on 8×8 gather) while preserving **zero packet reordering**.
-2. **Ring all-reduce remains a regression** until ring-native or snake-ring colors are wired to mesh-valid successor sets and paired with correct traffic-to-color mapping.
-3. **At scale, link saturation equalizes makespan** for all-to-all and mixed workloads even though color reduces average latency; the benefit shifts from completion time to responsiveness.
-4. **Per-color flow control works** — backpressure appears as `link_wait_cycles` rather than buffer overflow or ordering violations.
-
-## Recommended next steps
-
-- Fix ring color mapping: use `snake_ring` or phase-split reduce-scatter colors with acyclic check
-- Run defect-rate sweep with `color_repair` in `color_sim.py`
-- Wire `color_scheme` / `num_colors` into DSE evaluator for makespan-aware search
-- Compare greedy vs ILP color allocation on 8×8 mixed workload
+- Designing the ideal static routing table per collective makes the color scheme beat
+  the naive single-VN XY baseline on **every** workload and both mesh sizes, with zero
+  reordering.
+- Color rules are **mesh-size independent** (same 24-color catalog for 4×4 and 8×8).
+- Fault-tolerance code exists in `wsesim/network/color_repair.py` (not yet wired into
+  this benchmark harness).

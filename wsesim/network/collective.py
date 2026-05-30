@@ -417,3 +417,166 @@ def _mesh_hint(nodes: list[int], topology_hint: dict | None) -> tuple[int, int]:
     if rows * cols == len(nodes):
         return rows, cols
     return _factor_near_square(len(nodes))
+
+
+# ---------------------------------------------------------------------------
+# Ideal-routing collective workloads (broadcast / gather / reduce /
+# allreduce / allgather). Each pattern has two realisations:
+#   * baseline -- naive *direct* algorithm, single VN (color 0), XY routing
+#   * ideal    -- minimal-link spanning tree / 2D ring on the mesh-independent
+#                 color catalog (wsesim.network.color_catalog), with
+#                 level-based delays for pipelining.
+# ---------------------------------------------------------------------------
+
+from wsesim.network.color_catalog import (  # noqa: E402
+    C_AG_COL_NORTH,
+    C_AG_COL_SOUTH,
+    C_AG_ROW_EAST,
+    C_AG_ROW_WEST,
+    C_AR_AG_COL_NORTH,
+    C_AR_AG_ROW_WEST,
+    C_AR_RS_COL_SOUTH,
+    C_AR_RS_ROW_EAST,
+    C_BCAST_COL_SOUTH,
+    C_BCAST_ROW_EAST,
+    C_GATHER_COL_NORTH,
+    C_GATHER_ROW_WEST,
+    C_REDUCE_COL_NORTH,
+    C_REDUCE_ROW_WEST,
+)
+
+IDEAL_PATTERNS = ["broadcast", "gather", "reduce", "allreduce", "allgather"]
+
+
+def _cedge(src: int, dst: int, size_bytes: int, payload: str, delay: int, color: int) -> dict:
+    pkt = _packet(src, dst, size_bytes, payload, delay)
+    pkt["color"] = int(color)
+    return pkt
+
+
+def generate_baseline_collective(
+    pattern: str, rows: int, cols: int, chunk_bytes: int
+) -> list[dict]:
+    """Naive direct realisation on a single VN (all color 0, XY routing)."""
+    n = rows * cols
+    nodes = list(range(n))
+    root = 0
+    chunk = max(1, int(chunk_bytes))
+    pattern = pattern.lower()
+
+    if pattern == "broadcast":
+        return [_cedge(root, d, chunk, "broadcast", 0, 0) for d in nodes if d != root]
+    if pattern in ("gather", "reduce"):
+        return [_cedge(s, root, chunk, pattern, 0, 0) for s in nodes if s != root]
+    if pattern == "allreduce":
+        # reduce-to-root then broadcast-from-root
+        pk = [_cedge(s, root, chunk, "allreduce", 0, 0) for s in nodes if s != root]
+        pk += [_cedge(root, d, chunk, "allreduce", 1, 0) for d in nodes if d != root]
+        return pk
+    if pattern == "allgather":
+        # direct all-to-all
+        return [
+            _cedge(s, d, chunk, "allgather", 0, 0)
+            for s in nodes
+            for d in nodes
+            if s != d
+        ]
+    raise ValueError(f"Unknown pattern {pattern!r}")
+
+
+def generate_ideal_collective(
+    pattern: str, rows: int, cols: int, chunk_bytes: int
+) -> list[dict]:
+    """Ideal static-route realisation on the color catalog."""
+    chunk = max(1, int(chunk_bytes))
+    pattern = pattern.lower()
+    if pattern == "broadcast":
+        return _ideal_broadcast(rows, cols, chunk)
+    if pattern == "gather":
+        return _ideal_tree_to_root(rows, cols, chunk, "gather", C_GATHER_COL_NORTH, C_GATHER_ROW_WEST)
+    if pattern == "reduce":
+        return _ideal_tree_to_root(rows, cols, chunk, "reduce", C_REDUCE_COL_NORTH, C_REDUCE_ROW_WEST)
+    if pattern == "allgather":
+        return _ideal_allgather(rows, cols, chunk)
+    if pattern == "allreduce":
+        return _ideal_allreduce(rows, cols, chunk)
+    raise ValueError(f"Unknown pattern {pattern!r}")
+
+
+def _ideal_broadcast(rows: int, cols: int, chunk: int) -> list[dict]:
+    """Spanning tree from corner (0,0): row-0 east ripple, then per-column south."""
+    pk: list[dict] = []
+    for c in range(cols - 1):
+        pk.append(_cedge(c, c + 1, chunk, "broadcast", c, C_BCAST_ROW_EAST))
+    for c in range(cols):
+        for r in range(rows - 1):
+            delay = c + 1 + r
+            pk.append(
+                _cedge(r * cols + c, (r + 1) * cols + c, chunk, "broadcast", delay, C_BCAST_COL_SOUTH)
+            )
+    return pk
+
+
+def _ideal_tree_to_root(
+    rows: int, cols: int, chunk: int, payload: str, col_color: int, row_color: int
+) -> list[dict]:
+    """Reverse spanning tree to corner (0,0): columns converge north, then row 0 west."""
+    pk: list[dict] = []
+    for c in range(cols):
+        for r in range(rows - 1, 0, -1):
+            level = (rows - 1) - r
+            pk.append(_cedge(r * cols + c, (r - 1) * cols + c, chunk, payload, level, col_color))
+    base = max(0, rows - 1)
+    for c in range(cols - 1, 0, -1):
+        delay = base + (cols - 1 - c)
+        pk.append(_cedge(c, c - 1, chunk, payload, delay, row_color))
+    return pk
+
+
+def _ideal_allgather(rows: int, cols: int, chunk: int) -> list[dict]:
+    """2D ring allgather: bidirectional row pass, then bidirectional column pass."""
+    pk: list[dict] = []
+    for step in range(cols - 1):
+        for r in range(rows):
+            for c in range(cols - 1):
+                pk.append(_cedge(r * cols + c, r * cols + c + 1, chunk, "allgather", step, C_AG_ROW_EAST))
+            for c in range(cols - 1, 0, -1):
+                pk.append(_cedge(r * cols + c, r * cols + c - 1, chunk, "allgather", step, C_AG_ROW_WEST))
+    base = max(0, cols - 1)
+    for step in range(rows - 1):
+        for c in range(cols):
+            for r in range(rows - 1):
+                pk.append(
+                    _cedge(r * cols + c, (r + 1) * cols + c, chunk, "allgather", base + step, C_AG_COL_SOUTH)
+                )
+            for r in range(rows - 1, 0, -1):
+                pk.append(
+                    _cedge(r * cols + c, (r - 1) * cols + c, chunk, "allgather", base + step, C_AG_COL_NORTH)
+                )
+    return pk
+
+
+def _ideal_allreduce(rows: int, cols: int, chunk: int) -> list[dict]:
+    """2D reduce-scatter + allgather along rows then columns."""
+    pk: list[dict] = []
+    t = 0
+    for step in range(cols - 1):
+        for r in range(rows):
+            for c in range(cols - 1):
+                pk.append(_cedge(r * cols + c, r * cols + c + 1, chunk, "allreduce", t + step, C_AR_RS_ROW_EAST))
+    t += max(1, cols - 1)
+    for step in range(cols - 1):
+        for r in range(rows):
+            for c in range(cols - 1, 0, -1):
+                pk.append(_cedge(r * cols + c, r * cols + c - 1, chunk, "allreduce", t + step, C_AR_AG_ROW_WEST))
+    t += max(1, cols - 1)
+    for step in range(rows - 1):
+        for c in range(cols):
+            for r in range(rows - 1):
+                pk.append(_cedge(r * cols + c, (r + 1) * cols + c, chunk, "allreduce", t + step, C_AR_RS_COL_SOUTH))
+    t += max(1, rows - 1)
+    for step in range(rows - 1):
+        for c in range(cols):
+            for r in range(rows - 1, 0, -1):
+                pk.append(_cedge(r * cols + c, (r - 1) * cols + c, chunk, "allreduce", t + step, C_AR_AG_COL_NORTH))
+    return pk
