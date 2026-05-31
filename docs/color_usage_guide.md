@@ -210,12 +210,52 @@ Phase 4 — 列 allgather     (rows−1 步)   color 15 (ag_col_north)
 
 ---
 
-## 7. 编程接口（仿真）
+## 6.1 一次集合通信尽量少切 Color（ColorBudget）
+
+编译器可为 **单次 collective 调用** 选择 color 预算策略（`ColorBudget`），在 **color 数量** 与 **并行度 / makespan** 之间权衡：
+
+| 策略 | 每 collective 最多 distinct colors | 机制 |
+|------|-----------------------------------|------|
+| **MINIMAL** | **1** | 全程使用 `unicast_xy`（color 0）；行/列 phase、环上 east/west 通过 `delay_cycles` **时间串行**，同一 color 上不并发冲突流 |
+| **COMPACT** | **2** | `unicast_xy` + `unicast_yx`：正向 hop（东/南）用 color 0，反向 hop（西/北）用 color 1；行 phase 与列 phase **复用同一对 color**（时间不重叠） |
+| **PARALLEL** | 2（树）/ 4（环） | 当前默认：方向总线独立 VN，同一步 east/west 可并行 |
+
+### 理论下界
+
+- **方向总线** 每个 color 只编码 **一个罗盘方向**；2D 生成树需要 row + column 两种方向 → 纯总线方案 **至少 2 色**，无法再减。
+- **环 / allreduce** 同一步需 east 与 west（或 south 与 north）→ 纯总线 **至少 2 色/维**；要压到 **1 色** 必须改用 **单播** 或 **时间串行**  opposing 方向。
+- **非重叠时间** 可 **复用同一 color ID**（专利允许）；COMPACT 即利用 phase 边界复用 XY/YX 对。
+
+### API
+
+```python
+from wsesim.network.color_usage import ColorBudget, distinct_colors, budget_for
+from wsesim.network.collective import generate_ideal_collective
+
+# 一次 broadcast 只用 1 个 color
+traffic = generate_ideal_collective(
+    "allgather", 8, 8, 128, color_budget=ColorBudget.MINIMAL
+)
+assert distinct_colors(traffic) == 1
+assert budget_for("allreduce", ColorBudget.COMPACT) == 2
+```
+
+仿真对比三种预算 + baseline：
+
+```python
+from wsesim.network.color_sim import compare_all_budgets
+results = compare_all_budgets(4, 4, "allreduce")
+```
+
+**选型建议**：kernel 内 color 切换有 wavelet task 开销时优先 **MINIMAL/COMPACT**；带宽敏感、环步需 bidirectional 并行时用 **PARALLEL**。
+
+---
 
 ```python
 from wsesim.network.color_catalog import build_ideal_plan
 from wsesim.network.color_usage import (
     COLLECTIVE_SCENARIOS,
+    ColorBudget,
     scenario_for,
     pick_broadcast_colors,
     validate_plan,
@@ -225,8 +265,13 @@ from wsesim.network.collective import generate_ideal_collective
 # 构建 8×8 mesh 的 24 色 plan
 plan = build_ideal_plan(8, 8)
 
-# 生成 broadcast 理想流量（每包带 color 字段）
+# 生成 broadcast 理想流量（每包带 color 字段）；默认 PARALLEL
 traffic = generate_ideal_collective("broadcast", rows=8, cols=8, chunk_bytes=128, root=0)
+
+# 最少 color：整次 collective 仅 color 0
+traffic_min = generate_ideal_collective(
+    "allgather", 8, 8, 128, color_budget=ColorBudget.MINIMAL
+)
 
 # 查询场景规则
 sc = scenario_for("allgather")

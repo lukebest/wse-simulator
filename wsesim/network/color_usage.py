@@ -9,7 +9,8 @@ See ``docs/color_usage_guide.md`` for the full scenario-by-scenario guide.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
+from enum import Enum
 
 from wsesim.network.color import ColorPlan
 from wsesim.network.color_alloc import is_acyclic_route
@@ -40,6 +41,47 @@ from wsesim.network.color_catalog import (
     MAX_COLORS,
     build_ideal_plan,
 )
+
+
+class ColorBudget(str, Enum):
+    """How many distinct colors one collective invocation may use."""
+
+    MINIMAL = "minimal"    # 1 color — entire collective on one VN (unicast)
+    COMPACT = "compact"    # 2 colors — time-multiplex opposing directions
+    PARALLEL = "parallel"  # 3–4 colors — max link parallelism (current ideal)
+
+
+# Per-pattern color count targets (distinct IDs used in one collective).
+BUDGET_COLOR_COUNT: dict[ColorBudget, dict[str, int]] = {
+    ColorBudget.MINIMAL: {
+        "broadcast": 1,
+        "gather": 1,
+        "reduce": 1,
+        "allgather": 1,
+        "allreduce": 1,
+    },
+    ColorBudget.COMPACT: {
+        "broadcast": 2,
+        "gather": 2,
+        "reduce": 2,
+        "allgather": 2,
+        "allreduce": 2,
+    },
+    ColorBudget.PARALLEL: {
+        "broadcast": 2,
+        "gather": 2,
+        "reduce": 2,
+        "allgather": 4,
+        "allreduce": 4,
+    },
+}
+
+# Primary / secondary color assignment per budget (parallel uses pattern-specific buses).
+BUDGET_COLORS: dict[ColorBudget, tuple[int, int]] = {
+    ColorBudget.MINIMAL: (C_UNICAST_XY, C_UNICAST_XY),
+    ColorBudget.COMPACT: (C_UNICAST_XY, C_UNICAST_YX),
+    ColorBudget.PARALLEL: (C_UNICAST_XY, C_UNICAST_YX),  # overridden per generator
+}
 
 # Patent / product profiles: same catalog semantics, fewer active IDs.
 COLOR_PROFILES: dict[int, tuple[int, ...]] = {
@@ -202,6 +244,37 @@ COLLECTIVE_SCENARIOS: tuple[CollectiveScenario, ...] = (
         notes="Fallback for irregular or compile-time unknown dst; not minimal for collectives.",
     ),
 )
+
+
+def distinct_colors(traffic: list[dict]) -> int:
+    """Number of distinct color IDs in one collective traffic batch."""
+    return len({int(p.get("color", 0)) for p in traffic})
+
+
+def budget_for(pattern: str, budget: ColorBudget) -> int:
+    """Target distinct color count for one collective under a budget policy."""
+    return BUDGET_COLOR_COUNT[budget].get(pattern.lower(), 1)
+
+
+def primary_secondary(budget: ColorBudget) -> tuple[int, int]:
+    """Return (primary, secondary) color IDs for compact/minimal ring scheduling."""
+    return BUDGET_COLORS[budget]
+
+
+def minimize_color_explanation() -> str:
+    """Why minimal/compact work and when to use each budget."""
+    return (
+        "Directional bus colors encode ONE compass direction per node; a tree needs "
+        "≥2 bus colors (row + column axes) unless unicast is used. "
+        "MINIMAL assigns the whole collective to one unicast VN (color 0): phases "
+        "and opposing ring directions are time-serialized via delay_cycles, so "
+        "flows never overlap on the same color+link. "
+        "COMPACT uses two unicast VNs (XY + YX): forward hops on color 0, "
+        "backward hops on color 1, reusing the same pair across row/column phases "
+        "because phases do not overlap in time. "
+        "PARALLEL dedicates separate bus colors per direction for maximum "
+        "concurrency (current default)."
+    )
 
 
 def scenario_for(pattern: str) -> CollectiveScenario | None:

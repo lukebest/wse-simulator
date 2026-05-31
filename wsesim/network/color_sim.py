@@ -18,6 +18,7 @@ from wsesim.network.collective import (
 from wsesim.network.color_catalog import build_baseline_plan, build_ideal_plan
 from wsesim.network.color_network import ColorNetwork
 from wsesim.network.color_repair import apply_defect_map_to_graph, repair_color_plan
+from wsesim.network.color_usage import ColorBudget, distinct_colors
 from wsesim.network.flow_control.credit_vc import CreditBasedVCFlowControl
 from wsesim.network.network import UnifiedNetwork
 from wsesim.network.routing.dimension_order import DimensionOrderRouting
@@ -42,6 +43,7 @@ class SimCaseResult:
     total_flits: int
     ordering_violations: int
     packets: int
+    distinct_colors: int = 0
 
 
 def run_xy_baseline(
@@ -93,6 +95,7 @@ def run_color_scheme(
     msg_bytes: int = 128,
     num_colors: int = 24,
     defect: DefectMap | None = None,
+    scheme: str = "color_ideal",
 ) -> SimCaseResult:
     plan = build_ideal_plan(rows, cols, num_colors)
     env = simpy.Environment()
@@ -115,7 +118,7 @@ def run_color_scheme(
     env.run()
     return SimCaseResult(
         mesh=f"{rows}x{cols}",
-        scheme="color_ideal",
+        scheme=scheme,
         pattern="",
         msg_bytes=msg_bytes,
         makespan_cycles=int(env.now),
@@ -127,6 +130,7 @@ def run_color_scheme(
         total_flits=net.stats.flits_sent,
         ordering_violations=net.stats.ordering_violations,
         packets=net.stats.packets_sent,
+        distinct_colors=distinct_colors(traffic),
     )
 
 
@@ -137,16 +141,45 @@ def compare_pattern(
     *,
     msg_bytes: int = 128,
     num_experts: int = 1,
+    color_budget: ColorBudget = ColorBudget.PARALLEL,
 ) -> tuple[SimCaseResult, SimCaseResult]:
     del num_experts
     chunk = msg_bytes
     baseline_traffic = generate_baseline_collective(pattern, rows, cols, chunk)
-    ideal_traffic = generate_ideal_collective(pattern, rows, cols, chunk)
+    ideal_traffic = generate_ideal_collective(
+        pattern, rows, cols, chunk, color_budget=color_budget
+    )
     xy = run_xy_baseline(rows, cols, baseline_traffic, msg_bytes=msg_bytes)
-    color = run_color_scheme(rows, cols, ideal_traffic, msg_bytes=msg_bytes)
+    scheme_name = {
+        ColorBudget.PARALLEL: "color_parallel",
+        ColorBudget.COMPACT: "color_compact",
+        ColorBudget.MINIMAL: "color_minimal",
+    }[color_budget]
+    color = run_color_scheme(
+        rows, cols, ideal_traffic, msg_bytes=msg_bytes, scheme=scheme_name
+    )
     xy.pattern = pattern
     color.pattern = pattern
     return xy, color
+
+
+def compare_all_budgets(
+    rows: int,
+    cols: int,
+    pattern: str,
+    *,
+    msg_bytes: int = 128,
+) -> list[SimCaseResult]:
+    """Run baseline XY + all three color budgets for one pattern."""
+    results: list[SimCaseResult] = []
+    for budget in (ColorBudget.MINIMAL, ColorBudget.COMPACT, ColorBudget.PARALLEL):
+        xy, color = compare_pattern(
+            rows, cols, pattern, msg_bytes=msg_bytes, color_budget=budget
+        )
+        if budget == ColorBudget.PARALLEL:
+            results.append(xy)
+        results.append(color)
+    return results
 
 
 def run_full_study(

@@ -113,3 +113,30 @@ def test_color_beats_or_matches_xy_on_collectives():
         assert color.makespan_cycles <= xy.makespan_cycles, (
             pattern, color.makespan_cycles, xy.makespan_cycles
         )
+
+
+def test_color_budget_minimizes_distinct_colors():
+    from wsesim.network.collective import generate_ideal_collective
+    from wsesim.network.color_usage import ColorBudget, budget_for, distinct_colors
+
+    for pattern in ("broadcast", "gather", "reduce", "allgather", "allreduce"):
+        for budget in ColorBudget:
+            traffic = generate_ideal_collective(
+                pattern, 4, 4, 128, color_budget=budget
+            )
+            n = distinct_colors(traffic)
+            assert n <= budget_for(pattern, budget), (pattern, budget, n)
+        minimal = generate_ideal_collective(
+            pattern, 4, 4, 128, color_budget=ColorBudget.MINIMAL
+        )
+        assert distinct_colors(minimal) == 1, pattern
+
+
+def test_minimal_and_compact_collectives_preserve_ordering():
+    from wsesim.network.color_usage import ColorBudget
+
+    for budget in (ColorBudget.MINIMAL, ColorBudget.COMPACT):
+        for pattern in PATTERNS:
+            _, color = compare_pattern(4, 4, pattern, msg_bytes=128, color_budget=budget)
+            assert color.ordering_violations == 0, (budget, pattern)
+            assert color.distinct_colors <= 2, (budget, pattern, color.distinct_colors)

@@ -452,9 +452,11 @@ from wsesim.network.color_catalog import (  # noqa: E402
     C_AR_RS_ROW_EAST,
 )
 from wsesim.network.color_usage import (  # noqa: E402
+    ColorBudget,
     pick_broadcast_colors,
     pick_reduce_colors,
     pick_tree_colors,
+    primary_secondary,
 )
 
 IDEAL_PATTERNS = ["broadcast", "gather", "reduce", "allreduce", "allgather"]
@@ -497,23 +499,48 @@ def generate_baseline_collective(
 
 
 def generate_ideal_collective(
-    pattern: str, rows: int, cols: int, chunk_bytes: int, *, root: int = 0
+    pattern: str,
+    rows: int,
+    cols: int,
+    chunk_bytes: int,
+    *,
+    root: int = 0,
+    color_budget: ColorBudget = ColorBudget.PARALLEL,
 ) -> list[dict]:
-    """Ideal static-route realisation on the color catalog."""
+    """Ideal static-route realisation on the color catalog.
+
+    ``color_budget`` controls how many distinct colors one collective uses:
+      * MINIMAL — 1 unicast VN; serialize opposing ring directions
+      * COMPACT — 2 unicast VNs (XY/YX); reuse across time-separated phases
+      * PARALLEL — dedicated directional bus colors (default, max throughput)
+    """
     chunk = max(1, int(chunk_bytes))
     pattern = pattern.lower()
+    if color_budget == ColorBudget.PARALLEL:
+        if pattern == "broadcast":
+            return _ideal_broadcast(rows, cols, chunk, root=root)
+        if pattern == "gather":
+            row_c, col_c = pick_tree_colors(root, rows, cols, gather=True)
+            return _ideal_tree_to_root(rows, cols, chunk, "gather", col_c, row_c, root=root)
+        if pattern == "reduce":
+            row_c, col_c = pick_reduce_colors(root, rows, cols)
+            return _ideal_tree_to_root(rows, cols, chunk, "reduce", col_c, row_c, root=root)
+        if pattern == "allgather":
+            return _ideal_allgather(rows, cols, chunk)
+        if pattern == "allreduce":
+            return _ideal_allreduce(rows, cols, chunk)
+        raise ValueError(f"Unknown pattern {pattern!r}")
+
     if pattern == "broadcast":
-        return _ideal_broadcast(rows, cols, chunk, root=root)
-    if pattern == "gather":
-        row_c, col_c = pick_tree_colors(root, rows, cols, gather=True)
-        return _ideal_tree_to_root(rows, cols, chunk, "gather", col_c, row_c, root=root)
-    if pattern == "reduce":
-        row_c, col_c = pick_reduce_colors(root, rows, cols)
-        return _ideal_tree_to_root(rows, cols, chunk, "reduce", col_c, row_c, root=root)
+        return _minimal_broadcast(rows, cols, chunk, root=root, budget=color_budget)
+    if pattern in ("gather", "reduce"):
+        return _minimal_tree_to_root(
+            rows, cols, chunk, pattern, root=root, budget=color_budget
+        )
     if pattern == "allgather":
-        return _ideal_allgather(rows, cols, chunk)
+        return _minimal_allgather(rows, cols, chunk, budget=color_budget)
     if pattern == "allreduce":
-        return _ideal_allreduce(rows, cols, chunk)
+        return _minimal_allreduce(rows, cols, chunk, budget=color_budget)
     raise ValueError(f"Unknown pattern {pattern!r}")
 
 
@@ -638,4 +665,169 @@ def _ideal_allreduce(rows: int, cols: int, chunk: int) -> list[dict]:
         for c in range(cols):
             for r in range(rows - 1, 0, -1):
                 pk.append(_cedge(r * cols + c, (r - 1) * cols + c, chunk, "allreduce", t + step, C_AR_AG_COL_NORTH))
+    return pk
+
+
+def _minimal_broadcast(
+    rows: int, cols: int, chunk: int, *, root: int = 0, budget: ColorBudget
+) -> list[dict]:
+    """Tree broadcast on one or two unicast colors (phases already time-separated)."""
+    fwd, rev = primary_secondary(budget)
+    rr, rc = divmod(root, cols)
+    pk: list[dict] = []
+    # Row ripple
+    if rc < cols - 1:
+        for c in range(rc, cols - 1):
+            src = rr * cols + c
+            pk.append(_cedge(src, src + 1, chunk, "broadcast", c - rc, fwd))
+    elif rc > 0:
+        for c in range(rc, 0, -1):
+            src = rr * cols + c
+            pk.append(_cedge(src, src - 1, chunk, "broadcast", rc - c, rev))
+    base = max(1, cols - 1)
+    # Column ripple (reuse same color pair — non-overlapping with row phase)
+    if rr < rows - 1:
+        for c in range(cols):
+            for r in range(rr, rows - 1):
+                pk.append(
+                    _cedge(r * cols + c, (r + 1) * cols + c, chunk, "broadcast", base + r - rr, fwd)
+                )
+    elif rr > 0:
+        for c in range(cols):
+            for r in range(rr, 0, -1):
+                pk.append(
+                    _cedge(r * cols + c, (r - 1) * cols + c, chunk, "broadcast", base + rr - r, rev)
+                )
+    if budget == ColorBudget.MINIMAL:
+        for e in pk:
+            e["color"] = fwd
+    return pk
+
+
+def _minimal_tree_to_root(
+    rows: int,
+    cols: int,
+    chunk: int,
+    payload: str,
+    *,
+    root: int = 0,
+    budget: ColorBudget,
+) -> list[dict]:
+    """Reverse tree on unicast colors; MINIMAL collapses to one VN."""
+    fwd, rev = primary_secondary(budget)
+    rr, rc = divmod(root, cols)
+    pk: list[dict] = []
+    for c in range(cols):
+        for r in range(rows - 1, rr, -1):
+            level = (rows - 1) - r
+            pk.append(_cedge(r * cols + c, (r - 1) * cols + c, chunk, payload, level, fwd))
+        for r in range(0, rr):
+            level = rr - r - 1
+            pk.append(_cedge(r * cols + c, (r + 1) * cols + c, chunk, payload, level, rev))
+    base = max(0, rows - 1)
+    for c in range(cols - 1, rc, -1):
+        pk.append(_cedge(rr * cols + c, rr * cols + c - 1, chunk, payload, base + c - rc, rev))
+    for c in range(0, rc):
+        pk.append(_cedge(rr * cols + c, rr * cols + c + 1, chunk, payload, base + rc - c, fwd))
+    if budget == ColorBudget.MINIMAL:
+        for e in pk:
+            e["color"] = fwd
+    return pk
+
+
+def _minimal_allgather(rows: int, cols: int, chunk: int, *, budget: ColorBudget) -> list[dict]:
+    """Ring allgather with 1–2 colors by serializing opposing directions."""
+    fwd, rev = primary_secondary(budget)
+    pk: list[dict] = []
+
+    for step in range(cols - 1):
+        d_fwd = step if budget == ColorBudget.COMPACT else step * 2
+        d_rev = step if budget == ColorBudget.COMPACT else step * 2 + 1
+        for r in range(rows):
+            for c in range(cols - 1):
+                pk.append(_cedge(r * cols + c, r * cols + c + 1, chunk, "allgather", d_fwd, fwd))
+        for r in range(rows):
+            for c in range(cols - 1, 0, -1):
+                c_rev = rev if budget == ColorBudget.COMPACT else fwd
+                pk.append(_cedge(r * cols + c, r * cols + c - 1, chunk, "allgather", d_rev, c_rev))
+
+    row_span = max(1, cols - 1) if budget == ColorBudget.COMPACT else max(1, (cols - 1) * 2)
+    base = row_span
+    for step in range(rows - 1):
+        d_fwd = base + step if budget == ColorBudget.COMPACT else base + step * 2
+        d_rev = base + step if budget == ColorBudget.COMPACT else base + step * 2 + 1
+        for c in range(cols):
+            for r in range(rows - 1):
+                pk.append(
+                    _cedge(r * cols + c, (r + 1) * cols + c, chunk, "allgather", d_fwd, fwd)
+                )
+        for c in range(cols):
+            for r in range(rows - 1, 0, -1):
+                c_rev = rev if budget == ColorBudget.COMPACT else fwd
+                pk.append(
+                    _cedge(r * cols + c, (r - 1) * cols + c, chunk, "allgather", d_rev, c_rev)
+                )
+    return pk
+
+
+def _minimal_allreduce(rows: int, cols: int, chunk: int, *, budget: ColorBudget) -> list[dict]:
+    """Four-phase allreduce on 1–2 unicast colors (phases time-separated)."""
+    fwd, rev = primary_secondary(budget)
+    pk: list[dict] = []
+    t = 0
+
+    def _append_row_east(delay_base: int) -> None:
+        for step in range(cols - 1):
+            for r in range(rows):
+                for c in range(cols - 1):
+                    pk.append(
+                        _cedge(r * cols + c, r * cols + c + 1, chunk, "allreduce", delay_base + step, fwd)
+                    )
+
+    def _append_row_west(delay_base: int) -> None:
+        for step in range(cols - 1):
+            for r in range(rows):
+                for c in range(cols - 1, 0, -1):
+                    color = rev if budget == ColorBudget.COMPACT else fwd
+                    d = delay_base + step
+                    if budget == ColorBudget.MINIMAL:
+                        d = delay_base + step * 2 + 1
+                    pk.append(_cedge(r * cols + c, r * cols + c - 1, chunk, "allreduce", d, color))
+
+    def _append_col_south(delay_base: int) -> None:
+        for step in range(rows - 1):
+            for c in range(cols):
+                for r in range(rows - 1):
+                    pk.append(
+                        _cedge(r * cols + c, (r + 1) * cols + c, chunk, "allreduce", delay_base + step, fwd)
+                    )
+
+    def _append_col_north(delay_base: int) -> None:
+        for step in range(rows - 1):
+            for c in range(cols):
+                for r in range(rows - 1, 0, -1):
+                    color = rev if budget == ColorBudget.COMPACT else fwd
+                    d = delay_base + step
+                    if budget == ColorBudget.MINIMAL:
+                        d = delay_base + step * 2 + 1
+                    pk.append(
+                        _cedge(r * cols + c, (r - 1) * cols + c, chunk, "allreduce", d, color)
+                    )
+
+    if budget == ColorBudget.MINIMAL:
+        _append_row_east(t)
+        t += max(1, (cols - 1) * 2)
+        _append_row_west(t)
+        t += max(1, (cols - 1) * 2)
+        _append_col_south(t)
+        t += max(1, (rows - 1) * 2)
+        _append_col_north(t)
+    else:
+        _append_row_east(t)
+        t += max(1, cols - 1)
+        _append_row_west(t)
+        t += max(1, cols - 1)
+        _append_col_south(t)
+        t += max(1, rows - 1)
+        _append_col_north(t)
     return pk
