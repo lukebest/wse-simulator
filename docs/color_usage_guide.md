@@ -88,16 +88,128 @@ south → (r+1, c)    north → (r-1, c)
 
 代码：`wsesim/network/color_catalog.py` → `CATALOG`, `build_ideal_plan(rows, cols)`。
 
+> ⚠️ **本目录是「软件设计选择」，不是硬件强制**。硬件只保证「每个 color = 一张任意静态多播路由表」；把「一个 color 绑一个罗盘方向」是一种实现，并非最优。下面 §4A 从专利重新推导后给出修正。
+
+---
+
+## 4A. 软硬协同与调度机制（专利 US10,515,303 重新推导）
+
+> 本节回答核心问题：**Color 是 TDM 时分轮转，还是需要 trigger 切换的虚拟子网？** 并据此重推 color 划分规则。所有结论标注专利依据（Router 600 / Router Sched 654 / Picker 830 / FIGS. 6, 7A–7D, 8, 9A–9C）。
+
+### A. 结论先行：既不是固定时隙 TDM，也不是"一次只激活一条子网"
+
+Color 机制是 **两层** 的，两层都 **不是** 固定时隙 TDM 轮转：
+
+| 层 | 机制 | 是否 TDM 轮转 | 是否 trigger |
+|----|------|---------------|--------------|
+| **路由层（Router）** | 多条 color 同时常驻、各有独立缓冲；共享物理链路时，对**就绪（ready）color** 做 **round-robin / priority 仲裁** | **否**：空闲 color 不占时隙，是 *按需* 仲裁（demand-driven），不是预分配固定 slot | 否：硬件自动仲裁 |
+| **计算层（CE / Picker）** | wavelet 到达使该 color 的 `Active Bit` 置位；Picker 选中一个 *active 且未 block* 的 color → **触发** 对应 task（`addr = base + color×4`） | **否**：只在 active/unblock 的 color 间选，不是轮所有 color | **是**：color 是"激活→被选中→触发任务"的事件驱动开关 |
+
+一句话：**链路上是"就绪色按需时分仲裁"，计算上是"事件触发激活 + Picker 选色起任务"**。没有任何"全局按固定顺序轮转所有 color"的时隙表，也没有"同一时刻全芯片只有一条 color 活着"的限制。
+
+### B. 硬件依据（逐条出处）
+
+1. **Color = 虚拟网络，独立缓冲、共享路由**
+   > "An example fabric comprises 16 logically independent networks referred to as colors. Each color is a virtual network … Each color has dedicated physical buffering resources but shares the same physical routing resources … a fabric comprises various numbers of colors (e.g., 8, 24, or 32)." （Fabric Overview）
+
+2. **静态固定路由，无运行时路由判断；多播靠静态多出口复制**
+   > "Once configured … each color is a fixed routing pattern. All data that flows within a color always flows in accordance with the fixed routing pattern. **There are no dynamic routing decisions.**"
+   > "To perform multicast, each router node is statically configured with **multiple outputs per multicast color**. The router replicates an incoming wavelet … to all outputs specified by the static configuration."
+   → 仿真中即 `Dest 661`：`dest[node][color] → {方向集合}`，可多出口（多播）。
+
+3. **每 color 单活跃输入源 → color 内无拥塞；拥塞只发生在 color 之间**
+   > "The router provides for multiple input sources per color and **processes a single active input source at a time** … the router has a single buffer per color instead of a buffer per input source. Since there is only a single active input source at a time, there is not any congestion within a color. However … congestion occurs between colors since the colors share a single physical channel. **The router responds to the congestion by scheduling between ready colors onto a single shared output channel.**"
+
+4. **链路仲裁策略 = round-robin 或 priority（这就是"时分"的真相）**
+   > "each scheduler implements one or more scheduling policies, e.g., **round-robin and priority**. The round-robin … choosing between **all available colors** one at a time … The priority … choosing from among a first set of predetermined colors (e.g., colors 0-7) with higher priority than … a second set (e.g., colors 8-15)."
+   → 关键词是 *available / ready colors*：只有有数据且下游未 stall 的 color 才参与仲裁（`Sent 662`：未发过且方向未 stall 才挑）。**空闲 color 不消耗带宽**，故非固定时隙 TDM，而是统计复用。
+
+5. **每 color 独立反压（credit/stall），沿路由反向传播**
+   > "There is an **independent backpressure channel for each color** … When a color is back pressured, data queued at each hop within the fabric is stalled … the queued data is an extension to a queue at the destination."
+   → 仿真中 `Stall Out 630 / Stall In 640`，每 color × 每方向一个 stall 位；缓冲默认 **2 entries/color**（专利 `Data Queues 650 = colors × 27/33 bit × 2 entries`）。
+
+6. **Color → Task：选中 color 即触发计算（trigger 语义来源）**
+   > 数据 wavelet：`Add (Color×4) to Base Register to Form Instruction Address`；控制 wavelet：用 index 低 6 位。Picker "selects an **active unblocked color** for processing to **initiate a corresponding task**"。
+
+7. **显式激活 / 阻塞（软件对 trigger 的精确控制）**
+   - `Active Bit 898`：wavelet 写入 Input Q 时自动置位；也可由 **activate 指令**（立即数/寄存器指定 color）或 **DSD 的 AC 字段**（处理完 fabric 向量后激活某 color）或 **环形缓冲 push/pop color** 激活。（FIG. 9B）
+   - `Block Bit 899`：`block/unblock` 指令对某 color 门控——被 block 的 color，其 wavelet 不被选、其 active 状态也不触发 task，直到 `unblock`。（FIG. 9C）
+   → 因此软件能精确编排"何时让某条 color 的任务可被触发"，这是 trigger 模型而非时隙模型。
+
+8. **优先级类**：低 ID color（0–7）可被设为高优先级（patent EC61/EC63 + priority policy），适合 control/closeout/延迟敏感流。
+
+### C. 软硬协同完整流程（编译期 → 配置期 → 运行期）
+
+```
+[编译期] Placement Server SW / Neuron-to-PE Mapping SW（FIG.2）
+  ├─ 决定 color 总数档位（8/16/24/32）
+  ├─ 为每条 color 生成静态 Dest 表（含多播多出口），保证无依赖环
+  ├─ 把 color → task 起始地址（base + color×4）写入指令表
+  └─ 规划每 color 的 Input Q 容量 / 优先级类
+
+        │ 配置经"预定 color（如 color 0）+ 固定多播"分发
+        ▼
+[配置期] Connection Server SW / Misc SW on FPGAs（经 color 0 广播路由与 CE 配置）
+        │
+        ▼
+[运行期] 每个 PE 内（FIG.6/8）：
+  Router:  Data In → Write Dec → per-color Data Queue(2 entries)
+           → Router Sched（RR/priority 在 ready colors 间仲裁）→ Data Out
+           ⇅ per-color 反压 Stall In/Out
+  CE:      Off Ramp → Hash 选 Input Q（按 color）→ 置 Active Bit
+           → Picker（RR / pick-from-last，选 active & !block 的 color）
+           → addr=base+color×4 → 取指执行 → terminate → 选下一个 color
+           → 输出经 Output Queues + On Ramp 回 Router
+```
+
+软硬分工本质：**软件负责"空间"（编译期把通信图映射成静态多播路由 + color 划分），硬件负责"时间"（运行期按就绪/优先级在 color 间仲裁链路、按激活/阻塞触发任务）**。软件不在运行时切路由，只通过 activate/block/反压 影响"哪些 color 此刻就绪"。
+
+### D. 从性能 / 容错 / 工作负载重新推导划分规则
+
+由 §B 的 8 条硬件事实，导出 5 条 **第一性原理**，并指出现有 catalog 的可改进点：
+
+| # | 硬件约束 | 推导出的划分规则 |
+|---|----------|------------------|
+| R1 | 每 color 一张静态多播表，可多出口 | **一棵多播树 = 1 个 color**。2D broadcast 让每节点同时向 east+south 复制 → **整个广播只需 1 色**，无需"行 1 色 + 列 1 色"。 |
+| R2 | 每 color 单活跃输入源 | 扇入型（reduce/gather）同一节点多个子节点共用一色时须 **时间串行**（或 CE 合并）；只要每节点同一时刻一个源即合法。 |
+| R3 | color 内无环才不死锁（无硬件死锁规避） | 双向环 / allreduce 必须 **拆成无环链**：opposing 方向放不同 color，或用相位 + delay 打断环。**拆 2 色/维 的真正理由是无环，不是带宽。** |
+| R4 | 共享链路对 ready color 做 RR | 同一条物理链路上铺 K 条 active color，每条≈1/K 带宽 → **多 color 不增加总带宽**；只有走 **不相交链路** 才真正并行加速。 |
+| R5 | color 总数稀缺 + 每色有 task/Q/Active/Block 成本；低 ID 可高优先级 | **最少化单次 collective 的 distinct color**（见 §6.1 ColorBudget）；control/closeout/延迟敏感放 color 0–7 高优先级。 |
+
+**据此修正现有集合通信规则（标注"硬件最优" vs "软件惯例"）：**
+
+| 集合通信 | 现有 catalog 规则 | 重推后的硬件最优 | 说明 |
+|----------|------------------|------------------|------|
+| **Broadcast** | 2 色（行东 2 + 列南 3） | **1 个多播色**（每节点静态 east+south 双出口） | R1。现规则把树拆成两维两色属冗余；单色即可 O(rows+cols) 完成且零 task 切换 |
+| **Reduce / Gather** | reduce 6/7、gather 4/5 各 2 色 | **1 个扇入色**即可（单活跃源串行 / CE 合并） | R2。分 4/5 vs 6/7 **仅在** gather 与 reduce 在融合 kernel 内 **时间重叠** 才需要 |
+| **Allgather（双向环）** | 4 色（行东/西 + 列南/北） | **2 色/相位**：同一相位只跑一个方向链，反向相位 delay 错开 | R3+R4。共享链路上 east/west 同时跑并不加带宽，4 色主要价值是"非阻塞"，可用相位换 color |
+| **Allreduce** | 4 色（RS/AG × 行/列） | **2 色复用**（XY/YX）跨 4 相位时间复用，或 4 色换并行度 | R4+R5。即 `ColorBudget.COMPACT`；4 色仅在各相位走不相交链路时才有并行收益 |
+
+> 结论：现有 24 色 catalog 偏向「方向总线 + 一通信一专用色」的 **可读性/并行优先** 设计；从 **color 稀缺性 + RR 带宽不叠加** 看，多数 collective 可压到 1–2 色（broadcast 甚至 1 个多播色），这正是 §6.1 `ColorBudget` MINIMAL/COMPACT 的硬件依据。选择哪种取决于：是否带宽受限（走不相交链路才用多色）、是否在意 task 切换开销、color 预算是否紧张。
+
+### E. 容错与工作负载维度
+
+- **容错**：路由全静态 + 看门狗（"watchdog mechanism detects lack of progress and signals a fault"）。出现坏 PE/链路时，**离线重算每 color 的 Dest 表**绕过缺陷点（`color_repair.py`），重算须保持 **R3 无环 + R2 单源**；建议保留 spare 色（22/23）做冗余通道。
+- **工作负载（专利钦定的轴映射）**：
+  > 软件用 **水平维** 做 *层间* 通信（activation 广播），用 **垂直维** 做 *层内* 通信（partial-sum 累加，常为 ring）。
+  → 因此 color 划分应按 **轴 + mega-phase（forward/delta/chain）** 归组：水平色族给 broadcast/activation，垂直色族给 reduce/partial-sum；三个 mega-phase 共用同一 PE 数据通路，须靠 R3「至少一个任务保证完成」打破跨相位环。
+
+### F. 与 `cerebras-cloud-sdk-python` 的边界（再确认）
+
+`vendor/.../resources/` 仅有 `chat`、`completions`、`models` 三个 OpenAI 风格 REST 资源；全仓 `grep` **零命中** `wavelet/color/fabric/router/allreduce/noc`。即：**Cloud SDK 完全不暴露 color/fabric**——color 是 *片上编译期* 概念，软硬协同发生在 Placement/Connection Server SW + 片上 Router/CE，而非云端 SDK。本仓 `wsesim` 是对该片上机制的 cycle-accurate 建模。
+
 ---
 
 ## 5. 分配与复用规则
 
-编译器 / `color_alloc.py` 遵循：
+编译器 / `color_alloc.py` 遵循（依据见 §4A.D 的 R1–R5）：
 
-1. **时间重叠且链路相交** 的 flow → **必须不同 color**
-2. **时间不重叠** 的 flow → **可复用** 同一 color
-3. 目标：最小化 **峰值链路负载**（makespan）
-4. 每 color 的转发图应 **无环**（或 credit 有界环）；`validate_plan()` 可检查
+1. **时间重叠且链路相交** 的 flow → **必须不同 color**（R4：同链路 RR 不叠带宽，仅为非阻塞）
+2. **时间不重叠** 的 flow → **可复用** 同一 color（专利允许；COMPACT/MINIMAL 的基础）
+3. 目标：最小化 **峰值链路负载（makespan）** 与 **distinct color 数**（R5：color 稀缺，每色含 task/Q/Active/Block 成本）
+4. 每 color 的转发图必须 **无环**（硬件无死锁规避，靠软件保证；R3），`validate_plan()` 可检查
+5. **一棵多播树 = 1 色**（R1）：能用静态多出口复制覆盖的扇出，不要拆成多色
+6. control/closeout/延迟敏感流 → color **0–7**（高优先级类）
 
 **保序（仿真）**：每个 `(color, src, dst)` 流串行注入；单 color 单缓冲 + 固定路由 ⇒ FIFO。
 
@@ -114,6 +226,8 @@ south → (r+1, c)    north → (r-1, c)
 **Color**：`pick_broadcast_colors(root, rows, cols)`  
 - 根在左/上：color **2**（行东）+ **3**（列南）  
 - 根在右/下：color **16**（行西）+ **17**（列北）
+
+> 📌 **硬件最优修正（§4A.D R1）**：因每节点可对同一 color 静态配置 **多出口**，整棵 2D 广播树（每节点同时向 east+south 复制）可仅用 **1 个多播色** 完成，无需行/列两色。现行 2 色方案是「方向总线可读性」惯例，非硬件下界；带宽不受限时优先 1 多播色（亦即 `ColorBudget.MINIMAL` 的硬件依据）。
 
 **传输步骤**：
 
