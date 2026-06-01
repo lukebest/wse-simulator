@@ -249,6 +249,8 @@ results = compare_all_budgets(4, 4, "allreduce")
 
 **选型建议**：kernel 内 color 切换有 wavelet task 开销时优先 **MINIMAL/COMPACT**；带宽敏感、环步需 bidirectional 并行时用 **PARALLEL**。
 
+**交互可视化**：[`docs/color_mesh_viz.html`](color_mesh_viz.html) — 逐 cycle 展示 Color VN 上的 flit 传输、VN 泳道、预算对比（打开即用，无需服务器）。与 [`docs/collective-mesh-viz.html`](collective-mesh-viz.html) 的逻辑算法视图互补。
+
 ---
 
 ```python

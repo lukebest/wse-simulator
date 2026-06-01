@@ -1,0 +1,1050 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>Color VN 集合通信逐周期可视化</title>
+<style>
+:root{
+  --ink:#1b1b1b;--muted:#666;--border:#dedede;--soft:#f6f7f9;
+  --accent:#1a4480;--warn:#9a5b00;--bad:#a33;--good:#166534;
+}
+*{box-sizing:border-box}
+body{font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei","Segoe UI",sans-serif;
+  max-width:1920px;margin:24px auto;padding:0 24px;color:var(--ink);line-height:1.55}
+h1{border-bottom:2px solid #333;padding-bottom:8px;margin:0 0 10px}
+h2{font-size:20px;color:var(--accent);margin:28px 0 10px}
+h3{font-size:15px;margin:0 0 8px}
+code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;background:#f0f1f3;padding:1px 4px;border-radius:3px}
+.intro{background:#fffbe6;border-left:4px solid #ffc107;padding:10px 14px;border-radius:4px;margin:14px 0;font-size:14px}
+.controls{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px;align-items:end;background:var(--soft);
+  border:1px solid var(--border);padding:12px;border-radius:8px;margin:12px 0}
+label{display:flex;flex-direction:column;gap:4px;font-size:12px;color:var(--muted)}
+input,select,button{font:inherit;border:1px solid #cfcfcf;border-radius:6px;background:#fff;padding:6px 8px}
+button{cursor:pointer;background:#1a4480;color:#fff;border-color:#1a4480}
+button.secondary{background:#fff;color:#1a4480}
+.grid2{display:grid;grid-template-columns:minmax(640px,1.35fr) minmax(380px,.65fr);gap:16px;align-items:start}
+.card{border:1px solid var(--border);border-radius:8px;background:#fff;padding:12px;margin:10px 0}
+.card,.table-wrap,.viz{min-width:0}
+.mesh-card{overflow:hidden}
+.metrics{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}
+.metric{border:1px solid var(--border);border-radius:8px;padding:10px;background:#fff}
+.metric .name{font-size:12px;color:var(--muted)}
+.metric .value{font-size:22px;font-weight:700;margin-top:2px}
+.metric .sub{font-size:12px;color:var(--muted);margin-top:2px}
+.table-wrap{overflow:auto;border:1px solid var(--border);border-radius:8px}
+table{border-collapse:collapse;width:100%;font-size:12px;background:#fff}
+th,td{border-bottom:1px solid #eee;border-right:1px solid #eee;padding:6px 8px;text-align:left;white-space:nowrap}
+th{background:#f4f5f7;color:#333;position:sticky;top:0;z-index:1}
+tr:last-child td{border-bottom:none}
+.viz{border:1px solid var(--border);border-radius:8px;background:#fafafa;padding:10px;overflow:auto}
+#mesh svg{display:block;margin:0 auto;max-width:none}
+.lane{overflow:auto;border:1px solid var(--border);border-radius:8px;max-height:520px}
+.lane-grid{display:grid;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:11px;min-width:max-content;--cell-w:62px;--cell-h:28px}
+.cell{height:var(--cell-h);min-width:var(--cell-w);display:flex;align-items:center;justify-content:center;border-right:1px solid #eee;border-bottom:1px solid #eee;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding:0 4px}
+.head{background:#f4f5f7;font-weight:700}
+.rowhead{justify-content:flex-start;padding-left:8px;background:#fbfbfb;position:sticky;left:0;z-index:2}
+.tag{display:inline-block;border:1px solid var(--border);border-radius:999px;padding:2px 8px;font-size:12px;background:#fff;margin-right:6px}
+.small{font-size:12px;color:var(--muted)}
+.warn{color:var(--warn)}
+svg text{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+.check-row{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--muted);margin-top:4px}
+.check-row input{width:auto;margin:0}
+@media (min-width:1500px){.grid2{grid-template-columns:minmax(760px,1.45fr) minmax(420px,.55fr)}.lane{max-height:580px}}
+@media (max-width:1100px){.grid2{grid-template-columns:1fr}.metrics{grid-template-columns:repeat(2,1fr)}}
+@media (max-width:720px){body{padding:0 12px}.controls{grid-template-columns:repeat(2,minmax(0,1fr))}.metrics{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<h1>Color VN 集合通信逐周期可视化</h1>
+<div class="intro">
+  本页展示 <strong>Color 虚拟网络（VN）</strong> 机制下的 2D Mesh 集合通信调度，与
+  <code>collective-mesh-viz.html</code> 的逻辑 butterfly / tree / ring 算法视图互补。
+  每条 flit 携带 catalog color ID，沿编译期静态路由表（方向总线或 XY/YX 单播）逐 hop 前进；
+  不同 color 可在不同物理链路上并行，同 color 同链路则时分复用。
+  调度模型：start = delay_cycles，period = 1，路径由 <code>expandPath(plan, src, dst, color)</code> 展开。
+  节点内部用线性 index（<code>node = row×cols + col</code>），显示为 <code>(x,y)</code> 其中 x=列、y=行。
+</div>
+
+<div class="controls">
+  <label>Rows <input id="rows" type="number" min="2" max="16" value="4"></label>
+  <label>Cols <input id="cols" type="number" min="2" max="16" value="4"></label>
+  <label>Collective
+    <select id="op">
+      <option value="broadcast">Broadcast</option>
+      <option value="gather">Gather</option>
+      <option value="reduce">Reduce</option>
+      <option value="allreduce">All-reduce</option>
+      <option value="allgather">All-gather</option>
+    </select>
+  </label>
+  <label>Color budget
+    <select id="budget">
+      <option value="parallel">Parallel (bus VNs)</option>
+      <option value="compact">Compact (2 unicast)</option>
+      <option value="minimal">Minimal (1 unicast)</option>
+      <option value="xy_baseline">XY baseline (1 VN)</option>
+    </select>
+  </label>
+  <label>Root PE index <input id="root" type="number" min="0" value="0"></label>
+  <label>Flits per block <input id="flits" type="number" min="1" max="24" value="3"></label>
+  <label>Cycle <input id="cycle" type="number" min="0" value="0"></label>
+  <label>Color filter
+    <select id="colorFilter"><option value="all">All colors</option></select>
+  </label>
+  <label class="check-row"><input id="routeOverlay" type="checkbox"> 显示所选 color 静态路由箭头</label>
+  <button id="apply">重新生成</button>
+</div>
+
+<div class="metrics" id="metrics"></div>
+<p class="small">指标说明：Makespan 为最后一个 flit 离开最后一条 edge 的 cycle；Distinct colors 为本次 collective 使用的 catalog ID 数；Peak edge sharing 为同一 cycle 同一有向物理 edge 上重叠 flit 数（理想无冲突为 1）。</p>
+
+<h2>Color budget 对比</h2>
+<div class="table-wrap"><table id="compare"></table></div>
+
+<div class="grid2">
+  <div class="card mesh-card">
+    <h3>所选 cycle 的 Mesh</h3>
+    <div class="viz" id="mesh"></div>
+    <div style="margin-top:8px">
+      <button class="secondary" id="prev">Prev</button>
+      <button class="secondary" id="next">Next</button>
+      <span class="tag" id="cycleTag"></span>
+      <span class="tag" id="activeTag"></span>
+    </div>
+  </div>
+  <div class="card active-card">
+    <h3>当前在飞 flit</h3>
+    <div class="table-wrap"><table id="active"></table></div>
+  </div>
+</div>
+
+<h2>Color VN 泳道图</h2>
+<p class="small">每一行是一条 distinct color VN；格子显示该 color 在当前 cycle 占用的 flit 数。</p>
+<div class="lane"><div class="lane-grid" id="colorLane"></div></div>
+
+<h2>物理 Edge 泳道图</h2>
+<p class="small">每一行是一条物理有向 edge，每一列是一个 cycle。窗口会跟随当前 cycle 滑动。</p>
+<div class="lane"><div class="lane-grid" id="lane"></div></div>
+
+<h2>VN Stream 时间线</h2>
+<p class="small">每一行是一条 VN stream（<code>c{id}: src→dst</code>）。格子显示该 stream 在当前 cycle 占用的物理 edge。</p>
+<div class="lane"><div class="lane-grid" id="timeline"></div></div>
+
+<script>
+// --- Color catalog (color_catalog.py) ---
+const MAX_COLORS = 24;
+const C_UNICAST_XY = 0, C_UNICAST_YX = 1;
+const C_BCAST_ROW_EAST = 2, C_BCAST_COL_SOUTH = 3;
+const C_GATHER_COL_NORTH = 4, C_GATHER_ROW_WEST = 5;
+const C_REDUCE_COL_NORTH = 6, C_REDUCE_ROW_WEST = 7;
+const C_AG_ROW_EAST = 8, C_AG_ROW_WEST = 9;
+const C_AG_COL_SOUTH = 10, C_AG_COL_NORTH = 11;
+const C_AR_RS_ROW_EAST = 12, C_AR_AG_ROW_WEST = 13;
+const C_AR_RS_COL_SOUTH = 14, C_AR_AG_COL_NORTH = 15;
+const C_BCAST_ROW_WEST = 16, C_BCAST_COL_NORTH = 17;
+const C_GATHER_COL_SOUTH = 18, C_GATHER_ROW_EAST = 19;
+const C_REDUCE_COL_SOUTH = 20, C_REDUCE_ROW_EAST = 21;
+const C_SPARE_XY_0 = 22, C_SPARE_YX_0 = 23;
+
+const DIRS = {east:[0,1], west:[0,-1], south:[1,0], north:[-1,0]};
+
+const CATALOG = {
+  [C_UNICAST_XY]: ["unicast_xy", "unicast", "xy"],
+  [C_UNICAST_YX]: ["unicast_yx", "unicast", "yx"],
+  [C_BCAST_ROW_EAST]: ["bcast_row_east", "bus", "east"],
+  [C_BCAST_COL_SOUTH]: ["bcast_col_south", "bus", "south"],
+  [C_GATHER_COL_NORTH]: ["gather_col_north", "bus", "north"],
+  [C_GATHER_ROW_WEST]: ["gather_row_west", "bus", "west"],
+  [C_REDUCE_COL_NORTH]: ["reduce_col_north", "bus", "north"],
+  [C_REDUCE_ROW_WEST]: ["reduce_row_west", "bus", "west"],
+  [C_AG_ROW_EAST]: ["allgather_row_east", "bus", "east"],
+  [C_AG_ROW_WEST]: ["allgather_row_west", "bus", "west"],
+  [C_AG_COL_SOUTH]: ["allgather_col_south", "bus", "south"],
+  [C_AG_COL_NORTH]: ["allgather_col_north", "bus", "north"],
+  [C_AR_RS_ROW_EAST]: ["allreduce_rs_row_east", "bus", "east"],
+  [C_AR_AG_ROW_WEST]: ["allreduce_ag_row_west", "bus", "west"],
+  [C_AR_RS_COL_SOUTH]: ["allreduce_rs_col_south", "bus", "south"],
+  [C_AR_AG_COL_NORTH]: ["allreduce_ag_col_north", "bus", "north"],
+  [C_BCAST_ROW_WEST]: ["bcast_row_west", "bus", "west"],
+  [C_BCAST_COL_NORTH]: ["bcast_col_north", "bus", "north"],
+  [C_GATHER_COL_SOUTH]: ["gather_col_south", "bus", "south"],
+  [C_GATHER_ROW_EAST]: ["gather_row_east", "bus", "east"],
+  [C_REDUCE_COL_SOUTH]: ["reduce_col_south", "bus", "south"],
+  [C_REDUCE_ROW_EAST]: ["reduce_row_east", "bus", "east"],
+  [C_SPARE_XY_0]: ["spare_xy_0", "unicast", "xy"],
+  [C_SPARE_YX_0]: ["spare_yx_0", "unicast", "yx"],
+};
+
+const COLOR_PALETTE = Array.from({length: MAX_COLORS}, (_, i) =>
+  `hsl(${Math.round((i * 137.508) % 360)}, ${58 + (i % 3) * 8}%, ${42 + (i % 2) * 8}%)`);
+
+const BUDGET_NAMES = {
+  xy_baseline: "XY baseline (1 VN)",
+  minimal: "Color minimal",
+  compact: "Color compact",
+  parallel: "Color parallel",
+};
+
+const ColorBudget = {MINIMAL:"minimal", COMPACT:"compact", PARALLEL:"parallel"};
+const BUDGET_COLORS = {
+  minimal: [C_UNICAST_XY, C_UNICAST_XY],
+  compact: [C_UNICAST_XY, C_UNICAST_YX],
+  parallel: [C_UNICAST_XY, C_UNICAST_YX],
+};
+
+let current = null;
+
+// --- Node helpers ---
+function node(x, y) { return {x, y}; }
+function idxToNode(idx, cols) {
+  const r = Math.floor(idx / cols), c = idx % cols;
+  return node(c, r);
+}
+function nodeIdx(n, cols) { return n.y * cols + n.x; }
+function eid(a, b) { return `${a.x},${a.y}->${b.x},${b.y}`; }
+function elabel(e) { return e.id; }
+
+// --- color.py ---
+function unicastStep(current, dst, mode, rows, cols) {
+  if (current === dst) return current;
+  const r = Math.floor(current / cols), c = current % cols;
+  const dr = Math.floor(dst / cols), dc = dst % cols;
+  if (mode === "xy") {
+    if (r < dr) return (r + 1) * cols + c;
+    if (r > dr) return (r - 1) * cols + c;
+    if (c < dc) return r * cols + (c + 1);
+    if (c > dc) return r * cols + (c - 1);
+  } else if (mode === "yx") {
+    if (c < dc) return r * cols + (c + 1);
+    if (c > dc) return r * cols + (c - 1);
+    if (r < dr) return (r + 1) * cols + c;
+    if (r > dr) return (r - 1) * cols + c;
+  }
+  return null;
+}
+
+function buildIdealPlan(rows, cols, numColors = MAX_COLORS) {
+  numColors = Math.min(numColors, MAX_COLORS);
+  const dest = {};
+  const unicastModes = {};
+  for (let cid = 0; cid < numColors; cid++) {
+    const [name, kind, spec] = CATALOG[cid];
+    if (kind === "unicast") {
+      unicastModes[cid] = spec;
+    } else {
+      const [dr, dc] = DIRS[spec];
+      for (let node = 0; node < rows * cols; node++) {
+        const r = Math.floor(node / cols), c = node % cols;
+        const nr = r + dr, nc = c + dc;
+        if (!dest[node]) dest[node] = {};
+        if (0 <= nr && nr < rows && 0 <= nc && nc < cols) {
+          dest[node][cid] = [nr * cols + nc];
+        } else {
+          dest[node][cid] = [];
+        }
+      }
+    }
+  }
+  return {rows, cols, numColors, dest, unicastModes};
+}
+
+function buildBaselinePlan(rows, cols) {
+  return {rows, cols, numColors: 1, dest: {}, unicastModes: {0: "xy"}};
+}
+
+function nextHops(plan, node, colorId, dst = null) {
+  const table = plan.dest[node] || {};
+  const hops = table[colorId];
+  if (hops && hops.length) return hops;
+  if (dst !== null && plan.unicastModes[colorId] !== undefined) {
+    const nxt = unicastStep(node, dst, plan.unicastModes[colorId], plan.rows, plan.cols);
+    if (nxt !== null && nxt !== node) return [nxt];
+  }
+  return [];
+}
+
+function expandPath(plan, src, dst, colorId) {
+  const path = [];
+  let current = src;
+  const guard = plan.rows * plan.cols * 4;
+  for (let step = 0; current !== dst && step < guard; step++) {
+    const hops = nextHops(plan, current, colorId, dst);
+    if (!hops.length) break;
+    const next = hops[0];
+    if (next === current) break;
+    const from = idxToNode(current, plan.cols);
+    const to = idxToNode(next, plan.cols);
+    path.push({id: eid(from, to), from, to});
+    current = next;
+  }
+  return path;
+}
+
+// --- color_usage.py ---
+function pickTreeColors(root, rows, cols, gather) {
+  const r = Math.floor(root / cols), c = root % cols;
+  let rowC, colC;
+  if (gather) {
+    rowC = c === 0 ? C_GATHER_ROW_WEST : (c === cols - 1 ? C_GATHER_ROW_EAST : C_GATHER_ROW_WEST);
+    colC = r === 0 ? C_GATHER_COL_NORTH : (r === rows - 1 ? C_GATHER_COL_SOUTH : C_GATHER_COL_NORTH);
+  } else {
+    rowC = c === 0 ? C_BCAST_ROW_EAST : (c === cols - 1 ? C_BCAST_ROW_WEST : C_BCAST_ROW_EAST);
+    colC = r === 0 ? C_BCAST_COL_SOUTH : (r === rows - 1 ? C_BCAST_COL_NORTH : C_BCAST_COL_SOUTH);
+  }
+  return [rowC, colC];
+}
+function pickBroadcastColors(root, rows, cols) { return pickTreeColors(root, rows, cols, false); }
+function pickReduceColors(root, rows, cols) {
+  const [rowC, colC] = pickTreeColors(root, rows, cols, true);
+  const rowMap = {[C_GATHER_ROW_WEST]: C_REDUCE_ROW_WEST, [C_GATHER_ROW_EAST]: C_REDUCE_ROW_EAST};
+  const colMap = {[C_GATHER_COL_NORTH]: C_REDUCE_COL_NORTH, [C_GATHER_COL_SOUTH]: C_REDUCE_COL_SOUTH};
+  return [rowMap[rowC] ?? C_REDUCE_ROW_WEST, colMap[colC] ?? C_REDUCE_COL_NORTH];
+}
+function primarySecondary(budget) { return BUDGET_COLORS[budget] || BUDGET_COLORS.minimal; }
+function busDirection(colorId) {
+  const [, kind, spec] = CATALOG[colorId];
+  if (kind !== "bus") throw new Error(`Color ${colorId} is not a directional bus`);
+  return spec;
+}
+function distinctColors(packets) {
+  return new Set(packets.map(p => p.color)).size;
+}
+
+// --- collective.py packet helpers ---
+function cedge(src, dst, chunk, payload, delay, color) {
+  return {src, dst, size_bytes: chunk, payload, delay_cycles: delay, color};
+}
+
+function generateBaselineCollectiveRoot(pattern, rows, cols, chunkBytes, root) {
+  const n = rows * cols;
+  const chunk = Math.max(1, chunkBytes | 0);
+  pattern = pattern.toLowerCase();
+  const nodes = [...Array(n).keys()];
+  if (pattern === "broadcast") {
+    return nodes.filter(d => d !== root).map(d => cedge(root, d, chunk, "broadcast", 0, 0));
+  }
+  if (pattern === "gather" || pattern === "reduce") {
+    return nodes.filter(s => s !== root).map(s => cedge(s, root, chunk, pattern, 0, 0));
+  }
+  if (pattern === "allreduce") {
+    const pk = nodes.filter(s => s !== root).map(s => cedge(s, root, chunk, "allreduce", 0, 0));
+    pk.push(...nodes.filter(d => d !== root).map(d => cedge(root, d, chunk, "allreduce", 1, 0)));
+    return pk;
+  }
+  if (pattern === "allgather") {
+    const pk = [];
+    for (const s of nodes) for (const d of nodes) if (s !== d) pk.push(cedge(s, d, chunk, "allgather", 0, 0));
+    return pk;
+  }
+  throw new Error(`Unknown pattern ${pattern}`);
+}
+
+function idealBroadcast(rows, cols, chunk, root = 0) {
+  const [rowC, colC] = pickBroadcastColors(root, rows, cols);
+  const rr = Math.floor(root / cols), rc = root % cols;
+  const rowDir = busDirection(rowC), colDir = busDirection(colC);
+  const pk = [];
+  if (rowDir === "east") {
+    for (let c = rc; c < cols - 1; c++) {
+      const src = rr * cols + c;
+      pk.push(cedge(src, src + 1, chunk, "broadcast", c - rc, rowC));
+    }
+  } else {
+    for (let c = rc; c > 0; c--) {
+      const src = rr * cols + c;
+      pk.push(cedge(src, src - 1, chunk, "broadcast", rc - c, rowC));
+    }
+  }
+  const base = Math.max(1, cols - 1);
+  if (colDir === "south") {
+    for (let c = 0; c < cols; c++) {
+      for (let r = rr; r < rows - 1; r++) {
+        pk.push(cedge(r * cols + c, (r + 1) * cols + c, chunk, "broadcast", base + r - rr, colC));
+      }
+    }
+  } else {
+    for (let c = 0; c < cols; c++) {
+      for (let r = rr; r > 0; r--) {
+        pk.push(cedge(r * cols + c, (r - 1) * cols + c, chunk, "broadcast", base + rr - r, colC));
+      }
+    }
+  }
+  return pk;
+}
+
+function idealTreeToRoot(rows, cols, chunk, payload, colColor, rowColor, root = 0) {
+  const rr = Math.floor(root / cols), rc = root % cols;
+  const colDir = busDirection(colColor), rowDir = busDirection(rowColor);
+  const pk = [];
+  if (colDir === "north") {
+    for (let c = 0; c < cols; c++) {
+      for (let r = rows - 1; r > rr; r--) {
+        const level = (rows - 1) - r;
+        pk.push(cedge(r * cols + c, (r - 1) * cols + c, chunk, payload, level, colColor));
+      }
+    }
+  } else {
+    for (let c = 0; c < cols; c++) {
+      for (let r = 0; r < rr; r++) {
+        const level = rr - r - 1;
+        pk.push(cedge(r * cols + c, (r + 1) * cols + c, chunk, payload, level, colColor));
+      }
+    }
+  }
+  const base = Math.max(0, rows - 1);
+  if (rowDir === "west") {
+    for (let c = cols - 1; c > rc; c--) {
+      pk.push(cedge(rr * cols + c, rr * cols + c - 1, chunk, payload, base + c - rc, rowColor));
+    }
+  } else {
+    for (let c = 0; c < rc; c++) {
+      pk.push(cedge(rr * cols + c, rr * cols + c + 1, chunk, payload, base + rc - c, rowColor));
+    }
+  }
+  return pk;
+}
+
+function idealAllgather(rows, cols, chunk) {
+  const pk = [];
+  for (let step = 0; step < cols - 1; step++) {
+    for (let r = 0; r < rows; r++) {
+      for (let c = 0; c < cols - 1; c++) {
+        pk.push(cedge(r * cols + c, r * cols + c + 1, chunk, "allgather", step, C_AG_ROW_EAST));
+      }
+      for (let c = cols - 1; c > 0; c--) {
+        pk.push(cedge(r * cols + c, r * cols + c - 1, chunk, "allgather", step, C_AG_ROW_WEST));
+      }
+    }
+  }
+  const base = Math.max(0, cols - 1);
+  for (let step = 0; step < rows - 1; step++) {
+    for (let c = 0; c < cols; c++) {
+      for (let r = 0; r < rows - 1; r++) {
+        pk.push(cedge(r * cols + c, (r + 1) * cols + c, chunk, "allgather", base + step, C_AG_COL_SOUTH));
+      }
+      for (let r = rows - 1; r > 0; r--) {
+        pk.push(cedge(r * cols + c, (r - 1) * cols + c, chunk, "allgather", base + step, C_AG_COL_NORTH));
+      }
+    }
+  }
+  return pk;
+}
+
+function idealAllreduce(rows, cols, chunk) {
+  const pk = [];
+  let t = 0;
+  for (let step = 0; step < cols - 1; step++) {
+    for (let r = 0; r < rows; r++) {
+      for (let c = 0; c < cols - 1; c++) {
+        pk.push(cedge(r * cols + c, r * cols + c + 1, chunk, "allreduce", t + step, C_AR_RS_ROW_EAST));
+      }
+    }
+  }
+  t += Math.max(1, cols - 1);
+  for (let step = 0; step < cols - 1; step++) {
+    for (let r = 0; r < rows; r++) {
+      for (let c = cols - 1; c > 0; c--) {
+        pk.push(cedge(r * cols + c, r * cols + c - 1, chunk, "allreduce", t + step, C_AR_AG_ROW_WEST));
+      }
+    }
+  }
+  t += Math.max(1, cols - 1);
+  for (let step = 0; step < rows - 1; step++) {
+    for (let c = 0; c < cols; c++) {
+      for (let r = 0; r < rows - 1; r++) {
+        pk.push(cedge(r * cols + c, (r + 1) * cols + c, chunk, "allreduce", t + step, C_AR_RS_COL_SOUTH));
+      }
+    }
+  }
+  t += Math.max(1, rows - 1);
+  for (let step = 0; step < rows - 1; step++) {
+    for (let c = 0; c < cols; c++) {
+      for (let r = rows - 1; r > 0; r--) {
+        pk.push(cedge(r * cols + c, (r - 1) * cols + c, chunk, "allreduce", t + step, C_AR_AG_COL_NORTH));
+      }
+    }
+  }
+  return pk;
+}
+
+function minimalBroadcast(rows, cols, chunk, root = 0, budget) {
+  const [fwd, rev] = primarySecondary(budget);
+  const rr = Math.floor(root / cols), rc = root % cols;
+  const pk = [];
+  if (rc < cols - 1) {
+    for (let c = rc; c < cols - 1; c++) {
+      const src = rr * cols + c;
+      pk.push(cedge(src, src + 1, chunk, "broadcast", c - rc, fwd));
+    }
+  } else if (rc > 0) {
+    for (let c = rc; c > 0; c--) {
+      const src = rr * cols + c;
+      pk.push(cedge(src, src - 1, chunk, "broadcast", rc - c, rev));
+    }
+  }
+  const base = Math.max(1, cols - 1);
+  if (rr < rows - 1) {
+    for (let c = 0; c < cols; c++) {
+      for (let r = rr; r < rows - 1; r++) {
+        pk.push(cedge(r * cols + c, (r + 1) * cols + c, chunk, "broadcast", base + r - rr, fwd));
+      }
+    }
+  } else if (rr > 0) {
+    for (let c = 0; c < cols; c++) {
+      for (let r = rr; r > 0; r--) {
+        pk.push(cedge(r * cols + c, (r - 1) * cols + c, chunk, "broadcast", base + rr - r, rev));
+      }
+    }
+  }
+  if (budget === ColorBudget.MINIMAL) pk.forEach(e => { e.color = fwd; });
+  return pk;
+}
+
+function minimalTreeToRoot(rows, cols, chunk, payload, root = 0, budget) {
+  const [fwd, rev] = primarySecondary(budget);
+  const rr = Math.floor(root / cols), rc = root % cols;
+  const pk = [];
+  for (let c = 0; c < cols; c++) {
+    for (let r = rows - 1; r > rr; r--) {
+      const level = (rows - 1) - r;
+      pk.push(cedge(r * cols + c, (r - 1) * cols + c, chunk, payload, level, fwd));
+    }
+    for (let r = 0; r < rr; r++) {
+      const level = rr - r - 1;
+      pk.push(cedge(r * cols + c, (r + 1) * cols + c, chunk, payload, level, rev));
+    }
+  }
+  const base = Math.max(0, rows - 1);
+  for (let c = cols - 1; c > rc; c--) {
+    pk.push(cedge(rr * cols + c, rr * cols + c - 1, chunk, payload, base + c - rc, rev));
+  }
+  for (let c = 0; c < rc; c++) {
+    pk.push(cedge(rr * cols + c, rr * cols + c + 1, chunk, payload, base + rc - c, fwd));
+  }
+  if (budget === ColorBudget.MINIMAL) pk.forEach(e => { e.color = fwd; });
+  return pk;
+}
+
+function minimalAllgather(rows, cols, chunk, budget) {
+  const [fwd, rev] = primarySecondary(budget);
+  const pk = [];
+  for (let step = 0; step < cols - 1; step++) {
+    const dFwd = budget === ColorBudget.COMPACT ? step : step * 2;
+    const dRev = budget === ColorBudget.COMPACT ? step : step * 2 + 1;
+    for (let r = 0; r < rows; r++) {
+      for (let c = 0; c < cols - 1; c++) {
+        pk.push(cedge(r * cols + c, r * cols + c + 1, chunk, "allgather", dFwd, fwd));
+      }
+    }
+    for (let r = 0; r < rows; r++) {
+      for (let c = cols - 1; c > 0; c--) {
+        const cRev = budget === ColorBudget.COMPACT ? rev : fwd;
+        pk.push(cedge(r * cols + c, r * cols + c - 1, chunk, "allgather", dRev, cRev));
+      }
+    }
+  }
+  const rowSpan = budget === ColorBudget.COMPACT ? Math.max(1, cols - 1) : Math.max(1, (cols - 1) * 2);
+  const base = rowSpan;
+  for (let step = 0; step < rows - 1; step++) {
+    const dFwd = budget === ColorBudget.COMPACT ? base + step : base + step * 2;
+    const dRev = budget === ColorBudget.COMPACT ? base + step : base + step * 2 + 1;
+    for (let c = 0; c < cols; c++) {
+      for (let r = 0; r < rows - 1; r++) {
+        pk.push(cedge(r * cols + c, (r + 1) * cols + c, chunk, "allgather", dFwd, fwd));
+      }
+    }
+    for (let c = 0; c < cols; c++) {
+      for (let r = rows - 1; r > 0; r--) {
+        const cRev = budget === ColorBudget.COMPACT ? rev : fwd;
+        pk.push(cedge(r * cols + c, (r - 1) * cols + c, chunk, "allgather", dRev, cRev));
+      }
+    }
+  }
+  return pk;
+}
+
+function minimalAllreduce(rows, cols, chunk, budget) {
+  const [fwd, rev] = primarySecondary(budget);
+  const pk = [];
+  let t = 0;
+  function appendRowEast(delayBase) {
+    for (let step = 0; step < cols - 1; step++) {
+      for (let r = 0; r < rows; r++) {
+        for (let c = 0; c < cols - 1; c++) {
+          pk.push(cedge(r * cols + c, r * cols + c + 1, chunk, "allreduce", delayBase + step, fwd));
+        }
+      }
+    }
+  }
+  function appendRowWest(delayBase) {
+    for (let step = 0; step < cols - 1; step++) {
+      for (let r = 0; r < rows; r++) {
+        for (let c = cols - 1; c > 0; c--) {
+          const color = budget === ColorBudget.COMPACT ? rev : fwd;
+          let d = delayBase + step;
+          if (budget === ColorBudget.MINIMAL) d = delayBase + step * 2 + 1;
+          pk.push(cedge(r * cols + c, r * cols + c - 1, chunk, "allreduce", d, color));
+        }
+      }
+    }
+  }
+  function appendColSouth(delayBase) {
+    for (let step = 0; step < rows - 1; step++) {
+      for (let c = 0; c < cols; c++) {
+        for (let r = 0; r < rows - 1; r++) {
+          pk.push(cedge(r * cols + c, (r + 1) * cols + c, chunk, "allreduce", delayBase + step, fwd));
+        }
+      }
+    }
+  }
+  function appendColNorth(delayBase) {
+    for (let step = 0; step < rows - 1; step++) {
+      for (let c = 0; c < cols; c++) {
+        for (let r = rows - 1; r > 0; r--) {
+          const color = budget === ColorBudget.COMPACT ? rev : fwd;
+          let d = delayBase + step;
+          if (budget === ColorBudget.MINIMAL) d = delayBase + step * 2 + 1;
+          pk.push(cedge(r * cols + c, (r - 1) * cols + c, chunk, "allreduce", d, color));
+        }
+      }
+    }
+  }
+  if (budget === ColorBudget.MINIMAL) {
+    appendRowEast(t); t += Math.max(1, (cols - 1) * 2);
+    appendRowWest(t); t += Math.max(1, (cols - 1) * 2);
+    appendColSouth(t); t += Math.max(1, (rows - 1) * 2);
+    appendColNorth(t);
+  } else {
+    appendRowEast(t); t += Math.max(1, cols - 1);
+    appendRowWest(t); t += Math.max(1, cols - 1);
+    appendColSouth(t); t += Math.max(1, rows - 1);
+    appendColNorth(t);
+  }
+  return pk;
+}
+
+function generateIdealCollective(pattern, rows, cols, chunkBytes, root = 0, colorBudget = ColorBudget.PARALLEL) {
+  const chunk = Math.max(1, chunkBytes | 0);
+  pattern = pattern.toLowerCase();
+  if (colorBudget === ColorBudget.PARALLEL) {
+    if (pattern === "broadcast") return idealBroadcast(rows, cols, chunk, root);
+    if (pattern === "gather") {
+      const [rowC, colC] = pickTreeColors(root, rows, cols, true);
+      return idealTreeToRoot(rows, cols, chunk, "gather", colC, rowC, root);
+    }
+    if (pattern === "reduce") {
+      const [rowC, colC] = pickReduceColors(root, rows, cols);
+      return idealTreeToRoot(rows, cols, chunk, "reduce", colC, rowC, root);
+    }
+    if (pattern === "allgather") return idealAllgather(rows, cols, chunk);
+    if (pattern === "allreduce") return idealAllreduce(rows, cols, chunk);
+    throw new Error(`Unknown pattern ${pattern}`);
+  }
+  if (pattern === "broadcast") return minimalBroadcast(rows, cols, chunk, root, colorBudget);
+  if (pattern === "gather" || pattern === "reduce") {
+    return minimalTreeToRoot(rows, cols, chunk, pattern, root, colorBudget);
+  }
+  if (pattern === "allgather") return minimalAllgather(rows, cols, chunk, colorBudget);
+  if (pattern === "allreduce") return minimalAllreduce(rows, cols, chunk, colorBudget);
+  throw new Error(`Unknown pattern ${pattern}`);
+}
+
+function generateCollective(budgetKey, pattern, rows, cols, chunkBytes, root) {
+  if (budgetKey === "xy_baseline") {
+    return generateBaselineCollectiveRoot(pattern, rows, cols, chunkBytes, root);
+  }
+  return generateIdealCollective(pattern, rows, cols, chunkBytes, root, budgetKey);
+}
+
+// --- Scheduling (collective-mesh-viz pattern) ---
+function path(a, b) {
+  const p = [];
+  let c = {x: a.x, y: a.y};
+  while (c.x !== b.x) {
+    const n = {x: c.x + Math.sign(b.x - c.x), y: c.y};
+    p.push({id: eid(c, n), from: {...c}, to: {...n}});
+    c = n;
+  }
+  while (c.y !== b.y) {
+    const n = {x: c.x, y: c.y + Math.sign(b.y - c.y)};
+    p.push({id: eid(c, n), from: {...c}, to: {...n}});
+    c = n;
+  }
+  return p;
+}
+
+function periodOf(f, defaultPeriod = 1) { return f.period ?? defaultPeriod ?? 1; }
+
+function duration(flows, period = 1) {
+  return Math.max(1, ...flows.map(f => (f.start || 0) + (f.flits - 1) * periodOf(f, period) + f.path.length));
+}
+
+function eventsAt(f, cycle, defaultPeriod) {
+  const start = f.start || 0, period = periodOf(f, defaultPeriod);
+  const out = [];
+  for (let i = 0; i < f.flits; i++) {
+    const off = cycle - (start + i * period);
+    if (off >= 0 && off < f.path.length) {
+      out.push({flow: f, flit: i, edge: f.path[off], label: `${f.id}.f${i}`});
+    }
+  }
+  return out;
+}
+
+function eventAt(f, cycle, defaultPeriod) {
+  return eventsAt(f, cycle, defaultPeriod)[0] || null;
+}
+
+function allEvents(schedule, cycle) {
+  return schedule.flows.flatMap(f => eventsAt(f, cycle, schedule.period));
+}
+
+function flowConflicts(f, start, occupied) {
+  const period = periodOf(f, 1);
+  for (let i = 0; i < f.flits; i++) {
+    const base = start + i * period;
+    for (let h = 0; h < f.path.length; h++) {
+      if (occupied.has(`${base + h}|${f.path[h].id}`)) return true;
+    }
+  }
+  return false;
+}
+
+function reserveFlow(f, occupied) {
+  const period = periodOf(f, 1), start = f.start || 0;
+  for (let i = 0; i < f.flits; i++) {
+    const base = start + i * period;
+    for (let h = 0; h < f.path.length; h++) occupied.add(`${base + h}|${f.path[h].id}`);
+  }
+}
+
+function resolveEdgeConflicts(flows) {
+  const occupied = new Set(), resolved = new Array(flows.length);
+  const ordered = flows.map((f, i) => ({...f, order: i})).sort((a, b) => (a.start || 0) - (b.start || 0) || a.order - b.order);
+  ordered.forEach(f => {
+    let start = f.start || 0;
+    while (flowConflicts(f, start, occupied)) start++;
+    const out = {...f, start};
+    delete out.order;
+    resolved[f.order] = out;
+    reserveFlow(out, occupied);
+  });
+  return resolved;
+}
+
+function peakEdgeOccupancy(schedule) {
+  let peak = 0;
+  for (let c = 0; c < schedule.duration; c++) {
+    const counts = new Map();
+    allEvents(schedule, c).forEach(e => counts.set(e.edge.id, (counts.get(e.edge.id) || 0) + 1));
+    peak = Math.max(peak, ...counts.values(), 0);
+  }
+  return peak;
+}
+
+function timedSchedule(flows, label) {
+  const period = Math.max(1, ...flows.map(f => periodOf(f, 1)));
+  const dur = duration(flows, period);
+  return {flows, period, duration: dur, label};
+}
+
+function finishSchedule(flows, label) {
+  const scheduled = resolveEdgeConflicts(flows);
+  const schedule = timedSchedule(scheduled, label);
+  schedule.peak = peakEdgeOccupancy(schedule);
+  return schedule;
+}
+
+function packetsToFlows(packets, rows, cols, flitsPerBlock, plan) {
+  return packets.map((pkt, i) => {
+    const from = idxToNode(pkt.src, cols);
+    const to = idxToNode(pkt.dst, cols);
+    const p = expandPath(plan, pkt.src, pkt.dst, pkt.color);
+    const [cname] = CATALOG[pkt.color] || [`c${pkt.color}`];
+    return {
+      id: `S${i}`,
+      label: `c${pkt.color}: (${from.x},${from.y})->(${to.x},${to.y})`,
+      from, to,
+      srcIdx: pkt.src, dstIdx: pkt.dst,
+      colorId: pkt.color,
+      colorName: cname,
+      flits: flitsPerBlock,
+      payload: pkt.payload,
+      path: p.length ? p : path(from, to),
+      color: COLOR_PALETTE[pkt.color % MAX_COLORS],
+      start: pkt.delay_cycles || 0,
+      period: 1,
+      stage: pkt.payload,
+    };
+  });
+}
+
+function buildScheduleFromPackets(packets, rows, cols, flitsPerBlock, plan, label) {
+  const flows = packetsToFlows(packets, rows, cols, flitsPerBlock, plan);
+  return finishSchedule(flows, label);
+}
+
+function summarize(rows, cols, op, base, root) {
+  return ["xy_baseline", "minimal", "compact", "parallel"].map(budget => {
+    const pkts = generateCollective(budget, op, rows, cols, base, root);
+    const plan = budget === "xy_baseline" ? buildBaselinePlan(rows, cols) : buildIdealPlan(rows, cols);
+    const schedule = buildScheduleFromPackets(pkts, rows, cols, base, plan, BUDGET_NAMES[budget]);
+    return {
+      budget: BUDGET_NAMES[budget],
+      budgetKey: budget,
+      duration: schedule.duration,
+      distinct: distinctColors(pkts),
+      peak: schedule.peak ?? peakEdgeOccupancy(schedule),
+      streams: pkts.length,
+    };
+  });
+}
+
+// --- Rendering ---
+function renderTable(el, headers, rows) {
+  el.innerHTML = `<thead><tr>${headers.map(h => `<th>${h}</th>`).join("")}</tr></thead><tbody>${
+    rows.map(r => `<tr>${r.map(c => `<td>${c}</td>`).join("")}</tr>`).join("")
+  }</tbody>`;
+}
+
+function usedEdges(schedule) {
+  const m = new Map();
+  schedule.flows.forEach(f => f.path.forEach(e => m.set(e.id, e)));
+  return [...m.values()].sort((a, b) => a.id.localeCompare(b.id));
+}
+
+function meshLayout(rows, cols) {
+  const maxDim = Math.max(rows, cols), nodeCount = rows * cols;
+  const step = maxDim >= 14 ? 46 : maxDim >= 10 ? 50 : maxDim >= 7 ? 58 : 76;
+  const pad = maxDim >= 14 ? 34 : 38;
+  const width = Math.max(420, pad * 2 + (cols - 1) * step);
+  const height = Math.max(360, pad * 2 + (rows - 1) * step);
+  const dense = maxDim >= 13 || nodeCount > 144;
+  return {
+    width, height, pad, dense,
+    nodeR: dense ? 5.5 : (maxDim >= 10 ? 7 : 10),
+    nodeFont: dense ? 6 : (maxDim >= 10 ? 7 : 8),
+    edgeOffset: dense ? 2.4 : 3.5,
+    trim: dense ? 8 : (maxDim >= 10 ? 10 : 13),
+    showFlitLabels: !dense && nodeCount <= 144,
+  };
+}
+
+function pos(n, rows, cols, layout) {
+  const sx = cols === 1 ? 0 : (layout.width - layout.pad * 2) / (cols - 1);
+  const sy = rows === 1 ? 0 : (layout.height - layout.pad * 2) / (rows - 1);
+  return {x: layout.pad + n.x * sx, y: layout.pad + n.y * sy};
+}
+
+function showNodeLabel(x, y, rows, cols, layout) {
+  if (!layout.dense) return true;
+  const corner = (x === 0 || x === cols - 1) && (y === 0 || y === rows - 1);
+  return corner || (x % 4 === 0 && y % 4 === 0);
+}
+
+function trimSeg(p0, p1, t = 13) {
+  const dx = p1.x - p0.x, dy = p1.y - p0.y, len = Math.max(1, Math.hypot(dx, dy));
+  return {x1: p0.x + dx / len * t, y1: p0.y + dy / len * t, x2: p1.x - dx / len * t, y2: p1.y - dy / len * t};
+}
+
+function renderStaticRoutes(plan, rows, cols, layout, colorId) {
+  if (colorId === "all" || colorId === null) return "";
+  const cid = +colorId;
+  const col = COLOR_PALETTE[cid % MAX_COLORS];
+  const lines = [];
+  for (let node = 0; node < rows * cols; node++) {
+    const hops = nextHops(plan, node, cid, null);
+    if (!hops.length) continue;
+    const from = idxToNode(node, cols);
+    const to = idxToNode(hops[0], cols);
+    const p0 = pos(from, rows, cols, layout), p1 = pos(to, rows, cols, layout);
+    const tr = trimSeg(p0, p1, layout.trim * 0.7);
+    lines.push(`<line x1="${tr.x1}" y1="${tr.y1}" x2="${tr.x2}" y2="${tr.y2}" stroke="${col}" stroke-width="1" stroke-opacity="0.35" marker-end="url(#arrStatic)"/>`);
+  }
+  return lines.join("");
+}
+
+function renderMesh(schedule, rows, cols, cycle, plan, colorFilter, showOverlay, rootIdx) {
+  const layout = meshLayout(rows, cols);
+  let evs = allEvents(schedule, cycle);
+  if (colorFilter !== "all") evs = evs.filter(e => e.flow.colorId === +colorFilter);
+  const byEdge = new Map();
+  evs.forEach(e => {
+    if (!byEdge.has(e.edge.id)) byEdge.set(e.edge.id, []);
+    byEdge.get(e.edge.id).push(e);
+  });
+  const lines = [];
+  for (let y = 0; y < rows; y++) for (let x = 0; x < cols - 1; x++) {
+    lines.push({from: node(x, y), to: node(x + 1, y)});
+    lines.push({from: node(x + 1, y), to: node(x, y)});
+  }
+  for (let x = 0; x < cols; x++) for (let y = 0; y < rows - 1; y++) {
+    lines.push({from: node(x, y), to: node(x, y + 1)});
+    lines.push({from: node(x, y + 1), to: node(x, y)});
+  }
+  const overlayColor = showOverlay ? (colorFilter !== "all" ? colorFilter : null) : null;
+  const staticSvg = showOverlay ? renderStaticRoutes(plan, rows, cols, layout, overlayColor) : "";
+  const lineSvg = lines.map(e => {
+    const id = eid(e.from, e.to);
+    const p0 = pos(e.from, rows, cols, layout), p1 = pos(e.to, rows, cols, layout);
+    const rev = e.from.x > e.to.x || e.from.y > e.to.y;
+    const off = rev ? -layout.edgeOffset : layout.edgeOffset;
+    const ox = e.from.y === e.to.y ? 0 : off, oy = e.from.x === e.to.x ? 0 : off;
+    const tr = trimSeg({x: p0.x + ox, y: p0.y + oy}, {x: p1.x + ox, y: p1.y + oy}, layout.trim);
+    const active = byEdge.get(id) || [];
+    const color = active.length > 1 ? "#a33" : (active[0]?.flow.color || "#ddd");
+    const sw = active.length ? Math.min(4, 1.8 + active.length * 0.35) : 1;
+    const title = active.length ? `<title>${active.map(ev => `${ev.label} c${ev.flow.colorId}`).join(", ")}</title>` : "";
+    return `<line x1="${tr.x1}" y1="${tr.y1}" x2="${tr.x2}" y2="${tr.y2}" stroke="${color}" stroke-width="${sw}" marker-end="${active.length ? 'url(#arr)' : ''}">${title}</line>`;
+  }).join("");
+  const nodes = [];
+  for (let y = 0; y < rows; y++) for (let x = 0; x < cols; x++) {
+    const idx = y * cols + x;
+    const p = pos(node(x, y), rows, cols, layout);
+    const isRoot = idx === rootIdx;
+    const label = showNodeLabel(x, y, rows, cols, layout);
+    nodes.push(`<g><circle cx="${p.x}" cy="${p.y}" r="${layout.nodeR}" fill="${isRoot ? '#fff3cd' : 'white'}" stroke="${isRoot ? '#9a5b00' : '#222'}" stroke-width="${isRoot ? 2 : 1}"/><title>${idx} (${x},${y})${isRoot ? ' [root]' : ''}</title>${label ? `<text x="${p.x}" y="${p.y + layout.nodeFont / 2 - 1}" font-size="${layout.nodeFont}" text-anchor="middle">${x},${y}</text>` : ""}</g>`);
+  }
+  const labels = layout.showFlitLabels ? evs.map(ev => {
+    const p0 = pos(ev.edge.from, rows, cols, layout), p1 = pos(ev.edge.to, rows, cols, layout);
+    const horiz = ev.edge.from.y === ev.edge.to.y;
+    const rev = ev.edge.from.x > ev.edge.to.x || ev.edge.from.y > ev.edge.to.y;
+    const dx = horiz ? 0 : (rev ? -22 : 22), dy = horiz ? (rev ? -18 : 18) : -3;
+    return `<text x="${(p0.x + p1.x) / 2 + dx}" y="${(p0.y + p1.y) / 2 + dy}" font-size="8" text-anchor="middle" fill="${ev.flow.color}" stroke="white" stroke-width="3" paint-order="stroke">${ev.label}</text>`;
+  }).join("") : "";
+  return `<svg width="${layout.width}" height="${layout.height}" viewBox="0 0 ${layout.width} ${layout.height}" role="img" aria-label="${rows} by ${cols} color mesh at cycle ${cycle}"><defs><marker id="arr" markerWidth="5" markerHeight="5" refX="4.5" refY="2.5" orient="auto"><path d="M0,0 L5,2.5 L0,5 Z" fill="context-stroke"/></marker><marker id="arrStatic" markerWidth="4" markerHeight="4" refX="3.5" refY="2" orient="auto"><path d="M0,0 L4,2 L0,4 Z" fill="context-stroke"/></marker></defs>${staticSvg}${lineSvg}${nodes.join("")}${labels}</svg>`;
+}
+
+function renderLaneGrid(el, rowLabels, cycles, valueAt) {
+  const longest = Math.max(4, ...rowLabels.map(r => String(r).length));
+  const labelWidth = Math.max(150, Math.min(320, longest * 7 + 24));
+  const cellWidth = rowLabels.length > 160 ? 54 : 62;
+  const cellHeight = rowLabels.length > 220 ? 24 : 28;
+  el.style.setProperty("--cell-w", `${cellWidth}px`);
+  el.style.setProperty("--cell-h", `${cellHeight}px`);
+  el.style.gridTemplateColumns = `${labelWidth}px repeat(${cycles.length}, ${cellWidth}px)`;
+  el.innerHTML = `<div class="cell head rowhead">item</div>${cycles.map(c => `<div class="cell head">c${c}</div>`).join("")}` +
+    rowLabels.map(r => `<div class="cell rowhead" title="${r}">${r}</div>` + cycles.map(c => {
+      const v = valueAt(r, c);
+      return `<div class="cell" title="${v.text || ""}" style="${v.color ? `color:${v.color};font-weight:700;background:#fafafa` : ""}">${v.text || "."}</div>`;
+    }).join("")).join("");
+}
+
+function filteredEvents(schedule, cycle, colorFilter) {
+  let evs = allEvents(schedule, cycle);
+  if (colorFilter !== "all") evs = evs.filter(e => e.flow.colorId === +colorFilter);
+  return evs;
+}
+
+function updateColorFilterOptions(packets) {
+  const sel = document.getElementById("colorFilter");
+  const prev = sel.value;
+  const ids = [...new Set(packets.map(p => p.color))].sort((a, b) => a - b);
+  sel.innerHTML = `<option value="all">All colors</option>` +
+    ids.map(id => {
+      const [name] = CATALOG[id] || [`c${id}`];
+      return `<option value="${id}">c${id} ${name}</option>`;
+    }).join("");
+  if ([...sel.options].some(o => o.value === prev)) sel.value = prev;
+}
+
+function render() {
+  const rows = Math.max(2, Math.min(16, +document.getElementById("rows").value || 4));
+  const cols = Math.max(2, Math.min(16, +document.getElementById("cols").value || 4));
+  const op = document.getElementById("op").value;
+  const budget = document.getElementById("budget").value;
+  const root = Math.max(0, Math.min(rows * cols - 1, +document.getElementById("root").value || 0));
+  document.getElementById("root").max = rows * cols - 1;
+  const base = Math.max(1, Math.min(24, +document.getElementById("flits").value || 1));
+  const colorFilter = document.getElementById("colorFilter").value;
+  const showOverlay = document.getElementById("routeOverlay").checked;
+
+  const packets = generateCollective(budget, op, rows, cols, base, root);
+  const plan = budget === "xy_baseline" ? buildBaselinePlan(rows, cols) : buildIdealPlan(rows, cols);
+  const schedule = buildScheduleFromPackets(packets, rows, cols, base, plan, BUDGET_NAMES[budget]);
+  current = {rows, cols, op, budget, root, base, schedule, plan, packets};
+
+  updateColorFilterOptions(packets);
+
+  const cycleInput = document.getElementById("cycle");
+  cycleInput.max = Math.max(0, schedule.duration);
+  let cycle = Math.max(0, Math.min(+cycleInput.value || 0, schedule.duration));
+  cycleInput.value = cycle;
+
+  const evs = filteredEvents(schedule, cycle, colorFilter);
+  const distinct = distinctColors(packets);
+
+  document.getElementById("metrics").innerHTML = [
+    ["Mesh", `${rows}×${cols}`, `${rows * cols} PEs · root ${root} (${root % cols},${Math.floor(root / cols)})`],
+    ["Makespan", `${schedule.duration} cycles`, `${packets.length} VN streams · ${BUDGET_NAMES[budget]}`],
+    ["Distinct colors", `${distinct}`, `catalog max ${MAX_COLORS}`],
+    ["Peak edge sharing", `${schedule.peak ?? peakEdgeOccupancy(schedule)}`, `active flits: ${evs.length}`],
+  ].map(m => `<div class="metric"><div class="name">${m[0]}</div><div class="value">${m[1]}</div><div class="sub">${m[2]}</div></div>`).join("");
+
+  const comp = summarize(rows, cols, op, base, root);
+  renderTable(document.getElementById("compare"),
+    ["Color budget", "Makespan (cycles)", "Distinct colors", "Peak edge sharing", "VN streams"],
+    comp.map(r => [r.budget, r.duration, r.distinct, r.peak, r.streams]));
+
+  document.getElementById("mesh").innerHTML = renderMesh(schedule, rows, cols, cycle, plan, colorFilter, showOverlay, root);
+  document.getElementById("cycleTag").textContent = `cycle ${cycle} / ${schedule.duration}`;
+  document.getElementById("activeTag").textContent = `active ${evs.length}`;
+
+  renderTable(document.getElementById("active"), ["flit", "color", "VN stream", "edge", "payload"],
+    evs.map(e => [
+      e.label,
+      `c${e.flow.colorId} ${e.flow.colorName || ""}`,
+      e.flow.label,
+      elabel(e.edge),
+      e.flow.payload,
+    ]));
+
+  const totalCycles = schedule.duration + 1;
+  const win = Math.min(36, Math.max(8, totalCycles));
+  const start = totalCycles <= win ? 0 : Math.min(Math.max(0, cycle - 8), totalCycles - win);
+  const cycles = Array.from({length: win}, (_, i) => start + i);
+
+  const colorIds = [...new Set(schedule.flows.map(f => f.colorId))].sort((a, b) => a - b);
+  renderLaneGrid(document.getElementById("colorLane"),
+    colorIds.map(id => {
+      const [name] = CATALOG[id] || [`c${id}`];
+      return `c${id} ${name}`;
+    }),
+    cycles,
+    (rowLabel, cy) => {
+      const id = colorIds.find(cid => rowLabel.startsWith(`c${cid} `));
+      if (id === undefined) return {text: ""};
+      const es = filteredEvents(schedule, cy, "all").filter(e => e.flow.colorId === id);
+      if (!es.length) return {text: ""};
+      return {text: String(es.length), color: es.length > 1 ? "#a33" : COLOR_PALETTE[id % MAX_COLORS]};
+    });
+
+  const edges = usedEdges(schedule).map(e => e.id);
+  renderLaneGrid(document.getElementById("lane"), edges, cycles, (edgeId, cy) => {
+    const es = filteredEvents(schedule, cy, colorFilter).filter(e => e.edge.id === edgeId);
+    if (!es.length) return {text: ""};
+    return {
+      text: es.length > 1 ? "conflict" : es[0].label,
+      color: es.length > 1 ? "#a33" : es[0].flow.color,
+    };
+  });
+
+  const streams = schedule.flows.map(f => f.label);
+  renderLaneGrid(document.getElementById("timeline"), streams, cycles, (label, cy) => {
+    const f = schedule.flows.find(x => x.label === label);
+    if (!f || (colorFilter !== "all" && f.colorId !== +colorFilter)) return {text: ""};
+    const e = eventAt(f, cy, schedule.period);
+    return e ? {text: elabel(e.edge), color: f.color} : {text: ""};
+  });
+}
+
+document.getElementById("apply").onclick = render;
+document.getElementById("prev").onclick = () => { const c = document.getElementById("cycle"); c.value = Math.max(0, (+c.value || 0) - 1); render(); };
+document.getElementById("next").onclick = () => { const c = document.getElementById("cycle"); c.value = (+c.value || 0) + 1; render(); };
+document.getElementById("cycle").onchange = render;
+document.getElementById("colorFilter").onchange = render;
+document.getElementById("routeOverlay").onchange = render;
+render();
+</script>
+</body>
+</html>
