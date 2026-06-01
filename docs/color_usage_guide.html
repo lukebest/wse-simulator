@@ -117,6 +117,8 @@ button:disabled{opacity:.5;cursor:not-allowed}
   <a href="#picker-demo">L2 Picker 触发</a>
   <a href="#switch-demo">L3 路由切换</a>
   <a href="#lifecycle">软硬协同流程</a>
+  <a href="#sdk-examples">SDK 示例印证</a>
+  <a href="#phase-orch">Phase 软件编排</a>
   <a href="#principles">第一性原理 R1–R6</a>
   <a href="#catalog">24 色目录</a>
   <a href="#collectives">集合通信对比</a>
@@ -127,7 +129,7 @@ button:disabled{opacity:.5;cursor:not-allowed}
 
 <main>
 <h1>Color 用法与规则指南</h1>
-<p class="lead">Cerebras WSE 片上 <strong>Color（虚拟网络）</strong> 语义：专利 US10,515,303 + Cerebras SDK 2.10.0 双向印证的 <strong>三层触发</strong> 模型与集合通信 color 划分规则。实现：<code>wsesim/network/color*.py</code> · <a href="color_usage_guide.md">Markdown 源</a></p>
+<p class="lead">Cerebras WSE 片上 <strong>Color（虚拟网络）</strong> 语义：专利 US10,515,303 + Cerebras SDK 2.10.0 + <code>vendor/sdk-examples/</code> 三方印证的 <strong>三层触发</strong> 模型与集合通信 color 划分规则。实现：<code>wsesim/network/color*.py</code> · <a href="color_usage_guide.md">Markdown 源</a></p>
 
 <section id="verdict">
 <h2>核心结论：TDM 还是 Trigger？</h2>
@@ -309,6 +311,63 @@ button:disabled{opacity:.5;cursor:not-allowed}
 <div class="step-detail" id="lifecycleDetail"></div>
 </section>
 
+<section id="sdk-examples">
+<h2>SDK 示例印证（<code>vendor/sdk-examples/</code>）</h2>
+<div class="card highlight">
+  <p><strong>三套 color 划分范式并存</strong>：标准库 2D collective（0/1 + 4/5）、应用自定义（residual 8–10）、单色 switch（topic-06）。证明 wsesim 的 24 名 catalog 是<strong>仿真惯例</strong>，非 SDK 强制命名。</p>
+</div>
+<div class="table-wrap">
+<table>
+  <thead><tr><th>范式</th><th>路径</th><th>Color 划分</th><th>与 catalog</th></tr></thead>
+  <tbody>
+    <tr><td><strong>A</strong> 标准库 2D</td><td class="small">topic-11-collectives · gemv-collectives_2d</td><td>x: 0,1 + entry 10/11；y: 4,5 + entry 12/13</td><td>≠ catalog 2/3/4/5</td></tr>
+    <tr><td><strong>B</strong> 应用自定义</td><td class="small">benchmarks/residual/</td><td>RXACT=8, PSUM=9, NRM=10</td><td>语义命名，ID 自选</td></tr>
+    <tr><td><strong>C</strong> 单色 switch</td><td class="small">topic-06-switches</td><td>1 color，pos0→pos3</td><td>印证 R6</td></tr>
+    <tr><td><strong>D</strong> 紧预算</td><td class="small">spmv-hypersparse</td><td>allreduce2R1E：2 color + 1 entry</td><td>印证 R5</td></tr>
+  </tbody>
+</table>
+</div>
+<div class="card">
+  <h3>topic-11 layout 摘录</h3>
+  <pre style="margin:8px 0;font-size:12px;background:#f4f5f7;padding:12px;border-radius:8px;overflow:auto"><code>x_colors = { @get_color(0), @get_color(1) }
+y_colors = { @get_color(4), @get_color(5) }
+x_entrypoints = { local_task_id 10, 11 }
+y_entrypoints = { local_task_id 12, 13 }
+// ID 21–31 reserved for memcpy — 勿占用</code></pre>
+  <p class="small">列维 <code>task_y</code> 与行维 <code>task_x</code> <strong>并发</strong>（README）— 靠正交 color 集实现链路级并行（R4）。</p>
+</div>
+</section>
+
+<section id="phase-orch">
+<h2>多 Phase / 多 Color：软件必须编排</h2>
+<div class="card warn">
+  <strong>硬件不会</strong>在行 broadcast 结束后自动切到列 color。每个 wavelet 只携带自己的 color 字段；<strong>何时</strong>在<strong>哪条 color</strong>上发下一批包，由软件 state 机 / callback / block 决定。
+</div>
+<div class="table-wrap">
+<table>
+  <thead><tr><th>机制</th><th>示例</th><th>作用</th></tr></thead>
+  <tbody>
+    <tr><td>Local task 状态机</td><td class="small">topic-11 <code>task_x_state</code></td><td>broadcast callback → reduce_fadds</td></tr>
+    <tr><td>异步 collective API</td><td class="small"><code>mpi_x.broadcast(..., callback_id)</code></td><td>库内固定 x/y color；换原语 = 新 API 调用</td></tr>
+    <tr><td><code>@block</code> / <code>@unblock</code></td><td class="small">gemm-collectives_2d/pe.csl</td><td>compute 与 fabric 互斥门控</td></tr>
+    <tr><td><code>unblock_cmd_stream()</code></td><td class="small">topic-11 结束分支</td><td>Host RPC 继续（每 PE 必调）</td></tr>
+    <tr><td>Control wavelet</td><td class="small">topic-06 SWITCH_ADV</td><td>L3：同 color 内换 pos</td></tr>
+    <tr><td><code>delay_cycles</code></td><td class="small">wsesim <code>_ideal_broadcast</code></td><td>仿真层 phase 时间表</td></tr>
+  </tbody>
+</table>
+</div>
+<div class="grid2">
+  <div class="card">
+    <h3>wsesim：4×4 broadcast root=0</h3>
+    <p class="small">Phase 1 color <strong>2</strong> 行东 0→1→2→3；Phase 2 color <strong>3</strong> 列南。Phase 2 delay = cols−1 + row_offset。</p>
+  </div>
+  <div class="card">
+    <h3>SDK：x/y 维并发</h3>
+    <p class="small"><code>f_run_x</code> / <code>f_run_y</code> 同时启动；x 用 0/1，y 用 4/5 — 不是 color 2→3 串行切换，而是<strong>两维并行</strong>。</p>
+  </div>
+</div>
+</section>
+
 <section id="principles">
 <h2>第一性原理 R1–R6</h2>
 <p class="small">点击卡片查看详情；R6 为 SDK switches 衍生的相位复用原理。</p>
@@ -354,13 +413,15 @@ button:disabled{opacity:.5;cursor:not-allowed}
   <div class="stack-gap"></div>
   <div class="stack-layer" style="background:#dbeafe">Cerebras SDK 2.10.0 (CSL)<br><code>@get_color</code> · <code>@set_color_config</code> · WTT · <strong>switches</strong><br><span class="tag yes">编译期路由 + L3 相位预案</span></div>
   <div class="stack-gap"></div>
+  <div class="stack-layer" style="background:#e0f2fe">SDK 官方示例 (<code>vendor/sdk-examples/</code>)<br>topic-11 · gemm-collectives_2d · topic-06 switches<br><span class="tag yes">可运行 layout/pe 印证 color 绑定与 phase 编排</span></div>
+  <div class="stack-gap"></div>
   <div class="stack-layer" style="background:#e0e7ff">SdkLayout / SdkRuntime<br>配置下发 · queue 初始化 · <code>@unblock</code></div>
   <div class="stack-gap"></div>
   <div class="stack-layer" style="background:#dcfce7">片上 Router 600 + CE 800<br>L1 RR 仲裁 · L2 Picker · L3 pos 切换</div>
   <div class="stack-gap"></div>
   <div class="stack-layer" style="background:#f3e8ff">wsesim（本仓库）<br>cycle-accurate 建模（catalog 为主；L3 switch 待扩展）</div>
 </div>
-<p class="small">SDK 参考：<a href="vendor/cerebras-sdk-2.10.0/README.md">docs/vendor/cerebras-sdk-2.10.0/</a> · <a href="vendor/cerebras-sdk-2.10.0/fabric-and-color.md">fabric-and-color.md</a></p>
+<p class="small">SDK 参考：<a href="vendor/cerebras-sdk-2.10.0/README.md">docs/vendor/cerebras-sdk-2.10.0/</a> · <a href="vendor/cerebras-sdk-2.10.0/fabric-and-color.md">fabric-and-color.md</a> · 示例：<code>vendor/sdk-examples/tutorials/topic-11-collectives/</code></p>
 </section>
 
 <section id="refs">
@@ -372,6 +433,8 @@ button:disabled{opacity:.5;cursor:not-allowed}
   <a href="color_mechanism_analysis.md">专利机制分析</a>
   <a href="color_simulation_report.html">仿真报告</a>
   <a href="vendor/cerebras-sdk-2.10.0/README.md">Cerebras SDK 2.10.0 参考</a>
+  <a href="../vendor/sdk-examples/tutorials/topic-11-collectives/">SDK 示例 topic-11</a>
+  <a href="../vendor/sdk-examples/tutorials/topic-06-switches/">SDK 示例 switches</a>
 </div>
 </section>
 </main>
@@ -438,8 +501,9 @@ const BUDGET_COLORS = {
 };
 
 const LIFECYCLE = [
-  {id:"compile", title:"编译期 CSL", items:["@get_color / @set_color_config 静态 rx/tx + switches pos1–3","@bind_data_task（WSE-2: color；WSE-3: input_queue）","filter / 优先级 / 无环校验","cslc → 二进制 + 每 PE 配置流"]},
+  {id:"compile", title:"编译期 CSL", items:["@get_color / @set_color_config 静态 rx/tx + switches pos1–3","collectives_2d.get_params → x:0/1 y:4/5 + entrypoints","@bind_data_task（WSE-2: color；WSE-3: input_queue）","filter / 优先级 / 无环校验","cslc → 二进制 + colors.json"]},
   {id:"config", title:"配置期 Runtime", items:["SdkRuntime 加载程序","@initialize_queue 绑定 color（WSE-3）","控制 wavelet 下发路由表到各 PE","@unblock 起始 color"]},
+  {id:"runtime-sw", title:"运行期 软件编排", items:["mpi_*.broadcast/reduce(..., callback_id) 异步发起","task state 机：callback → 下一 phase","@block/@unblock 门控 compute vs fabric","sys_mod.unblock_cmd_stream() 每 PE","L3: control wavelet SWITCH_ADV（可选）"]},
   {id:"runtime-l1", title:"运行期 L1", items:["Data In → per-color Queue(2)","Router Sched：ready colors RR/priority","Stall 反压沿路由反向","空闲 color 不占链路带宽"]},
   {id:"runtime-l2", title:"运行期 L2", items:["wavelet → Input Q → Active Bit","Picker：activated & unblocked","task @ base+color×4","@block 防止 fabin 空消费"]},
   {id:"runtime-l3", title:"运行期 L3", items:["route-switching control wavelet","pos0 → pos1 → pos2 → pos3","ring_mode 回绕 pos0","teardown 模式可在线重配 filter"]},

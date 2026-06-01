@@ -9,10 +9,11 @@
 | 层次 | 路径 / 产品 | 是否包含 Color |
 |------|-------------|----------------|
 | **Cloud REST API** | PyPI `cerebras-cloud-sdk` · [GitHub](https://github.com/Cerebras/cerebras-cloud-sdk-python) | **否** — HTTP 客户端（chat completions、models） |
-| **片上 SDK / CSL** | [Cerebras SDK 2.10.0](https://sdk.cerebras.net/) · 本仓库 `docs/vendor/cerebras-sdk-2.10.0/` | **是** — `@get_color`、`@set_color_config`、wavelet-triggered tasks |
+| **片上 SDK / CSL** | [Cerebras SDK 2.10.0](https://sdk.cerebras.net/) · `docs/vendor/cerebras-sdk-2.10.0/` | **是** — `@get_color`、`@set_color_config`、wavelet-triggered tasks |
+| **SDK 官方示例** | [Cerebras/sdk-examples](https://github.com/Cerebras/sdk-examples) · 本仓库 `vendor/sdk-examples/` | **是** — 可运行 layout/pe 代码印证 color 划分与 phase 编排 |
 | **NoC 仿真** | `wsesim/network/` + 本文档 | **是** — cycle-accurate 建模（专利 + catalog） |
 
-Cloud SDK 与 Wafer SDK 是不同产品：前者是云端推理 REST，后者在集群上用 CSL 开发 kernel 并配置 fabric color。本仓库 **不 vendoring** 任一 SDK 源码；片上 color 语义见 `docs/vendor/cerebras-sdk-2.10.0/fabric-and-color.md` 与专利 US10,515,303。
+Cloud SDK 与 Wafer SDK 是不同产品：前者是云端推理 REST，后者在集群上用 CSL 开发 kernel 并配置 fabric color。本仓库 vendoring **sdk-examples** 作为片上编程的 **可运行佐证**；API 摘要见 `docs/vendor/cerebras-sdk-2.10.0/`，专利语义见 US10,515,303。
 
 ---
 
@@ -93,7 +94,7 @@ south → (r+1, c)    north → (r-1, c)
 
 ## 4A. 软硬协同与调度机制（专利 US10,515,303 + SDK 2.10.0 重新推导）
 
-> 本节回答核心问题：**Color 是 TDM 时分轮转，还是需要 trigger 切换的虚拟子网？** 并据此重推 color 划分规则。结论由 **硬件**（专利 Router 600 / Router Sched 654 / Picker 830 / FIGS. 6, 7A–7D, 8, 9A–9C）与 **软件**（Cerebras SDK 2.10.0 CSL builtins：`@set_color_config`、`@get_data_task_id`、`@block`/`@unblock`、switches）**双向印证**。SDK 摘要见 `docs/vendor/cerebras-sdk-2.10.0/`。
+> 本节回答核心问题：**Color 是 TDM 时分轮转，还是需要 trigger 切换的虚拟子网？** 并据此重推 color 划分规则。结论由 **硬件**（专利 Router 600 / Router Sched 654 / Picker 830 / FIGS. 6, 7A–7D, 8, 9A–9C）、**SDK API**（`docs/vendor/cerebras-sdk-2.10.0/`）与 **SDK 示例**（`vendor/sdk-examples/` 可运行 layout/pe）**三方印证**。
 
 ### A. 结论先行：不是 TDM；是"常驻多色 + 三种触发"
 
@@ -255,7 +256,105 @@ SDK 是程序员 **配置面**，与上面硬件 **机制面** 一一印证（�
 | **Cerebras SDK 2.10.0**（CSL：`@get_color`/`@set_color_config`/`@bind_data_task`/switches） | **是** — 编译期静态路由 + WTT + L3 相位切换 | 软件配置面，印证 L1–L3（§B′/B″） |
 | **cerebras-cloud-sdk**（REST chat/completions/models） | **否** | 与片上 color 无关 |
 
-详见 `docs/vendor/cerebras-sdk-2.10.0/`（README / fabric-and-color / release-notes-2.10.0）。本仓 `wsesim` 结合 SDK 文档与专利 US10,515,303 做 cycle-accurate 建模；当前实现以 catalog + 方向总线为主，**L3 switch 相位复用与 WSE-3 queue↔color 解耦为后续可扩展项**。
+详见 `docs/vendor/cerebras-sdk-2.10.0/` 与 `vendor/sdk-examples/`。本仓 `wsesim` 结合专利 US10,515,303 与 SDK 示例做 cycle-accurate 建模；当前仿真 catalog 以 **方向总线 + PARALLEL 预算** 为主，**`<collectives_2d>` 四色模式、L3 switch、WSE-3 queue↔color 解耦** 见 §4B 与后续扩展项。
+
+---
+
+## 4B. SDK 示例印证（`vendor/sdk-examples/`）
+
+> 下列结论来自本仓库 submodule `vendor/sdk-examples` 中的 **layout.csl / pe_program.csl / README**；`<collectives_2d>` 等标准库 **实现不在 examples 仓**，但 examples 展示 **程序员如何绑定 color、编排 phase**。
+
+### B1. 三套 color 划分范式（并存，非互斥）
+
+| 范式 | 代表路径 | 如何划分 color | 与 wsesim catalog 关系 |
+|------|----------|----------------|------------------------|
+| **A. 标准库 2D 集合** | `tutorials/topic-11-collectives/` · `benchmarks/gemv-collectives_2d/` | **4 条 routable color + 4 个 entrypoint**：x 维 `@get_color(0,1)` + entry 10/11；y 维 `@get_color(4,5)` + entry 12/13 | **不同于** catalog 的 2/3/4/5；证明 **24 名目录是仿真惯例**，SDK 按应用分配 0–23 |
+| **B. 应用自定义多色** | `benchmarks/residual/layout.csl` | `RXACT_X=8` 收 x、`PSUM=9` 行归约、`NRM=10` 列归约；每 PE **手工** `@set_color_config` | 与 catalog 6/7 几何类似但 **ID 由程序员定** |
+| **C. 单色 switch 复用** | `tutorials/topic-06-switches/` | **1 条 color**，pos0→pos3 四向路由；control wavelet 推进 | 印证 §4A **R6**：多相/多向可压到 **1 color + L3** |
+| **D. 紧预算 allreduce** | `benchmarks/spmv-hypersparse/` | `allreduce2R1E`：**2 color + 1 entrypoint** | 印证 R5：color 稀缺时库提供 **压缩模式** |
+| **E. Host 侧 row/col bcast** | `benchmarks/row-col-broadcast/` | memcpy 模块内部 **5 条 sync color**；非 PE layout 显式配置 | memcpy 色 **程序员不定义路由**（同 topic-03 H2D） |
+
+**topic-11 layout 中的 color 映射（摘录）**：
+
+```
+x_colors = { @get_color(0), @get_color(1) }   // 行向 collective
+y_colors = { @get_color(4), @get_color(5) }   // 列向 collective
+x_entrypoints = { local_task_id 10, 11 }
+y_entrypoints = { local_task_id 12, 13 }
+// ID 21–31 预留给 memcpy / cmd stream — layout 注释明确要求勿占用
+```
+
+→ **划分规则的第一条**：先 reserved（memcpy/cmd），再为 **每个独立通信维/相位** 分配 **成对的 routable color + entrypoint**（标准库约定），而非照搬 wsesim 的 `bcast_row_east=2`。
+
+### B2. 多 phase、多 color 之间：**必须软件编排**
+
+硬件 **不会** 在行 broadcast 结束后自动切到列 color 或下一 collective 原语。SDK 示例中的衔接方式：
+
+| 机制 | 示例出处 | 作用 |
+|------|----------|------|
+| **Local task 状态机** | `topic-11-collectives/pe_program.csl`：`task_x_state` 0→broadcast，1→reduce_fadds | 上一原语 **异步完成** 后 callback task 推进下一 state |
+| **`<collectives_2d>` 异步 API** | `mpi_x.broadcast(..., callback_task_id)` → 完成后触发 callback | 库内用 **已绑定的 x/y color** 发 wavelet；**换原语 ≠ 硬件换色**，是软件发起下一次 API 调用 |
+| **`@block` / `@unblock`** | `gemm-collectives_2d/pe.csl`：broadcast 期间 `@block(compute_task_id)`，完成后再 `@unblock` | 防止 compute task 与 fabric 争用；**phase 门控** |
+| **`sys_mod.unblock_cmd_stream()`** | topic-11 每个 task 结束分支 | Host RPC 继续；**每个 PE 都必须调用**（README 警告） |
+| **Control wavelet + SWITCH_ADV** | `topic-06-switches/` · `topic-07-switches-entrypt/` | **L3**：同 color 内换路由相位；switch 在 ctrl **过 router 之后** 才生效 |
+| **`delay_cycles`（仿真）** | `wsesim` `_ideal_broadcast` | 编译期/流量生成器层面的 **时间表**，等价于 SDK 里 state+callback 的时序 |
+
+**topic-11 行维 state 机（逻辑）**：
+
+```
+state 0: mpi_x.init(); mpi_x.broadcast(0, buf, N, task_x_id)  // 用 color 0/1
+state 1: mpi_x.reduce_fadds(0, ...)                             // 仍用 x 维 color，库内相位
+done:    sys_mod.unblock_cmd_stream()
+```
+
+列维 `task_y` **与 task_x 并发**（README："operates concurrently"）— 靠 **不同 color 集（4/5 vs 0/1）** 实现 x/y 维 **链路级并行**，不是硬件自动调度。
+
+**两 phase color 不一致时软件要做什么（归纳）**：
+
+1. **编译期**：layout 为每个 phase/维配好 `@set_color_config`（或交给 `<collectives_2d/params>` 生成）。
+2. **绑定期**：`@bind_data_task` / entrypoint 把 **color（或 WSE-3 的 queue）↔ task** 绑死。
+3. **运行期**：state 机 / callback / block-unblock 决定 **何时** 在 **哪条 color** 上注入下一批 wavelet；硬件只忠实转发 **包上已有的 color 字段**。
+
+### B3. 示例对 R1–R6 的修正与印证
+
+| 原理 | SDK 示例印证 | 对 wsesim catalog 的含义 |
+|------|-------------|-------------------------|
+| **R1** 多播树=1色 | topic-06：**1 color** 四向 switch 替代 4 color | catalog 2+3 广播是 **PARALLEL 惯例**；`<collectives_2d>` 用 2 color/维 是 **库实现选择** |
+| **R2** 单活跃输入源 | topic-08 filter：多 PE 共享一色、各取 index 子集 | 共享 color 时靠 **filter + 软件保证单源时序** |
+| **R4** 同链路不叠带宽 | topic-11 x/y **并发** 因 color 0/1 与 4/5 **走正交维** | 并行 only when **链路不相交** |
+| **R5** 最少 distinct color | spmv `allreduce2R1E`；topic-06 单色 switch | ColorBudget MINIMAL/COMPACT 有 **真实库对应** |
+| **R6** switch 相位 | topic-06/07 全套；WSE-3 限 switch 色集（§B″） | allreduce 四 phase 可映射 pos0–3，不必 12–15 四色 |
+
+### B4. Color ID 分配纪律（从 examples 归纳的规则）
+
+1. **Reserved 区**：memcpy H2D/D2H、cmd stream 占用固定 color/task ID（layout 注释 21–31）；应用 routable color 从 **0 起连续分配**，但 **避开 reserved**。
+2. **一维 collective = 一对 color + 一对 entrypoint**（`<collectives_2d>` 约定）；双向或 RS/AG 由 **库内** 在两条 color 间切换或串行，而非程序员逐 hop 配路由。
+3. **x 维 / y 维 color 分离**（0/1 vs 4/5）→ 允许 **行 collective 与列 collective 时间重叠**（GEMV/GEMM）。
+4. **应用特化**（residual）：按 **语义命名**（PSUM/NRM）而非 catalog 名；每 PE 可 **不同** `@set_color_config`（cliff 分布）。
+5. **WSE-3**：`@initialize_queue(iq, .{ .color = c })` 显式绑定；fabric DSD 常只写 `output_queue`（topic-15/16）。
+
+### B5. 软硬协同流程（SDK 示例版，补 §4A.C）
+
+```
+[编译期 layout.csl]
+  @get_color(n) 分配语义 ID → cslc 生成 colors.json
+  @set_color_config / collectives_2d.get_params → 每 PE 静态 rx/tx
+  @set_tile_code 传入 c2d_params、memcpy_params
+  @bind_data_task / @bind_local_task / @bind_control_task
+
+[Host run.py]
+  加载 → 写 symbol → f_run_x / f_run_y 或 main()
+
+[PE 运行期]
+  mpi_*.broadcast/reduce/scatter/gather(..., callback_id)  // 库发 wavelet，color 已固定
+  WTT: wavelet 到达 → Picker → callback task → state++
+  @block/@unblock 门控与其它 task 互斥
+  L3: ctrl.encode SWITCH_ADV → 同 color 换 pos（可选）
+  完成: sys_mod.unblock_cmd_stream()  // 每个 PE
+
+[Router 硬件]  // 对程序员透明
+  按 wavelet.color 查 Dest → RR 仲裁 → 反压
+```
 
 ---
 
@@ -269,6 +368,8 @@ SDK 是程序员 **配置面**，与上面硬件 **机制面** 一一印证（�
 4. 每 color 的转发图必须 **无环**（硬件无死锁规避，靠软件保证；R3），`validate_plan()` 可检查
 5. **一棵多播树 = 1 色**（R1）：能用静态多出口复制覆盖的扇出，不要拆成多色
 6. control/closeout/延迟敏感流 → color **0–7**（高优先级类）
+7. **`<collectives_2d>` 惯例**：x 维 color 0/1 + entry 10/11，y 维 4/5 + entry 12/13；**避开** memcpy reserved ID（§4B4）
+8. **多 phase 衔接**：软件 state/callback/block/`unblock_cmd_stream`；硬件只转发 wavelet 内嵌 color（§4B2、§6.1.1）
 
 **保序（仿真）**：每个 `(color, src, dst)` 流串行注入；单 color 单缓冲 + 固定路由 ⇒ FIFO。
 
@@ -310,6 +411,21 @@ Phase 2 — 列扩散（每一列）
 | … | … | 3 | … |
 
 **makespan ≈ (cols−1) + (rows−1)**，全部相邻边。
+
+#### 6.1.1 软件 phase 切换（color 2 → color 3 等）
+
+**硬件不会**在行 phase 完成后自动切换到列 color 或下一 collective 原语。`generate_ideal_collective("broadcast")` 用 **`delay_cycles`** 在编译期流量表里错开 Phase 1/2；真实 SDK 用 **state 机 + 异步 callback**（见 §4B2）。
+
+| 场景 | wsesim | SDK（topic-11 / gemm-collectives_2d） |
+|------|--------|----------------------------------------|
+| 行→列两 phase | 同一 traffic 表，Phase 2 `delay = cols-1+…` | 不同维：`mpi_x.*` 用 color 0/1，`mpi_y.*` 用 4/5，**可并发** |
+| broadcast→reduce | 两次 `generate_ideal_collective` 或合并 traffic | `task_x_state`：0=broadcast callback → 1=reduce_fadds |
+| compute 与 fabric 互斥 | 仿真未建模 task | `@block(compute)` / `@unblock(compute)`（gemm） |
+| Host 继续 | N/A | 每 PE `sys_mod.unblock_cmd_stream()` |
+
+**4×4 单播（PE 0 → PE 10）**：编译/注入时选定 color（通常 `unicast_xy`=0）；每 hop Router 按 **dest 表 + 包内 dst** 转发，**全程同色**。
+
+**4×4 广播（root=4，PARALLEL catalog）**：`pick_broadcast_colors(4)` → color **2**（行东）+ **3**（列南）。Phase A：4→5→6→7；Phase B：从根行各列 seed 沿 color 3 南向扩散。**注意**：当前 `_ideal_broadcast` 对非 corner 根 **不保证覆盖 row 0**（0–3）；这是仿真算法边界，非硬件限制。硬件最优（R1）可 **1 多播色** 双出口 east+south 一次建树。
 
 ---
 
@@ -497,4 +613,10 @@ assert validate_plan(plan) == {}
 - 场景规则：`wsesim/network/color_usage.py` → `COLLECTIVE_SCENARIOS`
 - 流量生成：`wsesim/network/collective.py` → `generate_ideal_collective`
 - Cerebras SDK 2.10.0 参考：`docs/vendor/cerebras-sdk-2.10.0/`
+- **SDK 官方示例（本仓库 submodule）**：`vendor/sdk-examples/`
+  - 2D collectives：`tutorials/topic-11-collectives/`
+  - GEMV/GEMM + collectives：`benchmarks/gemv-collectives_2d/` · `benchmarks/gemm-collectives_2d/`
+  - Fabric switches：`tutorials/topic-06-switches/` · `topic-07-switches-entrypt/`
+  - 应用自定义 color：`benchmarks/residual/layout.csl`
+  - 紧预算 allreduce：`benchmarks/spmv-hypersparse/`（`allreduce2R1E`）
 - Cloud REST SDK（无 NoC）：https://github.com/Cerebras/cerebras-cloud-sdk-python
