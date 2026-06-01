@@ -4,16 +4,15 @@
 
 ---
 
-## 1. 与 `cerebras-cloud-sdk-python` 的关系
+## 1. 与 Cerebras SDK 2.10.0 的关系
 
-| 层次 | 路径 | 是否包含 Color |
-|------|------|----------------|
-| **Cloud REST API** | `vendor/cerebras-cloud-sdk-python/src/cerebras/cloud/sdk` | **否** — 仅为 HTTP 客户端（chat completions、models） |
-| **片上 NoC / 编译期路由** | `wsesim/network/` + 本文档 | **是** — 仿真与文档建模 |
+| 层次 | 路径 / 产品 | 是否包含 Color |
+|------|-------------|----------------|
+| **Cloud REST API** | PyPI `cerebras-cloud-sdk` · [GitHub](https://github.com/Cerebras/cerebras-cloud-sdk-python) | **否** — HTTP 客户端（chat completions、models） |
+| **片上 SDK / CSL** | [Cerebras SDK 2.10.0](https://sdk.cerebras.net/) · 本仓库 `docs/vendor/cerebras-sdk-2.10.0/` | **是** — `@get_color`、`@set_color_config`、wavelet-triggered tasks |
+| **NoC 仿真** | `wsesim/network/` + 本文档 | **是** — cycle-accurate 建模（专利 + catalog） |
 
-Cloud SDK README 描述 WSE-3 为「全球最大 AI 处理器」，但 **SDK 源码不包含 wavelet、fabric、color、collective 等片上网络 API**。Color 是编译器/运行时根据 NN 通信图在 **编译期** 写入每个 PE 的静态转发表；本仓库的 `wsesim` 是对该机制的 cycle-accurate 仿真。
-
-> 若未来 Cerebras 发布 wafer SDK / fabric API，应对照本文 catalog 与 `color_usage.py` 中的 `COLLECTIVE_SCENARIOS` 做映射。
+Cloud SDK 与 Wafer SDK 是不同产品：前者是云端推理 REST，后者在集群上用 CSL 开发 kernel 并配置 fabric color。本仓库 **不 vendoring** 任一 SDK 源码；片上 color 语义见 `docs/vendor/cerebras-sdk-2.10.0/fabric-and-color.md` 与专利 US10,515,303。
 
 ---
 
@@ -194,9 +193,14 @@ Color 机制是 **两层** 的，两层都 **不是** 固定时隙 TDM 轮转：
   > 软件用 **水平维** 做 *层间* 通信（activation 广播），用 **垂直维** 做 *层内* 通信（partial-sum 累加，常为 ring）。
   → 因此 color 划分应按 **轴 + mega-phase（forward/delta/chain）** 归组：水平色族给 broadcast/activation，垂直色族给 reduce/partial-sum；三个 mega-phase 共用同一 PE 数据通路，须靠 R3「至少一个任务保证完成」打破跨相位环。
 
-### F. 与 `cerebras-cloud-sdk-python` 的边界（再确认）
+### F. 与 Cerebras SDK / Cloud SDK 的边界（再确认）
 
-`vendor/.../resources/` 仅有 `chat`、`completions`、`models` 三个 OpenAI 风格 REST 资源；全仓 `grep` **零命中** `wavelet/color/fabric/router/allreduce/noc`。即：**Cloud SDK 完全不暴露 color/fabric**——color 是 *片上编译期* 概念，软硬协同发生在 Placement/Connection Server SW + 片上 Router/CE，而非云端 SDK。本仓 `wsesim` 是对该片上机制的 cycle-accurate 建模。
+| 产品 | 暴露 color/fabric？ |
+|------|---------------------|
+| **Cerebras SDK 2.10.0**（CSL、`@set_color_config`） | **是** — 编译期静态路由与 WTT |
+| **cerebras-cloud-sdk**（REST chat/completions/models） | **否** |
+
+详见 `docs/vendor/cerebras-sdk-2.10.0/README.md`。本仓 `wsesim` 结合 SDK 文档与专利 US10,515,303 做 cycle-accurate 建模。
 
 ---
 
@@ -437,4 +441,5 @@ assert validate_plan(plan) == {}
 - 目录定义：`wsesim/network/color_catalog.py`
 - 场景规则：`wsesim/network/color_usage.py` → `COLLECTIVE_SCENARIOS`
 - 流量生成：`wsesim/network/collective.py` → `generate_ideal_collective`
-- Cloud SDK（无 NoC）：`vendor/cerebras-cloud-sdk-python/README.md`
+- Cerebras SDK 2.10.0 参考：`docs/vendor/cerebras-sdk-2.10.0/`
+- Cloud REST SDK（无 NoC）：https://github.com/Cerebras/cerebras-cloud-sdk-python

@@ -1,9 +1,9 @@
 # Color Mechanism Analysis (US10,515,303)
 
-> **Cloud SDK note:** `vendor/cerebras-cloud-sdk-python` is the Cerebras Cloud REST
-> inference API and does **not** define on-wafer NoC colors. Color routing is modeled
-> in `wsesim/network/` per the patent below. See `docs/color_usage_guide.md` for
-> per-collective usage (broadcast, gather, reduce, allreduce, allgather).
+> **SDK note:** On-wafer colors are defined by **Cerebras SDK 2.10.0** (CSL
+> `@get_color` / `@set_color_config`) — see `docs/vendor/cerebras-sdk-2.10.0/`.
+> The separate `cerebras-cloud-sdk` PyPI package is Cloud REST inference only.
+> Color routing is modeled in `wsesim/network/` per the patent below.
 
 ## Core concept
 

@@ -139,12 +139,13 @@ def render_color_generation_section(num_colors: int = MAX_COLORS) -> str:
     return f"""
     <h2>Color 生成方法与依据</h2>
 
-    <h3>与 cerebras-cloud-sdk-python 的关系</h3>
+    <h3>与 Cerebras SDK 2.10.0 的关系</h3>
     <div class="callout">
-      <p><code>vendor/cerebras-cloud-sdk-python</code> 是 Cerebras Cloud <strong>REST 推理 API</strong>
-        （chat completions、models），<strong>不包含</strong>片上 NoC color 定义。
-         Color 路由是编译期 fabric 机制，由本仓库 <code>wsesim/network/</code> 与
-         <a href="color_usage_guide.md">color_usage_guide.md</a> 建模。</p>
+      <p><strong>Cerebras SDK 2.10.0</strong>（<a href="vendor/cerebras-sdk-2.10.0/README.md">docs/vendor/cerebras-sdk-2.10.0/</a>）
+        通过 CSL <code>@get_color</code> / <code>@set_color_config</code> 配置片上 fabric color。
+        独立的 <code>cerebras-cloud-sdk</code> 仅为 Cloud REST 推理 API，<strong>不包含</strong> NoC color。
+        本仓库 <code>wsesim/network/</code> 与
+        <a href="color_usage_guide.md">color_usage_guide.md</a> 对集合通信做 cycle-accurate 建模。</p>
     </div>
 
     <h3>设计依据</h3>

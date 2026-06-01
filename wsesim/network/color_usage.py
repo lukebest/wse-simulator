@@ -1,8 +1,9 @@
 """Color usage rules, scenarios, and compile-time allocation helpers.
 
-The vendored ``cerebras-cloud-sdk-python`` is a REST inference client and does
-**not** expose on-wafer NoC color APIs.  Color semantics here follow patent
-US10,515,303 and are implemented in ``wsesim.network.color*``.
+On-wafer color semantics follow Cerebras SDK 2.10.0 fabric docs and patent
+US10,515,303; see ``docs/vendor/cerebras-sdk-2.10.0/``.  The separate
+``cerebras-cloud-sdk`` PyPI package is a REST inference client and does **not**
+expose NoC color APIs.  Implementation: ``wsesim.network.color*``.
 
 See ``docs/color_usage_guide.md`` for the full scenario-by-scenario guide.
 """
@@ -100,10 +101,10 @@ COLOR_PROFILES: dict[int, tuple[int, ...]] = {
 }
 
 SDK_SCOPE_NOTE = (
-    "vendor/cerebras-cloud-sdk-python is the Cerebras Cloud REST API (chat "
-    "completions, models). It does not define NoC colors. On-wafer color "
-    "routing is a compile-time fabric concern modeled here and in "
-    "docs/color_mechanism_analysis.md (US10,515,303)."
+    "Cerebras SDK 2.10.0 (docs/vendor/cerebras-sdk-2.10.0/) defines on-wafer "
+    "colors via CSL @get_color / @set_color_config. cerebras-cloud-sdk is "
+    "only the Cloud REST API and has no fabric APIs. wsesim models compile-time "
+    "color routing per docs/color_mechanism_analysis.md (US10,515,303)."
 )
 
 

@@ -284,16 +284,19 @@ button:disabled{opacity:.5;cursor:not-allowed}
 </section>
 
 <section id="sdk">
-<h2>与 cerebras-cloud-sdk-python 的边界</h2>
+<h2>与 Cerebras SDK 的边界</h2>
 <div class="stack">
-  <div class="stack-layer" style="background:#fef3c7">Cloud REST API<br><code>chat / completions / models</code><br><span class="tag no">无 color / fabric / wavelet</span></div>
+  <div class="stack-layer" style="background:#fef3c7">Cloud REST API (<code>cerebras-cloud-sdk</code>)<br><code>chat / completions / models</code><br><span class="tag no">无 color / fabric</span></div>
   <div class="stack-gap"></div>
-  <div class="stack-layer" style="background:#e0e7ff">Placement / Connection Server SW<br>编译期路由 + 配置分发（color 0 多播）</div>
+  <div class="stack-layer" style="background:#dbeafe">Cerebras SDK 2.10.0 (CSL)<br><code>@get_color</code> · <code>@set_color_config</code> · WTT<br><span class="tag yes">编译期 color 路由</span></div>
+  <div class="stack-gap"></div>
+  <div class="stack-layer" style="background:#e0e7ff">Placement / Connection Server SW<br>配置分发（color 0 多播）</div>
   <div class="stack-gap"></div>
   <div class="stack-layer" style="background:#dcfce7">片上 Router 600 + CE 800<br>静态 Dest + RR 仲裁 + Picker 触发</div>
   <div class="stack-gap"></div>
   <div class="stack-layer" style="background:#f3e8ff">wsesim（本仓库）<br>cycle-accurate 仿真建模</div>
 </div>
+<p class="small">SDK 参考摘要：<a href="vendor/cerebras-sdk-2.10.0/README.md">docs/vendor/cerebras-sdk-2.10.0/</a></p>
 </section>
 
 <section id="refs">
@@ -304,6 +307,7 @@ button:disabled{opacity:.5;cursor:not-allowed}
   <a href="color_usage_guide.md">Markdown 源文档</a>
   <a href="color_mechanism_analysis.md">专利机制分析</a>
   <a href="color_simulation_report.html">仿真报告</a>
+  <a href="vendor/cerebras-sdk-2.10.0/README.md">Cerebras SDK 2.10.0 参考</a>
 </div>
 </section>
 </main>

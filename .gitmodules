@@ -1,3 +1,0 @@
-[submodule "vendor/cerebras-cloud-sdk-python"]
-	path = vendor/cerebras-cloud-sdk-python
-	url = https://github.com/Cerebras/cerebras-cloud-sdk-python
