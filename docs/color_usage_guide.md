@@ -91,20 +91,32 @@ south → (r+1, c)    north → (r-1, c)
 
 ---
 
-## 4A. 软硬协同与调度机制（专利 US10,515,303 重新推导）
+## 4A. 软硬协同与调度机制（专利 US10,515,303 + SDK 2.10.0 重新推导）
 
-> 本节回答核心问题：**Color 是 TDM 时分轮转，还是需要 trigger 切换的虚拟子网？** 并据此重推 color 划分规则。所有结论标注专利依据（Router 600 / Router Sched 654 / Picker 830 / FIGS. 6, 7A–7D, 8, 9A–9C）。
+> 本节回答核心问题：**Color 是 TDM 时分轮转，还是需要 trigger 切换的虚拟子网？** 并据此重推 color 划分规则。结论由 **硬件**（专利 Router 600 / Router Sched 654 / Picker 830 / FIGS. 6, 7A–7D, 8, 9A–9C）与 **软件**（Cerebras SDK 2.10.0 CSL builtins：`@set_color_config`、`@get_data_task_id`、`@block`/`@unblock`、switches）**双向印证**。SDK 摘要见 `docs/vendor/cerebras-sdk-2.10.0/`。
 
-### A. 结论先行：既不是固定时隙 TDM，也不是"一次只激活一条子网"
+### A. 结论先行：不是 TDM；是"常驻多色 + 三种触发"
 
-Color 机制是 **两层** 的，两层都 **不是** 固定时隙 TDM 轮转：
+先回答二选一：**都不是简单的那一种**。准确表述是——
 
-| 层 | 机制 | 是否 TDM 轮转 | 是否 trigger |
-|----|------|---------------|--------------|
-| **路由层（Router）** | 多条 color 同时常驻、各有独立缓冲；共享物理链路时，对**就绪（ready）color** 做 **round-robin / priority 仲裁** | **否**：空闲 color 不占时隙，是 *按需* 仲裁（demand-driven），不是预分配固定 slot | 否：硬件自动仲裁 |
-| **计算层（CE / Picker）** | wavelet 到达使该 color 的 `Active Bit` 置位；Picker 选中一个 *active 且未 block* 的 color → **触发** 对应 task（`addr = base + color×4`） | **否**：只在 active/unblock 的 color 间选，不是轮所有 color | **是**：color 是"激活→被选中→触发任务"的事件驱动开关 |
+- **不是 TDM**：没有"为每条 color 预分配固定时隙、按全局顺序轮转"的时隙表。空闲 color 不占带宽。
+- **不是"一次只激活一条子网"**：所有 color 的路由表 **同时常驻** 每个 Router，多色可同时在飞。
+- **确实存在 trigger**，而且是 **三个不同层面** 的触发，必须分开看：
 
-一句话：**链路上是"就绪色按需时分仲裁"，计算上是"事件触发激活 + Picker 选色起任务"**。没有任何"全局按固定顺序轮转所有 color"的时隙表，也没有"同一时刻全芯片只有一条 color 活着"的限制。
+| 层 | 机制 | TDM？ | trigger？ | 硬件依据 | 软件依据(SDK 2.10.0) |
+|----|------|-------|-----------|----------|----------------------|
+| **L1 链路仲裁（Router）** | 共享物理链路时，对 **ready** color 做 round-robin / priority 仲裁 | **否**（按需统计复用，非固定 slot） | 否（硬件自动） | Router Sched 654；"scheduling between ready colors" | 透明，CSL 不可见 |
+| **L2 任务触发（CE / Picker）** | wavelet 到某 color → `Active Bit` 置位 → Picker 选 *active 且 unblock* 的 color → 起 task（`addr=base+color×4`） | **否**（只在 active/unblock 间选） | **是**：事件触发计算（WTT） | Picker 830；FIG 9A–9C | "A data task can be scheduled **iff** it is bound to a data task ID that is **activated and unblocked**"；`@bind_data_task` |
+| **L3 路由切换（Router 配置）** | **route-switching control wavelet** 让某 color 的路由表在 **预编译的 pos0→pos1→pos2→pos3** 间前进（`ring_mode` 可回绕） | 否（按 control wavelet 推进，非时钟轮转） | **是**：trigger 切换该 color 的 VN 拓扑 | 控制 wavelet 配置路由（配置期同机制） | `@set_color_config` 的 `switches.pos1/2/3` + `ring_mode` |
+
+**对用户问题的精确回答**：
+
+1. "TDM 轮转时分？" → **否**。链路上是 *就绪色按需仲裁*（L1），不是固定时隙。
+2. "需要 trigger 切换成某条 color 虚拟子网？" → **部分是，但要分清切什么**：
+   - 计算侧（L2）：wavelet 是"激活并触发某 color 任务"的 trigger——但它 **不切换** color，多色可并存。
+   - 路由侧（L3）：**存在** 真正"用 trigger 切换虚拟子网"的机制——`route-switching control wavelet` 让 **同一个 color ID** 在 ≤4 套 **编译期预设** 的路由拓扑间前进。这才是字面意义的"trigger 切换 VN"，但切的是 **一条 color 内部的路由相位**，不是"在不同 color 间切换"。
+
+一句话：**链路按就绪统计复用（L1，非 TDM）；计算由 wavelet 事件触发任务（L2）；单条 color 的路由可由控制 wavelet 在预设相位间被 trigger 切换（L3，ring_mode 回绕）**。没有全局时隙表，也没有"全芯片同时只有一条 color"的限制。
 
 ### B. 硬件依据（逐条出处）
 
@@ -137,35 +149,70 @@ Color 机制是 **两层** 的，两层都 **不是** 固定时隙 TDM 轮转：
 
 8. **优先级类**：低 ID color（0–7）可被设为高优先级（patent EC61/EC63 + priority policy），适合 control/closeout/延迟敏感流。
 
+### B′. 软件依据（Cerebras SDK 2.10.0，与硬件逐条对应）
+
+SDK 是程序员 **配置面**，与上面硬件 **机制面** 一一印证（详见 `docs/vendor/cerebras-sdk-2.10.0/fabric-and-color.md`）：
+
+| # | SDK 事实（CSL builtin / 文档原文） | 对应硬件结论 |
+|---|-----------------------------------|--------------|
+| S1 | "IDs **0 to 23** … recognized by the hardware as **virtual communication channels**"，`@get_color(n)` | = §B1 color 是 VN（catalog 0–23） |
+| S2 | `@set_color_config(x,y,c,.{.routes=.{.rx=…,.tx=…}})`：编译期为每 PE 每 color 配静态 rx/tx；`tx` 可多方向 | = §B2 静态路由 + **多出口多播**（`.tx=.{RAMP,EAST}` 即 Dest 661 多 bit） |
+| S3 | "only safe to enable **multiple input directions** … if wavelets will **never arrive from multiple directions at once**; otherwise router behavior is **undefined**" | = §B3 **每 color 单活跃输入源**（这是 R2 的软件铁证） |
+| S4 | data task "can be scheduled **iff** … **activated and unblocked**"；"activated by **receiving a wavelet** along a given color" | = §B6 color→task 触发（WTT，L2） |
+| S5 | `@activate` / `@block` / `@unblock`（输入为 color 或 data_task_id） | = §B7 Active/Block 位的软件接口 |
+| S6 | `switches.pos1/pos2/pos3` + `ring_mode`：route-switching control wavelet 推进路由相位（详见 B″） | = L3 路由切换（**新增维度**，专利由控制 wavelet 配置路由同源） |
+| S7 | `filter`（counter / sparse_counter / range）：按计数/索引筛选哪些 wavelet 进 CE | 多 PE 共享一条 color、各取子集（节省 color，见 R6） |
+| S8 | WSE-2：data_task_id 由 **color** 构造；WSE-3：由 **input_queue** 构造，`@initialize_queue(iq,.{.color=c})` 显式绑定；switch 仅 color {0–9,12,13,16,17,20,21} 支持 | color↔task 解耦演进；L3 在 WSE-3 上 **按 color 受限** |
+
+> 软件 **不能** 在运行时任意改路由：`@set_color_config` 只在 layout/comptime（编译期）调用，同一 (PE,color) 只能配一次。运行时的"路由变化"**只有 L3**——在 **编译期已写好的 pos0–pos3** 之间，由 control wavelet 触发前进，外加 teardown 模式下经标准库重配。**这与"无动态路由判断"不矛盾**：候选拓扑全部静态预置，trigger 只选相位。
+
+### B″. L3 路由切换机制详解（"trigger 切换 VN"的真身）
+
+这是回答"需要 trigger 切换虚拟子网吗"的关键，SDK 原文（`@set_color_config` Switching Semantics）：
+
+> "A route configuration for a given color can **change dynamically through control wavelets** … `pos1`,`pos2` and `pos3` are additional configurations we can **switch to in-sequence** … the first route-switching control wavelet will set `pos1` … the third will cause an advance to `pos3`. … if `ring_mode` … loop-back to the original configuration once all valid switch positions have been visited."
+
+要点：
+
+- **切的是"一条 color 的路由相位"**，不是 color 之间。一个 color ID 可携带最多 **4 套**（pos0 初始 + pos1/2/3）编译期预设的 rx/tx 拓扑。
+- **触发源是 control wavelet**（与配置期下发路由表同一类机制），不是时钟、不是数据 wavelet。
+- `pop_mode`（no_pop / always_pop / pop_on_advance[_nop]）控制 control wavelet 携带的指令序列如何随经过 PE 而消耗。
+- `ring_mode=true` → 相位走完回到初始，天然适合 **周期性多相集合通信**（如 allreduce 的 RS/AG 交替、双向环的方向交替）。
+- **WSE-3 限制**：只有 color {0–9,12,13,16,17,20,21} 支持 switch；其余 color 只能单一静态拓扑。
+
+→ 这直接给出第 6 条划分原理（见 §D 的 R6）：**用 switch 相位在一条 color 内时分多套拓扑，可把"多相/双向"集合通信压到更少的 distinct color**，而不必每相位/每方向各占一个 color ID。
+
 ### C. 软硬协同完整流程（编译期 → 配置期 → 运行期）
 
 ```
-[编译期] Placement Server SW / Neuron-to-PE Mapping SW（FIG.2）
-  ├─ 决定 color 总数档位（8/16/24/32）
-  ├─ 为每条 color 生成静态 Dest 表（含多播多出口），保证无依赖环
-  ├─ 把 color → task 起始地址（base + color×4）写入指令表
-  └─ 规划每 color 的 Input Q 容量 / 优先级类
+[编译期] CSL 程序 + SdkLayout（@set_tile_code / @set_color_config / @get_color）
+  ├─ 决定 color 总数档位（8/16/24/32）与 0–23 的应用语义
+  ├─ 为每条 color 生成静态 rx/tx 路由（tx 多方向=多播多出口），保证无依赖环
+  ├─ 绑定 color→task：@bind_data_task（WSE-2 由 color；WSE-3 由 input_queue）
+  ├─ 预置 switches（pos1/2/3 + ring_mode）、filter、优先级类、Input Q 容量
+  └─ cslc 编译 → 二进制 + 每 PE 配置流
 
-        │ 配置经"预定 color（如 color 0）+ 固定多播"分发
+        │ 配置经"预定 color + 固定多播"下发（控制 wavelet 写路由/配置寄存器）
         ▼
-[配置期] Connection Server SW / Misc SW on FPGAs（经 color 0 广播路由与 CE 配置）
+[配置期] SdkRuntime / appliance：加载程序、初始化 queue、@unblock 起始 color
         │
         ▼
 [运行期] 每个 PE 内（FIG.6/8）：
   Router:  Data In → Write Dec → per-color Data Queue(2 entries)
            → Router Sched（RR/priority 在 ready colors 间仲裁）→ Data Out
            ⇅ per-color 反压 Stall In/Out
+           ↺ L3：route-switching control wavelet → 某 color 路由 pos0→pos3（ring 回绕）
   CE:      Off Ramp → Hash 选 Input Q（按 color）→ 置 Active Bit
            → Picker（RR / pick-from-last，选 active & !block 的 color）
            → addr=base+color×4 → 取指执行 → terminate → 选下一个 color
            → 输出经 Output Queues + On Ramp 回 Router
 ```
 
-软硬分工本质：**软件负责"空间"（编译期把通信图映射成静态多播路由 + color 划分），硬件负责"时间"（运行期按就绪/优先级在 color 间仲裁链路、按激活/阻塞触发任务）**。软件不在运行时切路由，只通过 activate/block/反压 影响"哪些 color 此刻就绪"。
+软硬分工本质：**软件负责"空间 + 预案"（编译期把通信图映射成静态多播路由、color 划分、以及每 color 的 ≤4 套路由相位预案），硬件负责"时间"（运行期按就绪/优先级在 color 间仲裁链路、按 wavelet 激活/阻塞触发任务、按 control wavelet 在预案相位间推进路由）**。关键澄清：运行期 **唯一** 的路由变化是 L3 在 **编译期预置的 pos0–pos3** 间被 trigger 切换，仍属"无动态路由计算"——没有按目的地实时算路由。
 
 ### D. 从性能 / 容错 / 工作负载重新推导划分规则
 
-由 §B 的 8 条硬件事实，导出 5 条 **第一性原理**，并指出现有 catalog 的可改进点：
+由 §B 的 8 条硬件事实 + §B′ 的 SDK 印证，导出 6 条 **第一性原理**（R1–R6），并指出现有 catalog 的可改进点：
 
 | # | 硬件约束 | 推导出的划分规则 |
 |---|----------|------------------|
@@ -174,33 +221,41 @@ Color 机制是 **两层** 的，两层都 **不是** 固定时隙 TDM 轮转：
 | R3 | color 内无环才不死锁（无硬件死锁规避） | 双向环 / allreduce 必须 **拆成无环链**：opposing 方向放不同 color，或用相位 + delay 打断环。**拆 2 色/维 的真正理由是无环，不是带宽。** |
 | R4 | 共享链路对 ready color 做 RR | 同一条物理链路上铺 K 条 active color，每条≈1/K 带宽 → **多 color 不增加总带宽**；只有走 **不相交链路** 才真正并行加速。 |
 | R5 | color 总数稀缺 + 每色有 task/Q/Active/Block 成本；低 ID 可高优先级 | **最少化单次 collective 的 distinct color**（见 §6.1 ColorBudget）；control/closeout/延迟敏感放 color 0–7 高优先级。 |
+| R6 | 一条 color 可预置 ≤4 套路由相位（switches + `ring_mode`），由 control wavelet 触发推进（SDK S6/B″） | **多相 / 双向 集合通信可用 switch 相位时分复用 1 条 color**：allreduce 的 RS/AG、双向环的 east↔west 作为 pos0↔pos1↔…，`ring_mode` 回绕周期复用，免去每相位/每方向各占一个 color ID。WSE-3 限 color {0–9,12,13,16,17,20,21}。 |
 
-**据此修正现有集合通信规则（标注"硬件最优" vs "软件惯例"）：**
+**据此修正现有集合通信规则（标注"硬件最优" vs "软件惯例"，并标注 SDK 依据）：**
 
-| 集合通信 | 现有 catalog 规则 | 重推后的硬件最优 | 说明 |
+| 集合通信 | 现有 catalog 规则 | 重推后的硬件最优 | 说明（依据） |
 |----------|------------------|------------------|------|
-| **Broadcast** | 2 色（行东 2 + 列南 3） | **1 个多播色**（每节点静态 east+south 双出口） | R1。现规则把树拆成两维两色属冗余；单色即可 O(rows+cols) 完成且零 task 切换 |
-| **Reduce / Gather** | reduce 6/7、gather 4/5 各 2 色 | **1 个扇入色**即可（单活跃源串行 / CE 合并） | R2。分 4/5 vs 6/7 **仅在** gather 与 reduce 在融合 kernel 内 **时间重叠** 才需要 |
-| **Allgather（双向环）** | 4 色（行东/西 + 列南/北） | **2 色/相位**：同一相位只跑一个方向链，反向相位 delay 错开 | R3+R4。共享链路上 east/west 同时跑并不加带宽，4 色主要价值是"非阻塞"，可用相位换 color |
-| **Allreduce** | 4 色（RS/AG × 行/列） | **2 色复用**（XY/YX）跨 4 相位时间复用，或 4 色换并行度 | R4+R5。即 `ColorBudget.COMPACT`；4 色仅在各相位走不相交链路时才有并行收益 |
+| **Broadcast** | 2 色（行东 2 + 列南 3） | **1 个多播色**（每节点静态 `.tx=.{EAST,SOUTH}` 双出口） | R1+S2。现规则把树拆成两维两色属冗余；单色即可 O(rows+cols) 完成且零 task 切换 |
+| **Reduce / Gather** | reduce 6/7、gather 4/5 各 2 色 | **1 个扇入色**即可（单活跃源串行 / CE 合并） | R2+S3。分 4/5 vs 6/7 **仅在** gather 与 reduce 在融合 kernel 内 **时间重叠** 才需要 |
+| **Allgather（双向环）** | 4 色（行东/西 + 列南/北） | **1–2 色**：用 switch 相位（pos0=east、pos1=west，`ring_mode`）在单色内交替方向；或 2 色非阻塞 | R3+R4+**R6**。共享链路上 east/west 同时跑并不加带宽；方向交替用 switch 相位替代独立 color |
+| **Allreduce** | 4 色（RS/AG × 行/列） | **1–2 色**：4 相（RS行/AG行/RS列/AG列）映射到 pos0–pos3，control wavelet 逐相推进 | R4+R5+**R6**。即 `ColorBudget` 思路的硬件上界；4 色仅在各相位走不相交链路且要并行时才用 |
 
-> 结论：现有 24 色 catalog 偏向「方向总线 + 一通信一专用色」的 **可读性/并行优先** 设计；从 **color 稀缺性 + RR 带宽不叠加** 看，多数 collective 可压到 1–2 色（broadcast 甚至 1 个多播色），这正是 §6.1 `ColorBudget` MINIMAL/COMPACT 的硬件依据。选择哪种取决于：是否带宽受限（走不相交链路才用多色）、是否在意 task 切换开销、color 预算是否紧张。
+> 结论：现有 24 色 catalog 偏向「方向总线 + 一通信一专用色」的 **可读性/并行优先** 设计。从硬件第一性看有 **两条** 压缩路径：(i) **空间** 上一棵多播树=1 色、扇入=1 色（R1/R2）；(ii) **时间** 上多相/双向用 switch 相位在单色内时分（R6）。两者叠加后，broadcast 可 1 色、allreduce/allgather 也能 1–2 色，远少于现 catalog。是否真要多色，取决于：是否带宽受限（**只有走不相交链路** 多色才加速，R4）、是否在意 task/相位切换开销、color 预算与 WSE-3 的 switch 受限集。
 
 ### E. 容错与工作负载维度
 
-- **容错**：路由全静态 + 看门狗（"watchdog mechanism detects lack of progress and signals a fault"）。出现坏 PE/链路时，**离线重算每 color 的 Dest 表**绕过缺陷点（`color_repair.py`），重算须保持 **R3 无环 + R2 单源**；建议保留 spare 色（22/23）做冗余通道。
-- **工作负载（专利钦定的轴映射）**：
-  > 软件用 **水平维** 做 *层间* 通信（activation 广播），用 **垂直维** 做 *层内* 通信（partial-sum 累加，常为 ring）。
-  → 因此 color 划分应按 **轴 + mega-phase（forward/delta/chain）** 归组：水平色族给 broadcast/activation，垂直色族给 reduce/partial-sum；三个 mega-phase 共用同一 PE 数据通路，须靠 R3「至少一个任务保证完成」打破跨相位环。
+**容错（性能-鲁棒权衡）**：
+
+- 路由全静态 + 看门狗（"watchdog mechanism detects lack of progress and signals a fault"）。出现坏 PE/链路时 **离线重算每 color 的路由**绕过缺陷点（`color_repair.py`），重算须保持 **R3 无环 + R2 单源**。
+- **SDK 工具**：`teardown` 模式可让某 color 启动即挂起、运行时经标准库 **重配路由/filter**——为"局部故障后不重编译、在线改道"提供软件钩子；`filter`（counter/range）可在共享 color 上 **丢弃/隔离** 异常索引的 wavelet。
+- 建议保留 spare 色（22/23）做冗余通道；**WSE-3 上若依赖 L3 改道，故障 color 必须落在 switch 支持集 {0–9,12,13,16,17,20,21}**，否则无法用相位改道，只能整表重算。
+
+**工作负载（专利钦定的轴映射）**：
+
+> 软件用 **水平维** 做 *层间* 通信（activation 广播），用 **垂直维** 做 *层内* 通信（partial-sum 累加，常为 ring）。
+
+→ color 划分按 **轴 + mega-phase（forward/delta/chain）** 归组：水平色族给 broadcast/activation，垂直色族给 reduce/partial-sum。三个 mega-phase 共用同一 PE 数据通路，须靠 R3「至少一个任务保证完成」打破跨相位环；**周期性相位（如 ring/allreduce 的多步）优先用 R6 的 switch 相位在单色内推进，把稀缺的 color ID 留给真正需要不相交链路并行的流**。
 
 ### F. 与 Cerebras SDK / Cloud SDK 的边界（再确认）
 
-| 产品 | 暴露 color/fabric？ |
-|------|---------------------|
-| **Cerebras SDK 2.10.0**（CSL、`@set_color_config`） | **是** — 编译期静态路由与 WTT |
-| **cerebras-cloud-sdk**（REST chat/completions/models） | **否** |
+| 产品 | 暴露 color/fabric？ | 在本分析中的角色 |
+|------|---------------------|------------------|
+| **Cerebras SDK 2.10.0**（CSL：`@get_color`/`@set_color_config`/`@bind_data_task`/switches） | **是** — 编译期静态路由 + WTT + L3 相位切换 | 软件配置面，印证 L1–L3（§B′/B″） |
+| **cerebras-cloud-sdk**（REST chat/completions/models） | **否** | 与片上 color 无关 |
 
-详见 `docs/vendor/cerebras-sdk-2.10.0/README.md`。本仓 `wsesim` 结合 SDK 文档与专利 US10,515,303 做 cycle-accurate 建模。
+详见 `docs/vendor/cerebras-sdk-2.10.0/`（README / fabric-and-color / release-notes-2.10.0）。本仓 `wsesim` 结合 SDK 文档与专利 US10,515,303 做 cycle-accurate 建模；当前实现以 catalog + 方向总线为主，**L3 switch 相位复用与 WSE-3 queue↔color 解耦为后续可扩展项**。
 
 ---
 
