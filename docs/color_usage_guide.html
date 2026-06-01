@@ -1,0 +1,686 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Color 用法与规则指南 — 交互版</title>
+<style>
+:root{
+  --ink:#1b1b1b;--muted:#666;--border:#dedede;--soft:#f6f7f9;
+  --accent:#1a4480;--accent2:#0d5c4b;--warn:#9a5b00;--bad:#a33;--good:#166534;
+  --router:#2563eb;--ce:#7c3aed;--tdm:#94a3b8;--trigger:#059669;
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei","Segoe UI",sans-serif;
+  margin:0;color:var(--ink);line-height:1.55;background:#fafbfc}
+.layout{display:grid;grid-template-columns:240px minmax(0,1fr);min-height:100vh}
+nav{position:sticky;top:0;height:100vh;overflow:auto;border-right:1px solid var(--border);
+  background:#fff;padding:16px 12px;font-size:13px}
+nav h2{font-size:14px;margin:0 0 12px;color:var(--accent)}
+nav a{display:block;padding:6px 10px;border-radius:6px;color:#333;text-decoration:none;margin:2px 0}
+nav a:hover,nav a.active{background:var(--soft);color:var(--accent);font-weight:600}
+main{max-width:1100px;padding:24px 32px 80px}
+h1{border-bottom:2px solid #333;padding-bottom:8px;margin:0 0 8px;font-size:26px}
+.lead{color:var(--muted);font-size:15px;margin:0 0 20px}
+h2{font-size:20px;color:var(--accent);margin:36px 0 12px;padding-top:8px;scroll-margin-top:16px}
+h3{font-size:16px;margin:18px 0 8px;color:#222}
+code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;background:#eef0f3;padding:1px 5px;border-radius:4px;font-size:0.92em}
+.card{border:1px solid var(--border);border-radius:10px;background:#fff;padding:16px;margin:14px 0}
+.card.highlight{border-left:4px solid var(--accent);background:linear-gradient(90deg,#f0f6ff 0%,#fff 40%)}
+.card.warn{border-left:4px solid #ffc107;background:#fffbe6}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+.grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
+.tag{display:inline-block;border:1px solid var(--border);border-radius:999px;padding:2px 10px;font-size:12px;background:#fff;margin:2px 4px 2px 0}
+.tag.no{background:#fee2e2;border-color:#fca5a5;color:#991b1b}
+.tag.yes{background:#dcfce7;border-color:#86efac;color:#166534}
+.tag.maybe{background:#fef3c7;border-color:#fcd34d;color:#92400e}
+.small{font-size:12px;color:var(--muted)}
+.table-wrap{overflow:auto;border:1px solid var(--border);border-radius:8px;margin:10px 0}
+table{border-collapse:collapse;width:100%;font-size:13px;background:#fff}
+th,td{border-bottom:1px solid #eee;border-right:1px solid #eee;padding:8px 10px;text-align:left}
+th{background:#f4f5f7;position:sticky;top:0;z-index:1}
+tr:hover td{background:#fafafa}
+.controls{display:flex;flex-wrap:wrap;gap:10px;align-items:end;margin:10px 0}
+label{display:flex;flex-direction:column;gap:4px;font-size:12px;color:var(--muted)}
+input,select,button{font:inherit;border:1px solid #cfcfcf;border-radius:6px;background:#fff;padding:6px 10px}
+button{cursor:pointer;background:var(--accent);color:#fff;border-color:var(--accent)}
+button.secondary{background:#fff;color:var(--accent)}
+button:disabled{opacity:.5;cursor:not-allowed}
+.verdict{display:grid;grid-template-columns:1fr auto 1fr;gap:12px;align-items:stretch;margin:16px 0}
+.verdict-box{border:2px solid var(--border);border-radius:10px;padding:14px;text-align:center}
+.verdict-box.rejected{border-color:#fca5a5;background:#fef2f2}
+.verdict-box.accepted{border-color:#86efac;background:#f0fdf4}
+.verdict-mid{display:flex;align-items:center;justify-content:center;font-size:28px;color:var(--muted)}
+.layer-tabs{display:flex;gap:6px;margin-bottom:12px}
+.layer-tab{padding:8px 14px;border:1px solid var(--border);border-radius:8px;background:#fff;cursor:pointer;font-size:13px}
+.layer-tab.active{background:var(--accent);color:#fff;border-color:var(--accent)}
+.layer-panel{display:none}
+.layer-panel.active{display:block}
+.diagram{border:1px solid var(--border);border-radius:8px;background:#fafafa;padding:16px;overflow:auto}
+.diagram svg{display:block;margin:0 auto;max-width:100%}
+.step-flow{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:12px 0}
+.step-box{border:1px solid var(--border);border-radius:8px;padding:10px 14px;background:#fff;cursor:pointer;min-width:120px;transition:box-shadow .15s,border-color .15s}
+.step-box:hover{border-color:var(--accent)}
+.step-box.active{border-color:var(--accent);box-shadow:0 0 0 2px rgba(26,68,128,.15);background:#f0f6ff}
+.step-arrow{color:var(--muted);font-size:18px}
+.step-detail{min-height:100px;background:var(--soft);border-radius:8px;padding:12px;font-size:14px;margin-top:8px}
+.principle{cursor:pointer;transition:transform .1s}
+.principle:hover{transform:translateY(-1px)}
+.principle .id{font-size:11px;font-weight:700;color:var(--accent);text-transform:uppercase}
+.principle .title{font-weight:600;margin:4px 0}
+.principle.active{outline:2px solid var(--accent);outline-offset:2px}
+.catalog-row{cursor:pointer}
+.catalog-row.selected td{background:#e8f0fe!important}
+.color-swatch{display:inline-block;width:14px;height:14px;border-radius:3px;vertical-align:middle;margin-right:6px;border:1px solid rgba(0,0,0,.15)}
+.rr-demo{display:grid;grid-template-columns:1fr 280px;gap:16px;align-items:start}
+.link-viz{height:48px;background:#e2e8f0;border-radius:8px;position:relative;margin:20px 0;overflow:hidden}
+.link-slot{position:absolute;top:4px;bottom:4px;border-radius:4px;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:600;color:#fff;transition:left .3s,width .3s}
+.queue-bar{display:flex;gap:4px;height:32px;margin:4px 0}
+.queue-cell{flex:1;border:1px dashed #cbd5e1;border-radius:4px;display:flex;align-items:center;justify-content:center;font-size:10px;background:#fff}
+.queue-cell.filled{background:var(--router);color:#fff;border-style:solid}
+.picker-state{display:flex;gap:8px;flex-wrap:wrap;margin:10px 0}
+.color-chip{padding:6px 12px;border-radius:8px;border:2px solid #ddd;font-size:12px;cursor:pointer;user-select:none;transition:all .2s}
+.color-chip.inactive{opacity:.35}
+.color-chip.active{border-color:var(--trigger);background:#ecfdf5;box-shadow:0 0 0 2px rgba(5,150,105,.2)}
+.color-chip.blocked{text-decoration:line-through;background:#fee2e2;border-color:#fca5a5}
+.color-chip.picked{animation:pulse .6s ease}
+@keyframes pulse{0%,100%{transform:scale(1)}50%{transform:scale(1.05)}}
+.budget-bar{display:flex;height:28px;border-radius:6px;overflow:hidden;margin:8px 0;border:1px solid var(--border)}
+.budget-seg{display:flex;align-items:center;justify-content:center;font-size:11px;color:#fff;font-weight:600}
+.compare-toggle{display:flex;gap:8px;margin:8px 0}
+.compare-toggle button{flex:1}
+.stack{display:flex;flex-direction:column;gap:0;max-width:420px;margin:12px auto}
+.stack-layer{border:1px solid var(--border);padding:12px 16px;text-align:center;font-size:13px}
+.stack-layer:first-child{border-radius:8px 8px 0 0}
+.stack-layer:last-child{border-radius:0 0 8px 8px}
+.stack-gap{height:8px;background:repeating-linear-gradient(90deg,#ddd,#ddd 4px,transparent 4px,transparent 8px);margin:0 20px}
+.ref-links{display:flex;flex-wrap:wrap;gap:8px;margin-top:24px}
+.ref-links a{display:inline-block;padding:8px 14px;border:1px solid var(--border);border-radius:8px;text-decoration:none;color:var(--accent);background:#fff;font-size:13px}
+.ref-links a:hover{background:var(--soft)}
+@media(max-width:900px){
+  .layout{grid-template-columns:1fr}
+  nav{position:relative;height:auto;border-right:none;border-bottom:1px solid var(--border)}
+  main{padding:16px}
+  .grid2,.grid3,.verdict,.rr-demo{grid-template-columns:1fr}
+  .verdict-mid{transform:rotate(90deg);padding:8px 0}
+}
+</style>
+</head>
+<body>
+<div class="layout">
+<nav id="nav">
+  <h2>Color 指南</h2>
+  <a href="#verdict">核心结论</a>
+  <a href="#layers">两层机制</a>
+  <a href="#rr-demo">RR 仲裁演示</a>
+  <a href="#picker-demo">Picker 触发</a>
+  <a href="#lifecycle">软硬协同流程</a>
+  <a href="#principles">第一性原理 R1–R5</a>
+  <a href="#catalog">24 色目录</a>
+  <a href="#collectives">集合通信对比</a>
+  <a href="#budget">ColorBudget</a>
+  <a href="#sdk">SDK 边界</a>
+  <a href="#refs">参考链接</a>
+</nav>
+
+<main>
+<h1>Color 用法与规则指南</h1>
+<p class="lead">Cerebras WSE 片上 <strong>Color（虚拟网络）</strong> 语义、专利 US10,515,303 重新推导的调度机制，以及集合通信 color 划分规则。实现：<code>wsesim/network/color*.py</code>。</p>
+
+<section id="verdict">
+<h2>核心结论：TDM 还是 Trigger？</h2>
+<div class="card highlight">
+  <p><strong>既不是固定时隙 TDM 轮转，也不是「全芯片同一时刻只有一条 color 活着」。</strong></p>
+  <p>链路上是 <em>就绪色按需时分仲裁</em>（Router RR/priority）；计算上是 <em>事件触发激活 + Picker 选色起任务</em>（Active/Block + <code>base+color×4</code>）。</p>
+</div>
+<div class="verdict">
+  <div class="verdict-box rejected">
+    <h3>❌ 固定时隙 TDM</h3>
+    <p class="small">预分配 slot 轮所有 color，空闲也占带宽</p>
+    <span class="tag no">专利无此时隙表</span>
+  </div>
+  <div class="verdict-mid">≠</div>
+  <div class="verdict-box rejected">
+    <h3>❌ 单活 VN 切换</h3>
+    <p class="small">同一时刻全芯片仅一条 color</p>
+    <span class="tag no">多色可同时 active</span>
+  </div>
+</div>
+<div class="verdict">
+  <div class="verdict-box accepted">
+    <h3 style="color:var(--router)">✓ 路由层：按需 RR</h3>
+    <p class="small">共享物理链路时，仅 <strong>ready</strong> color 参与 round-robin / priority 仲裁；空闲不占槽。</p>
+    <span class="tag yes">Router Sched 654</span>
+  </div>
+  <div class="verdict-mid">+</div>
+  <div class="verdict-box accepted">
+    <h3 style="color:var(--trigger)">✓ 计算层：Trigger</h3>
+    <p class="small">wavelet → Active Bit → Picker 选 active &amp; !block 的 color → 触发 task。</p>
+    <span class="tag yes">Picker 830 / FIG 9A–9C</span>
+  </div>
+</div>
+<table>
+  <thead><tr><th>层</th><th>机制</th><th>TDM 轮转？</th><th>Trigger？</th></tr></thead>
+  <tbody>
+    <tr><td>路由层 Router</td><td>多 color 独立缓冲；共享链路 → ready colors RR/priority</td><td><span class="tag no">否（按需）</span></td><td><span class="tag no">否（硬件自动）</span></td></tr>
+    <tr><td>计算层 CE/Picker</td><td>Active Bit + activate/block + Picker 选色 → task</td><td><span class="tag no">否</span></td><td><span class="tag yes">是</span></td></tr>
+  </tbody>
+</table>
+</section>
+
+<section id="layers">
+<h2>两层机制概览</h2>
+<div class="layer-tabs">
+  <button type="button" class="layer-tab active" data-layer="router">路由层 Router 600</button>
+  <button type="button" class="layer-tab" data-layer="ce">计算层 CE 800 / Picker</button>
+  <button type="button" class="layer-tab" data-layer="both">软硬分工</button>
+</div>
+<div class="layer-panel active" id="panel-router">
+  <div class="card">
+    <ul>
+      <li>每 color：<strong>独立 Data Queue</strong>（默认 2 entries/color）+ 静态 Dest 661 多播表</li>
+      <li>每 color <strong>单活跃输入源</strong> → color 内无拥塞；拥塞只在 color 之间（共享物理通道）</li>
+      <li>仲裁：<strong>round-robin</strong> 或 <strong>priority</strong>（color 0–7 高优先级）</li>
+      <li>反压：每 color × 每方向独立 Stall 信号，沿路由反向传播</li>
+    </ul>
+  </div>
+  <div class="diagram" id="routerDiagram"></div>
+</div>
+<div class="layer-panel" id="panel-ce">
+  <div class="card">
+    <ul>
+      <li>Input Qs 897：每 fabric/local color 一个虚拟队列</li>
+      <li>wavelet 写入 → <code>Active Bit</code> 置位（或 activate 指令 / DSD.AC / 环形缓冲 push-pop）</li>
+      <li>Picker：选 active 且未 block 的 color → <code>addr = base + color×4</code> → 取指执行</li>
+      <li><code>block/unblock</code> 指令门控：被 block 的 color 不参与选取</li>
+    </ul>
+  </div>
+  <div class="diagram" id="ceDiagram"></div>
+</div>
+<div class="layer-panel" id="panel-both">
+  <div class="card highlight">
+    <p><strong>软件管「空间」</strong>：编译期映射通信图 → 静态多播路由 + color 划分 + 无环校验。</p>
+    <p><strong>硬件管「时间」</strong>：运行期 ready 仲裁 + 激活/阻塞触发任务。软件<strong>不在运行时切路由</strong>，只影响哪些 color 此刻就绪。</p>
+  </div>
+</div>
+</section>
+
+<section id="rr-demo">
+<h2>交互演示：共享链路上的 RR 仲裁</h2>
+<p class="small">模拟 Router Sched：3 条 color 在<strong>同一条物理链路</strong>上竞争。仅 <em>ready</em>（队列非空且未 stall）的 color 参与 RR；空闲 color 不占带宽。</p>
+<div class="rr-demo">
+  <div class="card">
+    <div class="link-viz" id="linkViz"><div class="link-slot" id="linkSlot">—</div></div>
+    <p class="small" id="rrStatus">Cycle 0</p>
+    <div class="controls">
+      <button type="button" id="rrStep">下一步 cycle</button>
+      <button type="button" class="secondary" id="rrReset">重置</button>
+      <label><input type="checkbox" id="rrPriority"> Priority 模式（color 0 优先）</label>
+    </div>
+  </div>
+  <div>
+    <div id="rrQueues"></div>
+    <p class="small warn">要点：K 条 active color 共享 1 链路 ≈ 各得 1/K 带宽（R4）。增加 color 不增加总带宽，除非走不相交链路。</p>
+  </div>
+</div>
+</section>
+
+<section id="picker-demo">
+<h2>交互演示：Picker 触发 Task</h2>
+<p class="small">点击 color chip 模拟 wavelet 到达（active）；双击切换 block。按「Picker 选取」看哪条 color 被选中并触发 task。</p>
+<div class="card">
+  <div class="picker-state" id="pickerChips"></div>
+  <div class="controls">
+    <button type="button" id="pickerPick">Picker 选取</button>
+    <button type="button" class="secondary" id="pickerClear">清空 active</button>
+  </div>
+  <div class="step-detail" id="pickerLog">等待操作…</div>
+</div>
+</section>
+
+<section id="lifecycle">
+<h2>软硬协同流程</h2>
+<div class="step-flow" id="lifecycleSteps"></div>
+<div class="step-detail" id="lifecycleDetail"></div>
+</section>
+
+<section id="principles">
+<h2>第一性原理 R1–R5</h2>
+<p class="small">点击卡片查看详情；与集合通信修正规则联动。</p>
+<div class="grid3" id="principlesGrid"></div>
+</section>
+
+<section id="catalog">
+<h2>24 色目录（可筛选）</h2>
+<div class="card warn">
+  <strong>⚠️ 软件设计选择，非硬件强制。</strong> 硬件只保证「每 color = 一张静态多播路由表」；一 color 一罗盘方向是惯例，非最优（见 R1）。
+</div>
+<div class="controls">
+  <label>类型 <select id="catFilter"><option value="all">全部</option><option value="unicast">unicast</option><option value="bus">bus</option></select></label>
+  <label>搜索 <input type="text" id="catSearch" placeholder="名称 / ID"></label>
+</div>
+<div class="table-wrap"><table id="catalogTable"><thead><tr><th>ID</th><th>名称</th><th>类型</th><th>方向</th><th>用途</th></tr></thead><tbody></tbody></table></div>
+</section>
+
+<section id="collectives">
+<h2>集合通信：Catalog vs 硬件最优</h2>
+<div class="compare-toggle">
+  <button type="button" class="secondary active" data-view="both">对比视图</button>
+  <button type="button" class="secondary" data-view="catalog">仅 Catalog</button>
+  <button type="button" class="secondary" data-view="optimal">仅硬件最优</button>
+</div>
+<div class="table-wrap"><table id="collectiveTable"></table></div>
+</section>
+
+<section id="budget">
+<h2>ColorBudget 选型</h2>
+<div class="controls">
+  <label>Collective <select id="budgetOp"><option>broadcast</option><option>gather</option><option>reduce</option><option>allgather</option><option>allreduce</option></select></label>
+  <label>策略 <select id="budgetSel"><option value="minimal">MINIMAL (≤1)</option><option value="compact">COMPACT (≤2)</option><option value="parallel" selected>PARALLEL (2–4)</option></select></label>
+</div>
+<div class="card" id="budgetCard"></div>
+<p class="small">完整逐 cycle 可视化 → <a href="color_mesh_viz.html">color_mesh_viz.html</a></p>
+</section>
+
+<section id="sdk">
+<h2>与 cerebras-cloud-sdk-python 的边界</h2>
+<div class="stack">
+  <div class="stack-layer" style="background:#fef3c7">Cloud REST API<br><code>chat / completions / models</code><br><span class="tag no">无 color / fabric / wavelet</span></div>
+  <div class="stack-gap"></div>
+  <div class="stack-layer" style="background:#e0e7ff">Placement / Connection Server SW<br>编译期路由 + 配置分发（color 0 多播）</div>
+  <div class="stack-gap"></div>
+  <div class="stack-layer" style="background:#dcfce7">片上 Router 600 + CE 800<br>静态 Dest + RR 仲裁 + Picker 触发</div>
+  <div class="stack-gap"></div>
+  <div class="stack-layer" style="background:#f3e8ff">wsesim（本仓库）<br>cycle-accurate 仿真建模</div>
+</div>
+</section>
+
+<section id="refs">
+<h2>参考与工具</h2>
+<div class="ref-links">
+  <a href="color_mesh_viz.html">Color Mesh 逐 cycle 可视化</a>
+  <a href="collective-mesh-viz.html">逻辑算法 Mesh 可视化</a>
+  <a href="color_usage_guide.md">Markdown 源文档</a>
+  <a href="color_mechanism_analysis.md">专利机制分析</a>
+  <a href="color_simulation_report.html">仿真报告</a>
+</div>
+</section>
+</main>
+</div>
+
+<script>
+const PALETTE = Array.from({length:24}, (_,i)=>`hsl(${(i*137.508)%360},58%,45%)`);
+
+const CATALOG = [
+  [0,"unicast_xy","unicast","xy","单播 / systolic"],
+  [1,"unicast_yx","unicast","yx","单播 / 与 0 正交"],
+  [2,"bcast_row_east","bus","east","广播：行东"],
+  [3,"bcast_col_south","bus","south","广播：列南"],
+  [4,"gather_col_north","bus","north","汇聚：列北"],
+  [5,"gather_row_west","bus","west","汇聚：行西"],
+  [6,"reduce_col_north","bus","north","归约：列北"],
+  [7,"reduce_row_west","bus","west","归约：行西"],
+  [8,"allgather_row_east","bus","east","Allgather 行环"],
+  [9,"allgather_row_west","bus","west","Allgather 行环"],
+  [10,"allgather_col_south","bus","south","Allgather 列环"],
+  [11,"allgather_col_north","bus","north","Allgather 列环"],
+  [12,"allreduce_rs_row_east","bus","east","Allreduce RS 行"],
+  [13,"allreduce_ag_row_west","bus","west","Allreduce AG 行"],
+  [14,"allreduce_rs_col_south","bus","south","Allreduce RS 列"],
+  [15,"allreduce_ag_col_north","bus","north","Allreduce AG 列"],
+  [16,"bcast_row_west","bus","west","根非 corner 广播"],
+  [17,"bcast_col_north","bus","north","根非 corner 广播"],
+  [18,"gather_col_south","bus","south","根非 corner 汇聚"],
+  [19,"gather_row_east","bus","east","根非 corner 汇聚"],
+  [20,"reduce_col_south","bus","south","根非 corner 归约"],
+  [21,"reduce_row_east","bus","east","根非 corner 归约"],
+  [22,"spare_xy","unicast","xy","预留"],
+  [23,"spare_yx","unicast","yx","预留"],
+];
+
+const PRINCIPLES = [
+  {id:"R1", title:"一棵多播树 = 1 色", hw:"每 color 一张静态多播表，可多出口", rule:"2D broadcast 每节点 east+south 双出口 → 整树只需 1 色", refs:["Broadcast"]},
+  {id:"R2", title:"单活跃输入源", hw:"每 color 同时仅处理一个输入源", rule:"Reduce/Gather 扇入可 1 色 + 时间串行或 CE 合并", refs:["Reduce","Gather"]},
+  {id:"R3", title:"无环才不死锁", hw:"无硬件死锁规避，靠静态路由无环", rule:"环/allreduce 拆 opposing 方向或相位 delay", refs:["Allgather","Allreduce"]},
+  {id:"R4", title:"同链路 RR 不叠带宽", hw:"ready colors 共享链路 RR 仲裁", rule:"K 色同链路 ≈ 1/K 带宽；不相交链路才真并行", refs:["Allgather","ColorBudget"]},
+  {id:"R5", title:"最少 distinct color", hw:"color 稀缺 + task/Q/Active/Block 成本", rule:"MINIMAL/COMPACT；control 放 color 0–7 高优先级", refs:["ColorBudget"]},
+];
+
+const COLLECTIVES = [
+  {name:"Broadcast", catalog:"2 色（行东 2 + 列南 3）", optimal:"1 多播色（east+south 双出口）", principle:"R1", note:"现行 2 色属可读性惯例"},
+  {name:"Reduce / Gather", catalog:"reduce 6/7、gather 4/5 各 2 色", optimal:"1 扇入色（单源串行）", principle:"R2", note:"分色仅在融合 kernel 时间重叠时需要"},
+  {name:"Allgather", catalog:"4 色（行东/西 + 列南/北）", optimal:"2 色/相位 + delay", principle:"R3+R4", note:"4 色价值主要是非阻塞，非带宽"},
+  {name:"Allreduce", catalog:"4 色四阶段", optimal:"2 色 XY/YX 四相位复用", principle:"R4+R5", note:"即 ColorBudget.COMPACT"},
+];
+
+const BUDGET_INFO = {
+  minimal:{max:1, mech:"全程 unicast_xy；delay_cycles 时间串行 opposing 方向", when:"color 切换开销敏感、预算紧张"},
+  compact:{max:2, mech:"unicast_xy + unicast_yx；相位边界复用", when:"平衡 color 数与 makespan"},
+  parallel:{max:"2–4", mech:"方向总线独立 VN；east/west 可同相位并行", when:"带宽敏感、走不相交链路"},
+};
+
+const BUDGET_COLORS = {
+  broadcast:{minimal:1, compact:1, parallel:2},
+  gather:{minimal:1, compact:2, parallel:2},
+  reduce:{minimal:1, compact:2, parallel:2},
+  allgather:{minimal:1, compact:2, parallel:4},
+  allreduce:{minimal:1, compact:2, parallel:4},
+};
+
+const LIFECYCLE = [
+  {id:"compile", title:"编译期", items:["决定 color 档位 8/16/24/32","生成静态 Dest 多播表（无环）","color→task 地址 base+color×4","规划 Input Q / 优先级"]},
+  {id:"config", title:"配置期", items:["Connection Server / FPGA Misc SW","经 color 0 固定多播分发路由表","写入各 PE Router Dest 661"]},
+  {id:"runtime", title:"运行期 Router", items:["Data In → per-color Queue(2)","Router Sched RR/priority 仲裁","Stall 反压沿路由反向"]},
+  {id:"runtime-ce", title:"运行期 CE", items:["Hash → Input Q → Active Bit","Picker 选 active & !block","执行 task → Output Q → Router"]},
+];
+
+// --- Nav highlight ---
+const navLinks = [...document.querySelectorAll("nav a")];
+const sections = navLinks.map(a => document.querySelector(a.getAttribute("href")));
+const obs = new IntersectionObserver(entries => {
+  entries.forEach(e => {
+    if (e.isIntersecting) {
+      navLinks.forEach(l => l.classList.toggle("active", l.getAttribute("href") === "#" + e.target.id));
+    }
+  });
+}, {rootMargin:"-20% 0px -60% 0px"});
+sections.forEach(s => s && obs.observe(s));
+
+// --- Layer tabs ---
+document.querySelectorAll(".layer-tab").forEach(btn => {
+  btn.addEventListener("click", () => {
+    document.querySelectorAll(".layer-tab").forEach(b => b.classList.remove("active"));
+    document.querySelectorAll(".layer-panel").forEach(p => p.classList.remove("active"));
+    btn.classList.add("active");
+    document.getElementById("panel-" + btn.dataset.layer).classList.add("active");
+  });
+});
+
+// --- SVG diagrams ---
+function svgRouter() {
+  const w=520,h=200;
+  return `<svg width="${w}" height="${h}" viewBox="0 0 ${w} ${h}">
+    <rect x="180" y="70" width="160" height="70" rx="8" fill="#dbeafe" stroke="#2563eb" stroke-width="2"/>
+    <text x="260" y="95" text-anchor="middle" font-size="12" font-weight="700" fill="#1e40af">Router 600</text>
+    <text x="260" y="115" text-anchor="middle" font-size="10" fill="#334">Data Queues (2/color)</text>
+    <text x="260" y="130" text-anchor="middle" font-size="10" fill="#334">Router Sched RR/priority</text>
+    ${[0,1,2].map(i=>{
+      const y=20+i*24;
+      return `<rect x="20" y="${y}" width="60" height="18" rx="3" fill="${PALETTE[i]}"/>
+        <text x="90" y="${y+13}" font-size="10">color ${i} queue</text>
+        <line x1="80" y1="${y+9}" x2="180" y2="100" stroke="#94a3b8" stroke-dasharray="3"/>`;
+    }).join("")}
+    <rect x="400" y="85" width="100" height="40" rx="6" fill="#e2e8f0" stroke="#64748b"/>
+    <text x="450" y="110" text-anchor="middle" font-size="11">物理链路</text>
+    <line x1="340" y1="105" x2="400" y2="105" stroke="#2563eb" stroke-width="2"/>
+    <text x="370" y="98" text-anchor="middle" font-size="9" fill="#2563eb">RR 仲裁</text>
+  </svg>`;
+}
+function svgCE() {
+  const w=520,h=180;
+  return `<svg width="${w}" height="${h}" viewBox="0 0 ${w} ${h}">
+    <rect x="40" y="50" width="100" height="80" rx="8" fill="#ede9fe" stroke="#7c3aed" stroke-width="2"/>
+    <text x="90" y="75" text-anchor="middle" font-size="11" font-weight="700">Input Qs</text>
+    <text x="90" y="92" text-anchor="middle" font-size="9">Active/Block</text>
+    <polygon points="160,90 200,90 200,70 230,95 200,120 200,100 160,100" fill="#059669"/>
+    <rect x="240" y="60" width="90" height="60" rx="8" fill="#d1fae5" stroke="#059669" stroke-width="2"/>
+    <text x="285" y="85" text-anchor="middle" font-size="11" font-weight="700">Picker</text>
+    <text x="285" y="102" text-anchor="middle" font-size="9">选 active color</text>
+    <polygon points="340,90 380,90 380,70 410,95 380,120 380,100 340,100" fill="#059669"/>
+    <rect x="420" y="55" width="80" height="70" rx="8" fill="#fef3c7" stroke="#d97706"/>
+    <text x="460" y="85" text-anchor="middle" font-size="10" font-weight="700">Task</text>
+    <text x="460" y="102" text-anchor="middle" font-size="9">base+c×4</text>
+  </svg>`;
+}
+document.getElementById("routerDiagram").innerHTML = svgRouter();
+document.getElementById("ceDiagram").innerHTML = svgCE();
+
+// --- RR demo ---
+const RR_COLORS = [
+  {id:0, name:"c0", queue:[1,1,0], stall:false},
+  {id:1, name:"c1", queue:[1,0,0], stall:false},
+  {id:2, name:"c2", queue:[0,0,0], stall:false},
+];
+let rrCycle = 0, rrIdx = 0, rrState = null;
+
+function rrClone() {
+  return RR_COLORS.map(c => ({...c, queue:[...c.queue]}));
+}
+
+function rrReset() {
+  rrState = rrClone();
+  rrCycle = 0; rrIdx = 0;
+  rrRender();
+}
+
+function rrReady(c) {
+  return c.queue.some(x=>x>0) && !c.stall;
+}
+
+function rrStep() {
+  const priority = document.getElementById("rrPriority").checked;
+  const ready = rrState.filter(rrReady);
+  let pick = null;
+  if (ready.length) {
+    if (priority) {
+      ready.sort((a,b)=>a.id-b.id);
+      pick = ready[0];
+    } else {
+      for (let i=0;i<rrState.length;i++) {
+        const j = (rrIdx + i) % rrState.length;
+        if (rrReady(rrState[j])) { pick = rrState[j]; rrIdx = (j+1)%rrState.length; break; }
+      }
+    }
+    if (pick) {
+      const qi = pick.queue.findIndex(x=>x>0);
+      if (qi>=0) pick.queue[qi]--;
+    }
+  }
+  rrCycle++;
+  rrRender(pick);
+}
+
+function rrRender(pick) {
+  const el = document.getElementById("rrQueues");
+  el.innerHTML = rrState.map(c => {
+    const cells = c.queue.map(v=>`<div class="queue-cell${v?' filled':''}" style="background:${v?PALETTE[c.id]:''}">${v?'flit':''}</div>`).join("");
+    const tag = !c.queue.some(x=>x)?'<span class="tag">idle</span>': c.stall?'<span class="tag no">stalled</span>':'<span class="tag yes">ready</span>';
+    return `<div style="margin-bottom:10px"><strong style="color:${PALETTE[c.id]}">${c.name}</strong> ${tag}<div class="queue-bar">${cells}</div></div>`;
+  }).join("");
+  const slot = document.getElementById("linkSlot");
+  const status = document.getElementById("rrStatus");
+  if (pick) {
+    slot.textContent = pick.name;
+    slot.style.background = PALETTE[pick.id];
+    slot.style.left = "10%"; slot.style.width = "80%";
+    status.textContent = `Cycle ${rrCycle}：链路传输 ${pick.name}（${document.getElementById("rrPriority").checked?'priority':'round-robin'}）`;
+  } else {
+    slot.textContent = "—";
+    slot.style.background = "#94a3b8";
+    slot.style.left = "40%"; slot.style.width = "20%";
+    status.textContent = `Cycle ${rrCycle}：无 ready color，链路空闲`;
+  }
+}
+
+document.getElementById("rrStep").onclick = rrStep;
+document.getElementById("rrReset").onclick = rrReset;
+rrReset();
+
+// --- Picker demo ---
+const PICKER_N = 6;
+let pickerState = Array.from({length:PICKER_N}, (_,i)=>({id:i, active:false, blocked:false}));
+let pickerRR = 0;
+
+function renderPickerChips() {
+  const el = document.getElementById("pickerChips");
+  el.innerHTML = pickerState.map(c => {
+    let cls = "color-chip";
+    if (c.blocked) cls += " blocked";
+    else if (c.active) cls += " active";
+    else cls += " inactive";
+    return `<div class="${cls}" data-id="${c.id}" style="border-color:${PALETTE[c.id]}">${c.id}: ${CATALOG[c.id][1]}</div>`;
+  }).join("");
+  el.querySelectorAll(".color-chip").forEach(chip => {
+    const id = +chip.dataset.id;
+    chip.onclick = () => {
+      if (pickerState[id].blocked) return;
+      pickerState[id].active = !pickerState[id].active;
+      renderPickerChips();
+    };
+    chip.ondblclick = e => {
+      e.preventDefault();
+      pickerState[id].blocked = !pickerState[id].blocked;
+      if (pickerState[id].blocked) pickerState[id].active = false;
+      renderPickerChips();
+    };
+  });
+}
+
+document.getElementById("pickerPick").onclick = () => {
+  const candidates = pickerState.filter(c => c.active && !c.blocked);
+  const log = document.getElementById("pickerLog");
+  if (!candidates.length) {
+    log.innerHTML = "<span class='tag no'>无 active 且未 block 的 color — Picker 等待</span>";
+    return;
+  }
+  let pick = candidates[0];
+  for (let i=0;i<PICKER_N;i++) {
+    const j = (pickerRR + i) % PICKER_N;
+    const c = pickerState[j];
+    if (c.active && !c.blocked) { pick = c; pickerRR = (j+1)%PICKER_N; break; }
+  }
+  const addr = `base + ${pick.id}×4 = base+${pick.id*4}`;
+  log.innerHTML = `Picker 选中 <strong style="color:${PALETTE[pick.id]}">color ${pick.id}</strong>（${CATALOG[pick.id][1]}）→ 触发 task，指令地址 <code>${addr}</code>`;
+  document.querySelectorAll(".color-chip").forEach(chip => {
+    if (+chip.dataset.id === pick.id) { chip.classList.add("picked"); setTimeout(()=>chip.classList.remove("picked"),600); }
+  });
+};
+
+document.getElementById("pickerClear").onclick = () => {
+  pickerState.forEach(c => { c.active = false; });
+  document.getElementById("pickerLog").textContent = "已清空 active 状态";
+  renderPickerChips();
+};
+renderPickerChips();
+
+// --- Lifecycle ---
+let lifeIdx = 0;
+const lifeEl = document.getElementById("lifecycleSteps");
+const lifeDetail = document.getElementById("lifecycleDetail");
+LIFECYCLE.forEach((s,i) => {
+  const box = document.createElement("div");
+  box.className = "step-box" + (i===0?" active":"");
+  box.textContent = s.title;
+  box.onclick = () => {
+    lifeIdx = i;
+    document.querySelectorAll(".step-box").forEach((b,j)=>b.classList.toggle("active",j===i));
+    lifeDetail.innerHTML = "<ul>" + s.items.map(x=>`<li>${x}</li>`).join("") + "</ul>";
+  };
+  lifeEl.appendChild(box);
+  if (i < LIFECYCLE.length-1) {
+    const arr = document.createElement("span");
+    arr.className = "step-arrow"; arr.textContent = "→";
+    lifeEl.appendChild(arr);
+  }
+});
+lifeDetail.innerHTML = "<ul>" + LIFECYCLE[0].items.map(x=>`<li>${x}</li>`).join("") + "</ul>";
+
+// --- Principles ---
+const pg = document.getElementById("principlesGrid");
+PRINCIPLES.forEach(p => {
+  const d = document.createElement("div");
+  d.className = "card principle";
+  d.innerHTML = `<div class="id">${p.id}</div><div class="title">${p.title}</div><p class="small">${p.hw}</p>`;
+  d.onclick = () => {
+    document.querySelectorAll(".principle").forEach(x => {
+      x.classList.remove("active");
+      x.querySelector(".principle-extra")?.remove();
+    });
+    d.classList.add("active");
+    const extra = document.createElement("div");
+    extra.className = "principle-extra";
+    extra.innerHTML = `<p style="margin-top:8px"><strong>规则：</strong>${p.rule}</p><p class="small">关联：${p.refs.join(", ")}</p>`;
+    d.appendChild(extra);
+  };
+  pg.appendChild(d);
+});
+
+// --- Catalog ---
+function renderCatalog() {
+  const type = document.getElementById("catFilter").value;
+  const q = document.getElementById("catSearch").value.toLowerCase();
+  const tbody = document.querySelector("#catalogTable tbody");
+  tbody.innerHTML = "";
+  CATALOG.filter(([id,name,kind,dir,use]) => {
+    if (type !== "all" && kind !== type) return false;
+    if (q && !(name.includes(q) || String(id).includes(q) || use.includes(q))) return false;
+    return true;
+  }).forEach(([id,name,kind,dir,use]) => {
+    const tr = document.createElement("tr");
+    tr.className = "catalog-row";
+    tr.innerHTML = `<td>${id}</td><td><span class="color-swatch" style="background:${PALETTE[id]}"></span><code>${name}</code></td><td>${kind}</td><td>${dir}</td><td>${use}</td>`;
+    tr.onclick = () => {
+      document.querySelectorAll(".catalog-row").forEach(r=>r.classList.remove("selected"));
+      tr.classList.add("selected");
+    };
+    tbody.appendChild(tr);
+  });
+}
+document.getElementById("catFilter").onchange = renderCatalog;
+document.getElementById("catSearch").oninput = renderCatalog;
+renderCatalog();
+
+// --- Collectives ---
+let collView = "both";
+function renderCollectives() {
+  const cols = collView === "both"
+    ? ["集合通信","Catalog 规则","硬件最优","原理","说明"]
+    : collView === "catalog" ? ["集合通信","Catalog 规则","原理"] : ["集合通信","硬件最优","原理"];
+  let html = "<thead><tr>" + cols.map(c=>`<th>${c}</th>`).join("") + "</tr></thead><tbody>";
+  COLLECTIVES.forEach(r => {
+    html += "<tr>";
+    html += `<td><strong>${r.name}</strong></td>`;
+    if (collView !== "optimal") html += `<td>${r.catalog}</td>`;
+    if (collView !== "catalog") html += `<td style="color:var(--good)">${r.optimal}</td>`;
+    html += `<td><span class="tag">${r.principle}</span></td>`;
+    if (collView === "both") html += `<td class="small">${r.note}</td>`;
+    html += "</tr>";
+  });
+  html += "</tbody>";
+  document.getElementById("collectiveTable").innerHTML = html;
+}
+document.querySelectorAll(".compare-toggle button").forEach(btn => {
+  btn.onclick = () => {
+    document.querySelectorAll(".compare-toggle button").forEach(b=>b.classList.remove("active"));
+    btn.classList.add("active");
+    collView = btn.dataset.view;
+    renderCollectives();
+  };
+});
+renderCollectives();
+
+// --- Budget ---
+function renderBudget() {
+  const op = document.getElementById("budgetOp").value;
+  const sel = document.getElementById("budgetSel").value;
+  const info = BUDGET_INFO[sel];
+  const n = BUDGET_COLORS[op][sel];
+  const card = document.getElementById("budgetCard");
+  const barCount = typeof n === "number" ? n : 4;
+  const barHtml = typeof n === "number"
+    ? Array.from({length: n}, (_, i) => `<div class="budget-seg" style="flex:1;background:${PALETTE[i]}">c${sel === "minimal" ? 0 : i}</div>`).join("")
+    : `<div class="budget-seg" style="flex:1;background:${PALETTE[2]}">bus VNs</div><div class="budget-seg" style="flex:1;background:${PALETTE[8]}">…</div><div class="budget-seg" style="flex:1;background:${PALETTE[9]}">…</div><div class="budget-seg" style="flex:1;background:${PALETTE[10]}">…</div>`;
+  card.innerHTML = `
+    <h3>${op} × ${sel.toUpperCase()}</h3>
+    <p>distinct colors 目标：<strong>${n}</strong>（上限 ${info.max}）</p>
+    <div class="budget-bar">${barHtml}</div>
+    <p><strong>机制：</strong>${info.mech}</p>
+    <p class="small"><strong>适用：</strong>${info.when}</p>`;
+}
+document.getElementById("budgetOp").onchange = renderBudget;
+document.getElementById("budgetSel").onchange = renderBudget;
+renderBudget();
+</script>
+</body>
+</html>
