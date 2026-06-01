@@ -1,0 +1,3 @@
+[submodule "vendor/sdk-examples"]
+	path = vendor/sdk-examples
+	url = https://github.com/Cerebras/sdk-examples
