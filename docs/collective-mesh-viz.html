@@ -58,6 +58,8 @@ svg text{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
   功能：配置 2D Mesh 形状、集合通信算子和算法实现，查看逐 cycle 的 flit 传输过程、物理 edge 泳道图、逻辑 flow 流水线，并对比
   <code>logical butterfly / dim-wise</code> 传输模式与直接在 mesh 上优化的 tree、ring 集合通信算子延迟。
   调度模型按 flit 建立依赖：沿路径传播时，某个 flit 到达下一节点后的下一 cycle 即可继续转发，不等待同一 block 的全部 flit。
+  <strong>Logical butterfly (pipelined)</strong>：无 X/Y stage 屏障、stride 可重叠；争用物理边的并行流分配不同 color；
+  router 每拍只调度<strong>该节点上已有数据且未阻塞</strong>的 color，不为无数据的预设 color 空转。
 </div>
 
 <div class="controls">
@@ -129,7 +131,7 @@ const ALG_NAMES={
 };
 const ALG_NOTES={
   "butterfly-basic":"Basic butterfly 保留阶段屏障；payload 会增长的 all-gather 使用大 stride 优先，避免大 payload 走长距离。",
-  "butterfly-pipelined":"Pipelined butterfly 按 flit 建立依赖；all-gather 同样采用 payload-aware 的大 stride 优先顺序。",
+  "butterfly-pipelined":"无 stage 屏障，X/Y stride 重叠；stride 并行流按 color 错开争用边；router 仅调度有数据、非阻塞的 color（period=1 flit 流水）。",
   "tree-pipelined":"2D tree 使用行/列链式树，按 flit 在相邻 mesh edge 上流水转发。",
   "ring-xy":"XY ring 先做行内并行 ring/chain 阶段，再做列内并行阶段；gather/reduce 反向聚合，all-reduce 近似为 reduce+broadcast。",
   "ring-snake":"Snake ring 是 legacy baseline：把 2D mesh 拉平成一条 snake 逻辑环/链。",
@@ -145,9 +147,10 @@ function path(a,b){
   while(c.y!==b.y){const n={x:c.x,y:c.y+Math.sign(b.y-c.y)};p.push({id:eid(c,n),from:{...c},to:{...n}});c=n;}
   return p;
 }
-function flow(id,a,b,flits,payload,ci,stage){
+function flow(id,a,b,flits,payload,ci,stage,colorId=null){
+  const cid=colorId ?? ci;
   return {id,label:`${id}: (${a.x},${a.y})->(${b.x},${b.y})`,from:a,to:b,flits,path:path(a,b),
-          payload,color:COLORS[ci%COLORS.length],stage,start:0,period:null};
+          payload,color:COLORS[cid%COLORS.length],colorId:cid,stage,start:0,period:null,hopCycles:null};
 }
 function edgeLoad(flows){
   const m=new Map(); flows.forEach(f=>f.path.forEach(e=>m.set(e.id,(m.get(e.id)||0)+1)));
@@ -163,6 +166,17 @@ function eventAt(f,cycle,defaultPeriod){
   return eventsAt(f,cycle,defaultPeriod)[0] || null;
 }
 function eventsAt(f,cycle,defaultPeriod){
+  if(f.hopCycles){
+    const out=[];
+    for(let i=0;i<f.flits;i++){
+      const hc=f.hopCycles[i];
+      if(!hc) continue;
+      for(let h=0;h<f.path.length;h++){
+        if(hc[h]===cycle) out.push({flow:f,flit:i,edge:f.path[h],label:`${f.id}.f${i}@h${h}`});
+      }
+    }
+    return out;
+  }
   const start=f.start||0, period=periodOf(f,defaultPeriod);
   const out=[];
   for(let i=0;i<f.flits;i++){
@@ -170,6 +184,140 @@ function eventsAt(f,cycle,defaultPeriod){
     if(off>=0 && off<f.path.length) out.push({flow:f,flit:i,edge:f.path[off],label:`${f.id}.f${i}`});
   }
   return out;
+}
+function durationFromFlows(flows){
+  let max=1;
+  flows.forEach(f=>{
+    if(f.hopCycles){
+      f.hopCycles.forEach(hc=>{
+        if(hc?.length) max=Math.max(max,hc[hc.length-1]+1);
+      });
+      return;
+    }
+    max=Math.max(max,(f.start||0)+(f.flits-1)*periodOf(f,1)+f.path.length);
+  });
+  return max;
+}
+function assignButterflyColors(flows){
+  const n=flows.length;
+  const adj=Array.from({length:n},()=>new Set());
+  const edgeList=new Map();
+  flows.forEach((f,fi)=>f.path.forEach(e=>{
+    if(!edgeList.has(e.id)) edgeList.set(e.id,[]);
+    edgeList.get(e.id).push(fi);
+  }));
+  edgeList.forEach(idxs=>{for(let a=0;a<idxs.length;a++)for(let b=a+1;b<idxs.length;b++){adj[idxs[a]].add(idxs[b]);adj[idxs[b]].add(idxs[a]);}});
+  const colorOf=new Array(n).fill(-1);
+  for(let i=0;i<n;i++){
+    const used=new Set();
+    adj[i].forEach(j=>{if(colorOf[j]>=0) used.add(colorOf[j]);});
+    let c=0; while(used.has(c)) c++;
+    colorOf[i]=c;
+    flows[i].colorId=c;
+    flows[i].color=COLORS[c%COLORS.length];
+  }
+  return Math.max(1,...colorOf)+1;
+}
+function initNodeFlitAvail(rows,cols,flits){
+  const m=new Map();
+  for(let y=0;y<rows;y++)for(let x=0;x<cols;x++)m.set(`${x},${y}`,Array.from({length:flits},()=>Infinity));
+  return m;
+}
+function getNodeFlitAvail(m,n,fi){return (m.get(nkey(n))||[])[fi] ?? Infinity;}
+function setNodeFlitAvailMin(m,n,fi,t){
+  const a=m.get(nkey(n)); if(!a) return;
+  a[fi]=Math.min(a[fi],t);
+}
+function rootInjectAvail(rows,cols,flits){
+  const m=initNodeFlitAvail(rows,cols,flits);
+  const a=m.get(nkey(node(0,0)));
+  for(let i=0;i<flits;i++) a[i]=i;
+  return m;
+}
+function butterflyBcastFlows(rows,cols,base){
+  const flows=[]; let idx=0;
+  pow2Strides(cols).forEach(s=>{
+    for(let x=0;x<s;x++) if(x+s<cols){
+      const f=flow(`BF${idx++}`,node(x,0),node(x+s,0),base,"root block",idx,`X broadcast stride=${s}`,idx);
+      f.axis="x"; f.stride=s; flows.push(f);
+    }
+  });
+  pow2Strides(rows).forEach(s=>{
+    for(let y=0;y<s;y++) for(let x=0;x<cols;x++) if(y+s<rows){
+      const f=flow(`BF${idx++}`,node(x,y),node(x,y+s),base,"root block",idx,`Y broadcast stride=${s}`,idx);
+      f.axis="y"; f.stride=s; flows.push(f);
+    }
+  });
+  return flows;
+}
+function scheduleButterflyRouter(rows,cols,base,op){
+  const flows=op==="broadcast"?butterflyBcastFlows(rows,cols,base):[];
+  if(!flows.length) return finishSchedule([],"butterfly router");
+  const colorCount=assignButterflyColors(flows);
+  const nodeAvail=rootInjectAvail(rows,cols,base);
+  const progress=new Map();
+  flows.forEach(f=>{
+    for(let i=0;i<f.flits;i++) progress.set(`${f.id}:${i}`,{hop:0,departs:[]});
+  });
+  let cycle=0, activeHops=flows.reduce((s,f)=>s+f.flits*f.path.length,0);
+  const maxCycle=activeHops*4+base*2+rows*cols*8;
+  while(activeHops>0 && cycle<maxCycle){
+    const edgeBusy=new Set();
+    const ready=new Map();
+    flows.forEach(f=>{
+      for(let i=0;i<f.flits;i++){
+        const st=progress.get(`${f.id}:${i}`);
+        if(st.hop>=f.path.length) continue;
+        const at=st.hop===0?f.from:f.path[st.hop-1].to;
+        if(getNodeFlitAvail(nodeAvail,at,i)>cycle) continue;
+        const nk=nkey(at), cid=f.colorId;
+        if(!ready.has(nk)) ready.set(nk,new Map());
+        if(!ready.get(nk).has(cid)) ready.get(nk).set(cid,[]);
+        ready.get(nk).get(cid).push({f,flit:i,hop:st.hop,edge:f.path[st.hop]});
+      }
+    });
+    for(let y=0;y<rows;y++)for(let x=0;x<cols;x++){
+      const nk=`${x},${y}`, byColor=ready.get(nk);
+      if(!byColor) continue;
+      const colorIds=[...byColor.keys()].sort((a,b)=>a-b);
+      for(const cid of colorIds){
+        const list=byColor.get(cid).slice().sort((a,b)=>
+          (a.f.axis||"").localeCompare(b.f.axis||"") || (a.f.stride||0)-(b.f.stride||0) || a.f.id.localeCompare(b.f.id));
+        for(const c of list){
+          if(edgeBusy.has(c.edge.id)) continue;
+          edgeBusy.add(c.edge.id);
+          const st=progress.get(`${c.f.id}:${c.flit}`);
+          st.departs[st.hop]=cycle;
+          st.hop++;
+          activeHops--;
+          const arrive=cycle+1;
+          if(st.hop>=c.f.path.length){
+            setNodeFlitAvailMin(nodeAvail,c.f.to,c.flit,arrive);
+          }else{
+            setNodeFlitAvailMin(nodeAvail,c.f.path[st.hop-1].to,c.flit,arrive);
+          }
+        }
+      }
+    }
+    cycle++;
+  }
+  flows.forEach(f=>{
+    f.hopCycles=[];
+    f.period=1;
+    for(let i=0;i<f.flits;i++){
+      const dep=progress.get(`${f.id}:${i}`).departs;
+      f.hopCycles[i]=dep;
+      if(dep.length) f.start=Math.min(f.start??Infinity,dep[0]-i);
+    }
+    if(!Number.isFinite(f.start)) f.start=0;
+  });
+  const duration=durationFromFlows(flows);
+  const labels=[...new Set(flows.map(f=>f.stage))];
+  const stages=labels.map(label=>{
+    const stageFlows=flows.filter(f=>f.stage===label);
+    return {label,flows:stageFlows,period:1,duration:durationFromFlows(stageFlows)};
+  });
+  return {flows,period:1,duration,label:`butterfly router ${op}`,stages,colorCount,peak:peakEdgeOccupancy({flows,period:1,duration})};
 }
 function allEvents(schedule,cycle){
   return schedule.flows.flatMap(f=>eventsAt(f,cycle,schedule.period));
@@ -682,6 +830,10 @@ function concatSchedules(a,b,label){
 }
 function buildSchedule(rows,cols,op,alg,base){
   if(alg==="butterfly-basic") return scheduleButterflyBasic(rows,cols,op,base);
+  if(alg==="butterfly-pipelined"){
+    if(op==="broadcast") return scheduleButterflyRouter(rows,cols,base,op);
+    return scheduleDimwise(rows,cols,op,base);
+  }
   if(alg==="tree-pipelined") return scheduleTree(rows,cols,op,base);
   if(alg==="ring-xy") return scheduleRingXY(rows,cols,op,base);
   if(alg==="ring-snake") return scheduleRingSnake(rows,cols,op,base);
@@ -787,6 +939,7 @@ function render(){
     ["当前选择",ALG_NAMES[alg]||alg,op],
     ["延迟",`${schedule.duration} cycles`,`${schedule.stages.length} logical stages`],
     ["Max edge sharing",`${schedule.peak ?? peakEdgeOccupancy(schedule)}`,`当前在飞 flits: ${evs.length}`],
+    ...(schedule.colorCount?[["Colors",`${schedule.colorCount}`,`router 仅调度有数据的 color`]]:[]),
   ].map(m=>`<div class="metric"><div class="name">${m[0]}</div><div class="value">${m[1]}</div><div class="sub">${m[2]}</div></div>`).join("");
   document.getElementById("algNote").textContent=ALG_NOTES[alg]||"";
   const comp=summarize(rows,cols,op,base);
@@ -795,8 +948,8 @@ function render(){
   document.getElementById("mesh").innerHTML=renderMesh(schedule,rows,cols,cycle);
   document.getElementById("cycleTag").textContent=`cycle ${cycle} / ${schedule.duration}`;
   document.getElementById("activeTag").textContent=`active ${evs.length}`;
-  renderTable(document.getElementById("active"),["flit","stage","flow","edge","payload"],
-    evs.map(e=>[e.label,e.flow.stage,e.flow.label,elabel(e.edge),e.flow.payload]));
+  renderTable(document.getElementById("active"),["flit","color","stage","flow","edge","payload"],
+    evs.map(e=>[e.label,e.flow.colorId ?? "-",e.flow.stage,e.flow.label,elabel(e.edge),e.flow.payload]));
   const totalCycles=schedule.duration+1;
   const win=Math.min(36,Math.max(8,totalCycles)), start=totalCycles<=win?0:Math.min(Math.max(0,cycle-8),totalCycles-win);
   const cycles=Array.from({length:win},(_,i)=>start+i);
