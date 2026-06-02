@@ -380,12 +380,17 @@ function axisStrideLanes(flows,axis,op){
 function activeAggregateLane(){
   return null;
 }
-function incomingAggregateFlows(flows,at,axis){
+function incomingAggregateFlows(flows,at,axis,op){
+  if(op==="reduce"||op==="gather"){
+    return flows.filter(f=>
+      f.to.x===at.x&&f.to.y===at.y&&(f.from.y>f.to.y||f.from.x>f.to.x)
+    );
+  }
   return flows.filter(f=>f.axis===axis&&f.to.x===at.x&&f.to.y===at.y&&isUpstreamAggregate(f,axis));
 }
 function canDepartAggregate(flow,flit,cycle,flows,progress,nodeAvail,op,lane,at){
   if(lane &&(flow.axis!==lane.axis||flow.stride!==lane.stride)) return false;
-  const incoming=incomingAggregateFlows(flows,at,flow.axis);
+  const incoming=incomingAggregateFlows(flows,at,flow.axis,op);
   for(const inf of incoming){
     if(!flowFlitDone(progress,inf,flit)) return false;
     if(flowFlitArrival(progress,inf,flit)>cycle) return false;
