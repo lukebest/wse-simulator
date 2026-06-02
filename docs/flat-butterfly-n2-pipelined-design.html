@@ -1,0 +1,556 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Flat butterfly n=2 (pipelined) — 算法与 Router 硬件设计</title>
+<style>
+:root{
+  --ink:#1b1b1b;--muted:#555;--border:#d8dce3;--soft:#f4f6fa;
+  --accent:#1a4480;--accent2:#0d6e6e;--warn:#9a5b00;--good:#166534;
+}
+*{box-sizing:border-box}
+body{font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei","Segoe UI",sans-serif;
+  max-width:960px;margin:0 auto;padding:32px 28px 64px;color:var(--ink);line-height:1.65}
+h1{font-size:28px;border-bottom:3px solid var(--accent);padding-bottom:10px;margin:0 0 8px}
+.subtitle{color:var(--muted);font-size:15px;margin:0 0 24px}
+h2{font-size:20px;color:var(--accent);margin:36px 0 12px;padding-top:8px;border-top:1px solid var(--border)}
+h3{font-size:16px;color:var(--accent2);margin:22px 0 8px}
+p{margin:10px 0}
+ul,ol{margin:8px 0 12px 22px}
+li{margin:4px 0}
+code,kbd{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:0.92em;
+  background:#eef0f4;padding:2px 6px;border-radius:4px}
+.toc{background:var(--soft);border:1px solid var(--border);border-radius:8px;padding:16px 20px;margin:20px 0}
+.toc ol{margin:8px 0 0 18px}
+.toc a{color:var(--accent);text-decoration:none}
+.toc a:hover{text-decoration:underline}
+.card{border:1px solid var(--border);border-radius:8px;padding:14px 18px;margin:14px 0;background:#fff}
+.card.warn{border-left:4px solid #e6a817;background:#fffbe6}
+.card.good{border-left:4px solid var(--good);background:#f0fdf4}
+table{border-collapse:collapse;width:100%;font-size:13px;margin:12px 0;background:#fff}
+th,td{border:1px solid var(--border);padding:8px 10px;text-align:left}
+th{background:#eef1f6;font-weight:600}
+.figure{background:#fafbfc;border:1px solid var(--border);border-radius:8px;padding:16px;margin:16px 0;overflow-x:auto}
+.figure-caption{font-size:12px;color:var(--muted);margin-top:10px;text-align:center}
+.mermaid{font-size:14px}
+.nav-top{font-size:14px;margin-bottom:20px}
+.nav-top a{color:var(--accent);margin-right:16px}
+dl{margin:12px 0}
+dt{font-weight:600;margin-top:10px}
+dd{margin:4px 0 8px 18px;color:var(--muted)}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+@media(max-width:720px){.grid2{grid-template-columns:1fr}}
+</style>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+<script>mermaid.initialize({startOnLoad:true,theme:"neutral",securityLevel:"loose"});</script>
+</head>
+<body>
+
+<p class="nav-top">
+  <a href="collective-mesh-viz.html">← 打开逐周期可视化</a>
+  <a href="#router-hw">Router 硬件</a>
+  <a href="#color-routing">Color 与静态路由</a>
+  <a href="#per-collective">各算子方案</a>
+</p>
+
+<h1>Flat butterfly n=2 (pipelined)</h1>
+<p class="subtitle">
+  算法流程、集合通信方案与 Mesh Router 硬件设计说明。
+  实现参考：<code>docs/collective-mesh-viz.html</code> 中
+  <code>scheduleButterflyPipelined</code>、<code>scheduleButterflyRouter</code> 及相关调度器。
+</p>
+
+<nav class="toc">
+  <strong>目录</strong>
+  <ol>
+    <li><a href="#summary">总结</a></li>
+    <li><a href="#topology">拓扑：2D Mesh 上的 n=2 Flattened Butterfly</a></li>
+    <li><a href="#model">流水模型与指标</a></li>
+    <li><a href="#orchestration">Pipelined 总控：多实现取最小 makespan</a></li>
+    <li><a href="#per-collective">各集合通信算子方案</a></li>
+    <li><a href="#router-hw">Router 硬件设计方案</a></li>
+    <li><a href="#color-routing">Color 机制与各 color 静态路由</a></li>
+    <li><a href="#basic-vs-pipe">与 Basic 模式对比</a></li>
+    <li><a href="#examples">示例延迟（1 flit/block）</a></li>
+  </ol>
+</nav>
+
+<h2 id="summary">1. 总结</h2>
+
+<p>
+  <strong>Flat butterfly n=2 (pipelined)</strong> 在二维 Mesh 上实现 radix-2 的
+  <em>flattened butterfly</em> 集合通信：每条逻辑 leg 为<strong>单跳直连</strong>（Manhattan XY 路由，不经过中点 PE），
+  stride 取 <code>1, 2, 4, … &lt; dim</code>；X/Y 两维按算子类型分阶段（broadcast/reduce-scatter 与 gather 方向相反）。
+</p>
+
+<p>
+  <strong>Pipelined</strong> 指按 <strong>flit</strong> 建立依赖：某一 flit 在 PE 上完成上一跳接收后的<strong>下一 cycle</strong> 即可进入下一跳，
+  不必等同 block 内全部 flit 到齐。调度在多种 flat-bf 实现（链式、dim-wise、周期级 router 模拟）间取<strong>最小 makespan</strong>。
+</p>
+
+<div class="card good">
+  <strong>设计要点</strong>
+  <ul>
+    <li><strong>功能正确性优先</strong>：broadcast 采用 root 行链 + 列扩散；reduce/gather 在 router 路径上要求<strong>跨轴上游聚合完成</strong>后再发下一跳。</li>
+    <li><strong>与树/环对齐的下界</strong>：4×4、1 flit 时 broadcast/reduce 均为 6 cycle，与最远角点 (3,3)→(0,0) 的 6 跳一致。</li>
+    <li><strong>Router</strong>：无全局 stride/轴屏障；<code>assignButterflyColors</code> 将 flow 划分为边不相交的 VC（color），再配合每 cycle 边互斥与跨轴聚合就绪（见 <a href="#color-routing">§7</a>）。</li>
+  </ul>
+</div>
+
+<h2 id="topology">2. 拓扑：2D Mesh 上的 n=2 Flattened Butterfly</h2>
+
+<h3>2.1 物理网络</h3>
+<p>每个 PE 位于坐标 <code>(x, y)</code>，<code>0 ≤ x &lt; cols</code>，<code>0 ≤ y &lt; rows</code>。
+相邻 PE 通过东/西/南/北四条有向物理边互连（实现中为 XY 最短路径多跳 <code>path(a,b)</code>）。</p>
+
+<h3>2.2 逻辑 leg（直连、stride = 2^k）</h3>
+<dl>
+  <dt>X 向前（broadcast / allgather 扩张）</dt>
+  <dd><code>(x, y) → (x + stride, y)</code>，要求 <code>x + stride &lt; cols</code></dd>
+  <dt>Y 向前</dt>
+  <dd><code>(x, y) → (x, y + stride)</code>，要求 <code>y + stride &lt; rows</code></dd>
+  <dt>X 反向（gather / reduce 聚合）</dt>
+  <dd><code>(x + stride, y) → (x, y)</code></dd>
+  <dt>Y 反向</dt>
+  <dd><code>(x, y + stride) → (x, y)</code></dd>
+  <dt>Exchange（allreduce / allgather）</dt>
+  <dd>每个 stride 上成对双向 leg：<code>a↔b</code>，距离为 <code>stride</code> 的 PE 对</dd>
+</dl>
+
+<div class="figure">
+<pre class="mermaid">
+flowchart LR
+  subgraph mesh["4×4 Mesh 上 stride=2 的 X 向前 leg 示例"]
+    A["(0,y)"] --> B["(2,y)"]
+    C["(1,y)"] -.-> D["(3,y)"]
+  end
+  subgraph note["说明"]
+    N1["n=2: 一次跳 stride=2"]
+    N2["全行 y 并行参与"]
+  end
+</pre>
+<p class="figure-caption">Flattened butterfly 在 Mesh 上映射为多条并行 stride leg，而非单独蝶形交换机布线。</p>
+</div>
+
+<h3>2.3 阶段顺序（轴语义）</h3>
+<table>
+  <thead><tr><th>算子</th><th>阶段顺序</th><th>stride 顺序</th></tr></thead>
+  <tbody>
+    <tr><td>Broadcast</td><td>X → Y</td><td>1, 2, 4, … 递增</td></tr>
+    <tr><td>Reduce / Gather</td><td>Y → X</td><td>…, 4, 2, 1 递减（大 stride 先）</td></tr>
+    <tr><td>Allreduce</td><td>X → Y</td><td>递增；成对交换</td></tr>
+    <tr><td>Allgather</td><td>X → Y</td><td>递减；payload 随轮次倍增</td></tr>
+  </tbody>
+</table>
+
+<h2 id="model">3. 流水模型与指标</h2>
+
+<h3>3.1 Flow 与 Flit</h3>
+<ul>
+  <li><strong>Flow</strong>：一条逻辑通信 <code>from → to</code>，携带 <code>flits</code> 个 flit、<code>payload</code> 描述（root block / partial sum / k block(s)）。</li>
+  <li><strong>路径</strong>：<code>path(a,b)</code> 为 Mesh 上 XY 逐跳边序列；每 hop 占用 1 cycle。</li>
+  <li><strong>周期</strong>：<code>period</code> 为同 flow 内相邻 flit 启动间隔；pipelined 实现多为 1。</li>
+</ul>
+
+<h3>3.2 Makespan（延迟）</h3>
+<p>
+  无 <code>hopCycles</code> 时：
+  <code>makespan = max_f ( start_f + (flits_f−1)×period_f + |path_f| )</code>。
+  Router 调度后为每个 flit 记录每跳出发 cycle <code>hopCycles[i][h]</code>，取全局最大末跳出发 +1。
+</p>
+
+<h3>3.3 Max edge sharing</h3>
+<p>同一 cycle、同一有向物理边上并发 flit 数的峰值；理想无冲突时为 1。着色与每 cycle 边互斥用于压低该指标。</p>
+
+<h2 id="orchestration">4. Pipelined 总控：多实现取最小 makespan</h2>
+
+<p><code>scheduleButterflyPipelined(rows, cols, op, base)</code> 对每个算子维护候选调度器，调用 <code>pickMinDuration</code> 选 makespan 最短者：</p>
+
+<div class="figure">
+<pre class="mermaid">
+flowchart TB
+  IN["scheduleButterflyPipelined(op)"] --> BC{"broadcast?"}
+  BC -->|是| B1["flat-bf 行链+列扩散"]
+  BC -->|是| B2["dim-wise stride 广播"]
+  BC -->|是| B3["butterfly router 模拟"]
+  IN --> G["gather → flat-bf 列链+行链"]
+  IN --> R{"reduce?"}
+  R --> R1["flat-bf 列链+行链"]
+  R --> R2["butterfly router"]
+  R --> R3["dim-wise gather/reduce"]
+  IN --> AG["allgather → dim-wise exchange / flat 环式"]
+  IN --> AR["allreduce → dim-wise exchange / reduce+bcast 拼接"]
+  B1 & B2 & B3 & R1 & R2 & R3 & AG & AR --> PICK["pickMinDuration → 最小 duration"]
+</pre>
+</div>
+
+<table>
+  <thead><tr><th>算子</th><th>候选实现</th><th>典型选用（4×4, 1 flit）</th></tr></thead>
+  <tbody>
+    <tr><td>Broadcast</td><td>flat 链式、dim-wise、router</td><td>flat / dim-wise（6 cycle，并列取先注册者）</td></tr>
+    <tr><td>Reduce</td><td>flat 链式、router、dim-wise</td><td>flat 链式（6 cycle；router 修依赖后约 8 cycle）</td></tr>
+    <tr><td>Gather</td><td>仅 flat 链式</td><td>flat 链式（12 cycle）</td></tr>
+    <tr><td>Allreduce</td><td>dim-wise exchange、flat reduce+broadcast</td><td>dim-wise exchange（6 cycle）</td></tr>
+    <tr><td>Allgather</td><td>dim-wise exchange、flat 环式行/列轮</td><td>flat 环式（17 cycle，优于 dim-wise 24）</td></tr>
+  </tbody>
+</table>
+
+<h2 id="per-collective">5. 各集合通信算子方案</h2>
+
+<h3>5.1 Broadcast — 复制语义</h3>
+<p><strong>目标</strong>：root <code>(0,0)</code> 的数据块复制到每个 PE。</p>
+<p><strong>Flat 链式（当前默认之一）</strong>：</p>
+<ol>
+  <li><strong>行阶段</strong>：仅在 <code>y=0</code> 上 <code>(0,0)→(1,0)→…→(cols−1,0)</code>，<code>start = x</code>，形成行内流水。</li>
+  <li><strong>列阶段</strong>：对每个 <code>x</code>，<code>(x,0)→(x,1)→…</code>，<code>start = x+y</code>。</li>
+  <li>经 <code>finishBroadcastSchedule</code> 解析边冲突并 <code>enforceBroadcastDependencies</code>，保证子节点在父节点 flit 到达后才转发。</li>
+</ol>
+
+<h3>5.2 Reduce — 归约到 root</h3>
+<p><strong>目标</strong>：每个 PE 一份 partial，最终在 <code>(0,0)</code> 得到全局和（仿真中用标量累加验证）。</p>
+<p><strong>Flat 链式</strong>（与 2D tree reduce 同构的时空 stagger）：</p>
+<ol>
+  <li>每列自下而上：<code>(x, rows−1)→…→(x,0)</code>，<code>start = rows−1−y</code>。</li>
+  <li>每行自右向左：<code>(cols−1,0)→…→(0,0)</code>，<code>start = (rows−1)+(cols−1−x)</code>。</li>
+</ol>
+<p>4×4、1 flit 时最远点 (3,3) 关键路径 6 跳 / 6 cycle，与 Manhattan 下界一致。</p>
+
+<h3>5.3 Gather — 搬运到 root</h3>
+<p><strong>目标</strong>：root 持有全部 <code>rows×cols</code> 个数据块。</p>
+<ul>
+  <li>列链：自 <code>(x, rows−1)</code> 向上聚合，发送 <code>base × (rows−y)</code> flit（块数随深度增加）。</li>
+  <li>行链：自 <code>(cols−1, 0)</code> 向左，发送 <code>base × rows × (cols−x)</code> flit。</li>
+  <li>所有列链 <code>start=0</code> 并行启动，再经 <code>resolveEdgeConflicts</code> 错开冲突边。</li>
+</ul>
+
+<h3>5.4 Allgather — 每 PE 持有全集</h3>
+<p><strong>目标</strong>：每个 PE 最终持有 N 份块（环式复制语义）。</p>
+<ul>
+  <li><strong>Dim-wise exchange</strong>：按 stride 成对双向交换，<code>held</code> 块数每轮翻倍（调度期抽象）。</li>
+  <li><strong>Flat 环式</strong>：<code>cols−1</code> 轮行环 + <code>rows−1</code> 轮列环，每轮每 PE 向邻居<strong>复制</strong>一块（不掏空源）。</li>
+</ul>
+
+<h3>5.5 Allreduce — 全局归约再扩散</h3>
+<ul>
+  <li><strong>Dim-wise exchange</strong>：与 butterfly allreduce 拓扑相同，双向 partial 相加，无单独 broadcast 阶段。</li>
+  <li><strong>拼接</strong>：<code>scheduleFlatBfReduce</code> + <code>scheduleFlatBfBroadcast</code>，时间轴串接。</li>
+</ul>
+
+<h3>5.6 Butterfly 拓扑流集合（Router 输入）</h3>
+<p><code>butterflyFlows</code> 按算子生成全部 stride leg：</p>
+<ul>
+  <li><code>butterflyBcastFlows</code> — 全行 X + 全列 Y 向前</li>
+  <li><code>butterflyGatherReduceFlows</code> — Y 反向再 X 反向</li>
+  <li><code>butterflyExchangeFlows</code> — 双向 exchange</li>
+</ul>
+<p>每条 flow 标记 <code>axis</code>、<code>stride</code>，供 router 就绪判断与着色使用。</p>
+
+<h2 id="router-hw">6. Router 硬件设计方案</h2>
+
+<p>
+  软件中的 <code>scheduleButterflyRouter</code> 对应一种可在每个 PE 上实例化的
+  <strong>分布式 Mesh Router</strong>：不依赖全局 stage 屏障，在单 cycle 内完成
+  “就绪检测 → 仲裁 → 单跳发射”。
+</p>
+
+<h3>6.1 模块划分（每 PE 一份）</h3>
+
+<div class="grid2">
+  <div class="card">
+    <strong>Ingress / 聚合缓冲</strong>
+    <ul>
+      <li>每 flit 槽位记录到达时间 <code>avail[flit]</code></li>
+      <li>Broadcast：仅 root 注入 <code>avail[i]=i</code></li>
+      <li>Reduce/Gather：本地 partial 在 cycle 0 可注入</li>
+    </ul>
+  </div>
+  <div class="card">
+    <strong>就绪逻辑 <code>canDepart</code></strong>
+    <ul>
+      <li>查所有以本 PE 为终点的上游聚合 flow（reduce/gather <strong>含跨轴</strong>）</li>
+      <li>要求对应 flit 已完成且到达时间 ≤ 当前 cycle</li>
+      <li>若无上游，则查本地 <code>avail[flit]</code></li>
+    </ul>
+  </div>
+  <div class="card">
+    <strong>Flow 状态 RAM</strong>
+    <ul>
+      <li>每 (flow_id, flit)：<code>hop_index</code>、各跳 <code>depart_cycle[]</code></li>
+      <li>与软件 <code>progress</code> Map 同构</li>
+    </ul>
+  </div>
+  <div class="card">
+    <strong>发射仲裁</strong>
+    <ul>
+      <li>同 PE、同 cycle：按 <code>colorId</code> 分队列</li>
+      <li>同 color 内按 stride 序（reduce/gather 大 stride 优先）</li>
+      <li>每条物理出边每 cycle 最多 1 个 flit（<code>edgeBusy</code>）</li>
+    </ul>
+  </div>
+</div>
+
+<h3>6.2 边着色（概要）</h3>
+<p>
+  Color 由 <code>assignButterflyColors</code> 对 butterfly flow 集合做<strong>边冲突图着色</strong>得到；
+  用于 Router 同 PE 多 flow 就绪时的仲裁顺序，并与「每 color 边不相交」的静态路由子图对应。
+  完整定义、各算子分色规律与硬件映射见 <a href="#color-routing">第 7 节</a>。
+</p>
+
+<h3>6.3 单 cycle 工作流程</h3>
+
+<div class="figure">
+<pre class="mermaid">
+sequenceDiagram
+  participant PE as PE Router
+  participant Xbar as Local Crossbar
+  participant E as Physical Edge
+  loop each cycle
+    PE->>PE: 扫描本 PE 上就绪 (flow,flit,hop)
+    PE->>PE: 按 color / stride / id 排序
+    PE->>Xbar: 对每条出边至多授予 1 个 flit
+    Xbar->>E: 发射 1 hop
+    PE->>PE: 更新 hop_index / avail / 下游到达时间
+  end
+</pre>
+<p class="figure-caption">Router 为周期精确模拟；综合工具可据此标注 hopCycles 与 makespan。</p>
+</div>
+
+<h3>6.4 与 Basic / 集中调度的差异</h3>
+<table>
+  <thead><tr><th>项目</th><th>Basic</th><th>Pipelined Router</th></tr></thead>
+  <tbody>
+    <tr><td>阶段屏障</td><td>每 stride stage 全局同步</td><td>无；仅本地就绪</td></tr>
+    <tr><td>时间标注</td><td>stage 串接 + 固定 period</td><td>逐 hop 模拟 depart cycle</td></tr>
+    <tr><td>跨轴依赖</td><td>隐含在 stage 顺序</td><td>显式 <code>incomingAggregateFlows</code>（reduce/gather 全轴）</td></tr>
+    <tr><td>适用</td><td>功能参考 / 教学</td><td>追求低 makespan 的在线调度原型</td></tr>
+  </tbody>
+</table>
+
+<div class="card warn">
+  <strong>实现注意</strong>
+  <ul>
+    <li>Reduce 若在 router 中<strong>仅等待同轴上游</strong>，会错误并行 X/Y，使 makespan 低于 Manhattan 下界（如 4 cycle）；已改为 reduce/gather 等待<strong>任意轴</strong>指向本节点的上游聚合完成。</li>
+    <li>修依赖后 4×4 router reduce makespan 升至 8 cycle，<code>pickMin</code> 改选 6 cycle 的 flat 链式。</li>
+    <li>Broadcast 禁止非 root 行在列扩散前参与行向发送；与 tree 一致。</li>
+  </ul>
+</div>
+
+<h3>6.5 建议 RTL / 微架构参数</h3>
+<ul>
+  <li><strong>颜色队列深度</strong>：≥ 图着色数（4×4 reduce 约 4～8 色，随 mesh 增大）。</li>
+  <li><strong>Flow 上下文</strong>：存 <code>flow_id, flit_id, hop, axis, stride, out_dir</code>。</li>
+  <li><strong>就绪比较器</strong>：对每个 active flow 查询上游 flow 完成位（可用 per-flow 完成向量或链路 credit）。</li>
+  <li><strong>输出</strong>：每物理出端口 <code>valid/ready</code> 与 flit 数据；与 Mesh NIU 对接。</li>
+</ul>
+
+<h2 id="color-routing">7. Color 机制与各 color 静态路由</h2>
+
+<p>
+  在仿真器里，<strong>color</strong>（<code>colorId</code>）不是「目的地址查表」意义上的单条静态路径，
+  而是对 butterfly <strong>flow 集合</strong> 做<strong>物理边资源划分</strong>后得到的
+  <strong>虚拟通道（VC）类号</strong>：同一 color 内的任意两条 flow 在 Mesh 上<strong>不共用同一条有向物理边</strong>（边 ID 为 <code>x,y-&gt;x',y'</code>）。
+  Router 运行时再用 color 作为<strong>仲裁优先级</strong>（color 编号小者优先），并与全局 <code>edgeBusy</code>（每 cycle 每边至多 1 flit）配合。
+</p>
+
+<h3>7.1 何时着色、着色对象</h3>
+<table>
+  <thead><tr><th>场景</th><th>调用位置</th><th>flow 来源</th></tr></thead>
+  <tbody>
+    <tr><td><strong>Butterfly Router</strong></td><td><code>scheduleButterflyRouter</code></td><td><code>butterflyFlows</code> 生成的全部 stride leg（broadcast / reduce / allreduce 等）</td></tr>
+    <tr><td><strong>Flat gather 链</strong></td><td><code>scheduleFlatBfGather</code> 末尾</td><td>列链 + 行链（stride 恒为 1）；4×4 上通常仅使用 color 0</td></tr>
+    <tr><td><strong>Flat 链式 broadcast/reduce</strong></td><td>不着色</td><td>用固定 <code>start</code> stagger 或 <code>finishBroadcastSchedule</code>，无 <code>colorId</code></td></tr>
+  </tbody>
+</table>
+
+<h3>7.2 分配算法 <code>assignButterflyColors</code></h3>
+<ol>
+  <li>对每条 flow <code>f</code>，展开其 XY 路径 <code>f.path</code> 上的所有物理边。</li>
+  <li>若两条 flow 共享任一边，则在冲突图中连边。</li>
+  <li>按 flow 下标顺序（<code>BF0, BF1, …</code>）做<strong>贪心着色</strong>：取不与已着色邻居冲突的最小非负整数作为 <code>colorId</code>。</li>
+  <li>返回 <code>colorCount = max(colorId) + 1</code>（至少为 1；若全部落在 0 上仍可能报告 2，见 7.5 注）。</li>
+</ol>
+
+<div class="card good">
+  <strong>静态不变式（per color）</strong>
+  <p style="margin:8px 0 0">
+    对固定 <code>colorId = c</code>，集合 <code>{ f | f.colorId = c }</code> 中任意两条 flow 的边集交集为空。
+    因此可在硬件上把该 color 视为一张<strong>边不相交的子图</strong>：其中所有 leg 在「拓扑占用」意义上可并行，不会争抢同一条有向链路标识。
+  </p>
+</div>
+
+<h3>7.3 运行时：color 在 Router 里做什么</h3>
+<p>在 <code>scheduleButterflyRouter</code> 的每个 cycle、每个 PE <code>(x,y)</code>：</p>
+<ol>
+  <li>收集所有就绪的 <code>(flow, flit, hop)</code>，按 <code>colorId</code> 分桶。</li>
+  <li>按 <code>colorId</code> 升序遍历桶；桶内再按 <code>departSortKey</code> 排序（reduce/gather：<strong>大 stride 优先</strong>）。</li>
+  <li>对候选 hop 检查 <code>edgeBusy</code>：该 cycle 该物理边若已被占用则跳过（<strong>与 color 无关</strong>，全色共享边互斥）。</li>
+</ol>
+<p>
+  因此：<strong>color 解决的是「同 PE 多 flow 同时就绪」时的先后次序</strong>；<strong>edgeBusy 解决的是「同 cycle 同边」的互斥</strong>。
+  二者叠加后得到周期精确的 <code>hopCycles</code> 与 makespan。
+</p>
+
+<div class="figure">
+<pre class="mermaid">
+flowchart TB
+  subgraph static["静态（配置期）"]
+    F["butterflyFlows 列表"] --> CG["冲突图：共享物理边则相邻"]
+    CG --> GC["贪心 colorId"]
+    GC --> SUB["每 color = 边不相交子图"]
+  end
+  subgraph runtime["运行时（每 cycle）"]
+    R["就绪 (flow,flit,hop)"] --> Q["按 colorId 分队列"]
+    Q --> P["桶内 stride / id 排序"]
+    P --> E["edgeBusy 授予出边"]
+  end
+  SUB -.->|"flow 携带 colorId"| Q
+</pre>
+<p class="figure-caption">Color 是静态边划分 + 动态优先级；不是 per-destination 路由表项。</p>
+</div>
+
+<h3>7.4 各 color 对应的「静态路由方案」</h3>
+<p>
+  每条 butterfly flow 的<strong>几何路由</strong>在创建时已固定：<code>from → to</code>，Mesh 上走 XY 最短路径（每 stride leg 为 1 跳或 2 跳）。
+  <code>colorId</code> 是在<strong>多条 flow 并行</strong>时，把「可能争用同一边」的 flow 分到不同 VC 的编号。
+  下表描述 4×4、<code>base=1</code> 时<strong>典型分色规律</strong>（由当前 <code>BF*</code> 顺序与贪心着色导出；mesh 变大时 stride 越大往往需更多 color）。
+</p>
+
+<h4>Broadcast（<code>butterflyBcastFlows</code>，4×4 共 2 色）</h4>
+<table>
+  <thead><tr><th>colorId</th><th>包含的 stride / 轴</th><th>静态路由含义</th><th>示例 leg（每行 y 类似）</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><strong>0</strong></td>
+      <td>stride=1，X 与 Y</td>
+      <td><strong>相邻单跳</strong>扩散网：root 行/列上 <code>(x,y)→(x+1,y)</code> 或 <code>(x,y)→(x,y+1)</code></td>
+      <td><code>(0,0)→(1,0)</code>，<code>(0,0)→(0,1)</code>，…</td>
+    </tr>
+    <tr>
+      <td><strong>1</strong></td>
+      <td>stride=2，X 与 Y</td>
+      <td><strong>跨两格单 leg</strong>（flattened butterfly 长边）：<code>(x,y)→(x+2,y)</code> 或 <code>(x,y)→(x,y+2)</code></td>
+      <td><code>(0,0)→(2,0)</code>，<code>(0,0)→(0,2)</code>，…</td>
+    </tr>
+  </tbody>
+</table>
+<p class="small">stride=2 的 8 条 X leg 与 8 条 Y leg 因共享中间边，在 4×4 上被拆成 color 0 与 1 各一半（由贪心顺序决定具体 BF 编号归属）。</p>
+
+<h4>Reduce（<code>butterflyGatherReduceFlows</code>，4×4 共 2 色）</h4>
+<table>
+  <thead><tr><th>colorId</th><th>包含的 stride / 轴</th><th>静态路由含义</th><th>示例 leg</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><strong>0</strong></td>
+      <td>stride=2，Y 与 X</td>
+      <td><strong>粗粒度聚合</strong>：先「两格一跳」向 row 0 / col 0 收拢（如 <code>(x,2)→(x,0)</code>，<code>(2,0)→(0,0)</code>）</td>
+      <td>BF0–BF3（列底→行 0），BF12–BF15（行右半→左）</td>
+    </tr>
+    <tr>
+      <td><strong>1</strong></td>
+      <td>stride=1；以及部分 stride=2</td>
+      <td><strong>细粒度 / 高行</strong>：最后一行向上 <code>(x,3)→(x,1)</code> 等，与 color 0 边集不交的 stride-1 补全</td>
+      <td>BF4–BF7，BF8–BF11，BF16–BF23</td>
+    </tr>
+  </tbody>
+</table>
+<p>Reduce 的<strong>逻辑阶段</strong>仍是 Y 再大 stride → X 再大 stride；color 只保证边不冲突，不改变 stride 语义。Router 上须配合 <strong>跨轴上游就绪</strong>（见 6.4），否则会出现 makespan 低于曼哈顿距离的错误并行。</p>
+
+<h4>Allreduce（<code>butterflyExchangeFlows</code>，4×4 共 3 色）</h4>
+<table>
+  <thead><tr><th>colorId</th><th>stride</th><th>静态路由含义</th><th>划分规则（4×4）</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><strong>0</strong></td>
+      <td>1</td>
+      <td>所有<strong>相邻 PE 对</strong>双向 exchange（X/Y 各 16 条 flow）</td>
+      <td>整网 stride-1 配对</td>
+    </tr>
+    <tr>
+      <td><strong>1</strong></td>
+      <td>2</td>
+      <td>stride-2 交换中 <strong>x 为偶数起点</strong> 的 leg：<code>0↔2</code>（每行）</td>
+      <td><code>0,0↔2,0</code>，<code>2,0↔0,0</code>，…</td>
+    </tr>
+    <tr>
+      <td><strong>2</strong></td>
+      <td>2</td>
+      <td>stride-2 交换中 <strong>x 为奇数起点</strong> 的 leg：<code>1↔3</code></td>
+      <td><code>1,0↔3,0</code>，<code>3,0↔1,0</code>，…</td>
+    </tr>
+  </tbody>
+</table>
+<p>Y 向 stride-2 同样按「偶/奇 tile」落入 color 1 与 2。可视为<strong>两张并行的 stride-2 交换平面</strong> + 一张 stride-1 平面。</p>
+
+<h4>Gather 链（4×4，<code>colorCount=2</code> 但仅用 color 0）</h4>
+<p>
+  15 条链式 flow 路径边互不相同，贪心着色全部落在 <strong>color 0</strong>；无第二条边不相交子图。
+  静态上即「单 VC 上的列向 + 行向聚合树」，与 tree gather 拓扑一致，仅通过 <code>resolveEdgeConflicts</code> 错开 <code>start</code>。
+</p>
+
+<h3>7.5 Mesh 放大时的 color 数</h3>
+<table>
+  <thead><tr><th>Mesh</th><th>算子</th><th>colorCount</th><th>趋势</th></tr></thead>
+  <tbody>
+    <tr><td>4×4</td><td>broadcast / reduce</td><td>2</td><td>stride-1 一色；stride-2 常拆两色</td></tr>
+    <tr><td>4×4</td><td>allreduce</td><td>3</td><td>stride-1 一色 + stride-2 两色（偶/奇 tile）</td></tr>
+    <tr><td>8×8</td><td>reduce (router)</td><td>4</td><td>stride-4 与 stride-2/1 组合，贪心产生 4 个边不相交类</td></tr>
+    <tr><td>8×8</td><td>broadcast</td><td>≥4</td><td>stride 1/2/4 各自可能多色（同 stride 内并行 leg 增多）</td></tr>
+  </tbody>
+</table>
+<p class="small">
+  <strong>注：</strong><code>colorCount</code> 定义为 <code>max(colorId)+1</code>，与「实际非空 color 桶数」可能不一致（例如 gather 仅 color 0 仍可能显示 2）。
+  可视化里「Colors」指标即此值。
+</p>
+
+<h3>7.6 硬件：把 color 实现成静态 VC 路由</h3>
+<ul>
+  <li><strong>配置期</strong>：集合通信下发时，为每条 leg 写入 <code>(from, to, stride, axis, colorId)</code>；等价于把该 flow 绑定到某条<strong>边不相交子图 / VC</strong>。</li>
+  <li><strong>数据面</strong>：flit 带 <code>colorId</code>（或 VC index）；XY 路由仍由 <code>from,to</code> 决定，<strong>不</strong>是「color → 下一跳端口」查表。</li>
+  <li><strong>仲裁</strong>：每 PE 每 cycle，按 VC 编号从小到大服务就绪队列；同 VC 内大 stride 优先（与 <code>departSortKey</code> 一致）。</li>
+  <li><strong>边仲裁</strong>：出边级 <code>edgeBusy</code> 与 VC 正交——即使不同 color，同一 cycle 仍不能占用同一边（与仿真一致）。</li>
+  <li><strong>着色资源</strong>：综合工具可据 <code>assignButterflyColors</code> 预计算 <code>colorCount</code>，作为 VC 深度下界；mesh 越大、stride 越多，VC 数上界越高。</li>
+</ul>
+
+<div class="card">
+  <strong>与「静态路由表」的对比</strong>
+  <dl style="margin:8px 0 0">
+    <dt>传统 NoC 路由表</dt>
+    <dd><code>VC × dest → next_hop</code>，每跳查表。</dd>
+    <dt>Flat-bf color</dt>
+    <dd><code>VC × flow_id → 整条 leg 的 (from,to) 与 hop 序列</code>；每跳方向由当前坐标与目标 XY 决定，VC 只解决<strong>多 flow 边资源划分与仲裁次序</strong>。</dd>
+  </dl>
+</div>
+
+<h2 id="basic-vs-pipe">8. 与 Basic 模式对比</h2>
+<p><code>scheduleButterflyBasic</code> 使用 <code>finishFlattenedStages</code>：按 stride 分 stage，stage 内并行，stage 间串行。
+Pipelined 在 stage 内也可流水，且 router 路径可跨 stage 重叠发射（在依赖满足时）。</p>
+
+<h2 id="examples">9. 示例延迟（1 flit / block）</h2>
+<p>由 <code>buildSchedule(..., "butterfly-pipelined", 1)</code> 生成；可与可视化页面对照。</p>
+
+<table>
+  <thead><tr><th>Mesh</th><th>Broadcast</th><th>Reduce</th><th>Gather</th><th>Allreduce</th><th>Allgather</th></tr></thead>
+  <tbody>
+    <tr><td>4×4</td><td>6</td><td>6</td><td>12</td><td>6</td><td>17</td></tr>
+    <tr><td>8×8</td><td>14</td><td>14</td><td>56</td><td>14</td><td>69</td></tr>
+  </tbody>
+</table>
+
+<p class="small" style="color:var(--muted)">
+  渐近直觉：链式 broadcast/reduce 在方阵上约为 <code>2×(cols+rows)−2</code>；
+  gather 含块数合并，延迟高于 reduce；
+  allgather 为 <code>(cols−1)×base + (rows−1)×base×cols</code> 量级的环式轮次叠加。
+</p>
+
+<h3>9.1 Reduce 关键路径（4×4，flat 链式）</h3>
+<pre><code>(3,3)→(3,2)→(3,1)→(3,0)→(2,0)→(1,0)→(0,0)   // 6 hops, 6 cycles @ 1 flit</code></pre>
+
+<hr style="margin:40px 0;border:none;border-top:1px solid var(--border)">
+<p class="small" style="color:var(--muted)">
+  文档版本与仿真器同步。修改调度逻辑时请同时更新本文档与
+  <a href="collective-mesh-viz.html">collective-mesh-viz.html</a> 顶部说明。
+</p>
+
+</body>
+</html>
