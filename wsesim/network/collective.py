@@ -229,20 +229,23 @@ def _nd_dimension_exchange_allreduce(
 ) -> list[dict]:
     if len(nodes) <= 1:
         return []
-    k, n = _resolve_kn(topology_hint, len(nodes))
-    groups_by_dim = _groups_by_dimension(nodes, k, n)
+    groups_by_dim = _resolve_groups_by_dimension(nodes, topology_hint)
+    n = len(groups_by_dim)
     traffic: list[dict] = []
     chunk = max(1, ceil(payload_bytes / max(1, len(nodes))))
 
     for expert_id in range(num_experts):
-        offset = expert_id * max(1, n * k)
+        offset = expert_id * max(1, n * max(len(g) for gs in groups_by_dim.values() for g in gs))
         for dim in range(n):
             groups = groups_by_dim[dim]
+            k = len(groups[0]) if groups else 2
             if _is_power_of_two(k):
                 stages = int(log2(k))
                 for stage in range(stages):
                     stride = 1 << stage
                     for group in groups:
+                        if len(group) != k:
+                            continue
                         for idx in range(k):
                             src = group[idx]
                             dst = group[idx ^ stride]
@@ -251,6 +254,8 @@ def _nd_dimension_exchange_allreduce(
                 for stage in range(stages):
                     stride = 1 << (stages - stage - 1)
                     for group in groups:
+                        if len(group) != k:
+                            continue
                         for idx in range(k):
                             src = group[idx]
                             dst = group[idx ^ stride]
@@ -261,6 +266,8 @@ def _nd_dimension_exchange_allreduce(
                 for step in range(total_steps):
                     phase = "allreduce_rs" if step < k - 1 else "allreduce_ag"
                     for group in groups:
+                        if len(group) != k:
+                            continue
                         for idx in range(k):
                             src = group[idx]
                             dst = group[(idx + 1) % k]
@@ -274,12 +281,12 @@ def _nd_dimension_exchange_allgather(
 ) -> list[dict]:
     if len(nodes) <= 1:
         return []
-    k, n = _resolve_kn(topology_hint, len(nodes))
-    groups_by_dim = _groups_by_dimension(nodes, k, n)
+    groups_by_dim = _resolve_groups_by_dimension(nodes, topology_hint)
+    n = len(groups_by_dim)
     chunk = max(1, ceil(payload_bytes / max(1, len(nodes))))
     traffic: list[dict] = []
     for expert_id in range(num_experts):
-        offset = expert_id * max(1, n * k)
+        offset = expert_id * max(1, n)
         for dim in range(n):
             for group in groups_by_dim[dim]:
                 for src in group:
@@ -375,16 +382,70 @@ def _resolve_kn(topology_hint: dict, node_count: int) -> tuple[int, int]:
     return k, n
 
 
-def _groups_by_dimension(nodes: list[int], k: int, n: int) -> dict[int, list[list[int]]]:
-    index_of = {node: idx for idx, node in enumerate(nodes)}
+def _resolve_groups_by_dimension(
+    nodes: list[int], topology_hint: dict
+) -> dict[int, list[list[int]]]:
+    k_dims = topology_hint.get("k_dims")
+    if k_dims:
+        return _groups_by_mixed_radix(nodes, [int(k) for k in k_dims], topology_hint)
+    if topology_hint.get("hypercube_coords"):
+        k = int(topology_hint.get("k", 2))
+        n = int(topology_hint.get("n", 0))
+        if k <= 1 or n <= 0:
+            raise ValueError("hypercube_coords requires k > 1 and n > 0 in topology_hint")
+        coords_of = {
+            int(node): tuple(int(v) for v in vals)
+            for node, vals in topology_hint["hypercube_coords"].items()
+        }
+        return _groups_by_dimension(nodes, k, n, coords_of=coords_of)
+    k, n = _resolve_kn(topology_hint, len(nodes))
+    return _groups_by_dimension(nodes, k, n)
+
+
+def _groups_by_mixed_radix(
+    nodes: list[int], k_dims: list[int], topology_hint: dict
+) -> dict[int, list[list[int]]]:
+    cols = int(topology_hint.get("cols", 0))
+    if cols <= 0:
+        raise ValueError("mixed-radix topology_hint requires cols")
     coords_of: dict[int, tuple[int, ...]] = {}
-    for idx, node in enumerate(nodes):
-        value = idx
-        coords = []
-        for _ in range(n):
-            coords.append(value % k)
-            value //= k
-        coords_of[node] = tuple(coords)
+    for node in nodes:
+        r, c = divmod(node, cols)
+        coords_of[node] = (c, r)
+    groups_by_dim: dict[int, dict[tuple[int, ...], list[int]]] = {
+        dim: {} for dim in range(len(k_dims))
+    }
+    for node in nodes:
+        coords = coords_of[node]
+        for dim in range(len(k_dims)):
+            key = tuple(coords[axis] for axis in range(len(k_dims)) if axis != dim)
+            groups_by_dim[dim].setdefault(key, []).append(node)
+    result: dict[int, list[list[int]]] = {}
+    for dim, k in enumerate(k_dims):
+        groups: list[list[int]] = []
+        for key in sorted(groups_by_dim[dim].keys()):
+            group = sorted(
+                groups_by_dim[dim][key],
+                key=lambda n0: coords_of[n0][dim],
+            )
+            groups.append(group)
+        result[dim] = groups
+    return result
+
+
+def _groups_by_dimension(
+    nodes: list[int], k: int, n: int, coords_of: dict[int, tuple[int, ...]] | None = None
+) -> dict[int, list[list[int]]]:
+    index_of = {node: idx for idx, node in enumerate(nodes)}
+    if coords_of is None:
+        coords_of = {}
+        for idx, node in enumerate(nodes):
+            value = idx
+            coords = []
+            for _ in range(n):
+                coords.append(value % k)
+                value //= k
+            coords_of[node] = tuple(coords)
 
     groups_by_dim: dict[int, dict[tuple[int, ...], list[int]]] = {dim: {} for dim in range(n)}
     for node in nodes:

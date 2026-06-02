@@ -3,9 +3,19 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import Protocol
 
 from wsesim.network.routing.base import RoutingAlgorithm
-from wsesim.network.topology.tdm_flat_butterfly import TDMFlatButterfly
+
+
+class TDMOverlayTopology(Protocol):
+    n: int
+
+    def to_coords(self, node_id: int) -> tuple[int, ...]: ...
+    def to_node(self, coords: tuple[int, ...]) -> int: ...
+    def coloring(self): ...
+    def physical_path(self, src: int, dst: int) -> list[tuple[int, int]]: ...
+    def has_logical_link(self, src: int, dst: int) -> bool: ...
 
 
 @dataclass(slots=True)
@@ -18,7 +28,7 @@ class _SegmentState:
 
 @dataclass(slots=True)
 class TDMFlatButterflyRouting(RoutingAlgorithm):
-    topology: TDMFlatButterfly
+    topology: TDMOverlayTopology
     _packet_state: dict[int, _SegmentState] = field(default_factory=dict)
 
     def next_hop(self, current: int, dst: int, graph: dict[int, list[int]]) -> int:
@@ -71,7 +81,7 @@ class TDMFlatButterflyRouting(RoutingAlgorithm):
                 return endpoint
             state = _SegmentState(
                 endpoint=endpoint,
-                color=-1 if color is None else color,
+                color=color,
                 logical_link=logical_link,
                 remaining_hops=[hop_dst for _, hop_dst in path],
             )
@@ -87,6 +97,10 @@ class TDMFlatButterflyRouting(RoutingAlgorithm):
         dst_coords = self.topology.to_coords(dst)
         for dim in range(self.topology.n):
             if src_coords[dim] != dst_coords[dim]:
+                nxt_coords = list(src_coords)
+                nxt_coords[dim] = dst_coords[dim]
+                endpoint = self.topology.to_node(tuple(nxt_coords))
+                if self.topology.has_logical_link(current, endpoint):
+                    return endpoint
                 src_coords[dim] = dst_coords[dim]
-                return self.topology.to_node(tuple(src_coords))
         return dst
