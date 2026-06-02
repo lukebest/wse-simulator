@@ -56,10 +56,10 @@ svg text{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
 <h1>2D Mesh 集合通信逐周期可视化</h1>
 <div class="intro">
   功能：配置 2D Mesh 形状、集合通信算子和算法实现，查看逐 cycle 的 flit 传输过程、物理 edge 泳道图、逻辑 flow 流水线，并对比
-  <code>logical butterfly / dim-wise</code> 传输模式与直接在 mesh 上优化的 tree、ring 集合通信算子延迟。
+  <code>flattened butterfly (n=2) / dim-wise</code> 与 tree、ring 集合通信算子延迟对比。
   调度模型按 flit 建立依赖：沿路径传播时，某个 flit 到达下一节点后的下一 cycle 即可继续转发，不等待同一 block 的全部 flit。
-  <strong>Logical butterfly (pipelined)</strong>：无 X/Y stage 屏障、stride 可重叠；争用物理边的并行流分配不同 color；
-  router 每拍只调度<strong>该节点上已有数据且未阻塞</strong>的 color，不为无数据的预设 color 空转。
+  <strong>Flat butterfly n=2 (pipelined)</strong>：二维 radix-k flattened butterfly（直连单跳 leg、全行/全列参与）；
+  在多种 flat-bf 流水实现间取最小 makespan；router 无 stride/轴屏障。
 </div>
 
 <div class="controls">
@@ -76,8 +76,8 @@ svg text{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
   </label>
   <label>Algorithm
     <select id="alg">
-      <option value="butterfly-basic">Logical butterfly (basic)</option>
-      <option value="butterfly-pipelined">Logical butterfly (pipelined)</option>
+      <option value="butterfly-basic">Flat butterfly n=2 (basic)</option>
+      <option value="butterfly-pipelined">Flat butterfly n=2 (pipelined)</option>
       <option value="tree-pipelined">2D tree (pipelined)</option>
       <option value="ring-xy">XY ring (pipelined)</option>
       <option value="ring-snake">Snake ring (baseline)</option>
@@ -123,15 +123,15 @@ svg text{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
 <script>
 const COLORS=["#2E79B5","#1F8A65","#7B64B8","#F0A040","#C85898","#8A6F2A","#2A9A8A","#C04848"];
 const ALG_NAMES={
-  "butterfly-basic":"Logical butterfly (basic)",
-  "butterfly-pipelined":"Logical butterfly (pipelined)",
+  "butterfly-basic":"Flat butterfly n=2 (basic)",
+  "butterfly-pipelined":"Flat butterfly n=2 (pipelined)",
   "tree-pipelined":"2D tree (pipelined)",
   "ring-xy":"XY ring (pipelined)",
   "ring-snake":"Snake ring (baseline)",
 };
 const ALG_NOTES={
-  "butterfly-basic":"Basic butterfly 保留阶段屏障；payload 会增长的 all-gather 使用大 stride 优先，避免大 payload 走长距离。",
-  "butterfly-pipelined":"无 stage 屏障；stride>1 从上一档 stride 已送达的中点起跳，避免与 stride=1 重复占边；router 仅调度有数据的 color。",
+  "butterfly-basic":"n=2 flattened butterfly（直连 leg、全行/全列），保留 X/Y stage 屏障。",
+  "butterfly-pipelined":"n=2 flattened butterfly（直连 leg、全行/全列）；在多种 flat-bf 流水实现中取最小 makespan（链式/维交换/router）。",
   "tree-pipelined":"2D tree 使用行/列链式树，按 flit 在相邻 mesh edge 上流水转发。",
   "ring-xy":"XY ring 先做行内并行 ring/chain 阶段，再做列内并行阶段；gather/reduce 反向聚合，all-reduce 近似为 reduce+broadcast。",
   "ring-snake":"Snake ring 是 legacy baseline：把 2D mesh 拉平成一条 snake 逻辑环/链。",
@@ -234,42 +234,178 @@ function rootInjectAvail(rows,cols,flits){
   for(let i=0;i<flits;i++) a[i]=i;
   return m;
 }
-function butterflyBcastEndpoints(axis,rows,cols,x,y,stride){
-  if(stride<=1){
-    if(axis==="x") return {from:node(x,0),to:node(x+stride,0),viaMid:false};
-    return {from:node(x,y),to:node(x,y+stride),viaMid:false};
-  }
-  const half=stride/2;
-  if(axis==="x"){
-    return {from:node(x+half,0),to:node(x+stride,0),viaMid:true};
-  }
-  return {from:node(x,y+half),to:node(x,y+stride),viaMid:true};
+function flatBfForwardEndpoints(axis,x,y,stride){
+  if(axis==="x") return {from:node(x,y),to:node(x+stride,y),viaMid:false};
+  return {from:node(x,y),to:node(x,y+stride),viaMid:false};
+}
+function flatBfReverseEndpoints(axis,x,y,stride){
+  if(axis==="x") return {from:node(x+stride,y),to:node(x,y),viaMid:false};
+  return {from:node(x,y+stride),to:node(x,y),viaMid:false};
+}
+function flatBfExchangeLeg(axis,xd,yd,stride,dir){
+  if(dir==="ab") return flatBfForwardEndpoints(axis,xd,yd,stride);
+  return flatBfReverseEndpoints(axis,xd,yd,stride);
+}
+const butterflyForwardEndpoints=flatBfForwardEndpoints;
+const butterflyReverseEndpoints=flatBfReverseEndpoints;
+const butterflyExchangeLeg=flatBfExchangeLeg;
+function stageTag(viaMid,from){return viaMid?` (midpoint ${from.x},${from.y})`:"";}
+function gatherMul(axis,rows,cols,stride){
+  return axis==="y"?rows/(2*stride):rows*cols/(2*stride);
 }
 function butterflyBcastFlows(rows,cols,base){
   const flows=[]; let idx=0;
   pow2Strides(cols).forEach(s=>{
-    for(let x=0;x<s;x++) if(x+s<cols){
-      const {from,to,viaMid}=butterflyBcastEndpoints("x",rows,cols,x,0,s);
-      const tag=viaMid?` (midpoint ${from.x},${from.y})`:"";
-      const f=flow(`BF${idx++}`,from,to,base,"root block",idx,`X broadcast stride=${s}${tag}`,idx);
+    for(let y=0;y<rows;y++) for(let x=0;x<s;x++) if(x+s<cols){
+      const {from,to,viaMid}=flatBfForwardEndpoints("x",x,y,s);
+      const f=flow(`BF${idx++}`,from,to,base,"root block",idx,`X broadcast stride=${s}${stageTag(viaMid,from)}`,idx);
       f.axis="x"; f.stride=s; flows.push(f);
     }
   });
   pow2Strides(rows).forEach(s=>{
     for(let y=0;y<s;y++) for(let x=0;x<cols;x++) if(y+s<rows){
-      const {from,to,viaMid}=butterflyBcastEndpoints("y",rows,cols,x,y,s);
-      const tag=viaMid?` (midpoint ${from.x},${from.y})`:"";
-      const f=flow(`BF${idx++}`,from,to,base,"root block",idx,`Y broadcast stride=${s}${tag}`,idx);
+      const {from,to,viaMid}=flatBfForwardEndpoints("y",x,y,s);
+      const f=flow(`BF${idx++}`,from,to,base,"root block",idx,`Y broadcast stride=${s}${stageTag(viaMid,from)}`,idx);
       f.axis="y"; f.stride=s; flows.push(f);
     }
   });
   return flows;
 }
+function butterflyGatherReduceFlows(rows,cols,base,op){
+  const flows=[]; let idx=0;
+  [...pow2Strides(rows)].reverse().forEach(s=>{
+    const mul=gatherMul("y",rows,cols,s);
+    const flits=op==="gather"?base*mul:base;
+    const payload=op==="gather"?`${mul} block(s)`:"partial sum";
+    for(let y=0;y<s;y++) for(let x=0;x<cols;x++) if(y+s<rows){
+      const {from,to,viaMid}=flatBfReverseEndpoints("y",x,y,s);
+      const f=flow(`BF${idx++}`,from,to,flits,payload,idx,`Y ${op} stride=${s}${stageTag(viaMid,to)}`,idx);
+      f.axis="y"; f.stride=s; flows.push(f);
+    }
+  });
+  [...pow2Strides(cols)].reverse().forEach(s=>{
+    const mul=gatherMul("x",rows,cols,s);
+    const flits=op==="gather"?base*mul:base;
+    const payload=op==="gather"?`${mul} block(s)`:"partial sum";
+    for(let y=0;y<rows;y++) for(let x=0;x<s;x++) if(x+s<cols){
+      const {from,to,viaMid}=flatBfReverseEndpoints("x",x,y,s);
+      const f=flow(`BF${idx++}`,from,to,flits,payload,idx,`X ${op} stride=${s}${stageTag(viaMid,to)}`,idx);
+      f.axis="x"; f.stride=s; flows.push(f);
+    }
+  });
+  return flows;
+}
+function butterflyExchangeFlows(rows,cols,base,op){
+  const flows=[]; let idx=0;
+  const xStrides=op==="allgather"?[...pow2Strides(cols)].reverse():pow2Strides(cols);
+  const yStrides=op==="allgather"?[...pow2Strides(rows)].reverse():pow2Strides(rows);
+  let blocks=1;
+  xStrides.forEach(s=>{
+    const blockMul=op==="allgather"?blocks:1;
+    const flits=op==="allgather"?base*blockMul:base;
+    const payload=op==="allgather"?`${blockMul} block(s)`:"partial sum";
+    for(let y=0;y<rows;y++) for(let x=0;x<cols;x+=2*s) for(let d=0;d<s;d++){
+      if(x+d+s<cols){
+        const xd=x+d;
+        const ab=butterflyExchangeLeg("x",xd,y,s,"ab");
+        const ba=butterflyExchangeLeg("x",xd,y,s,"ba");
+        flows.push(flow(`BF${idx++}`,ab.from,ab.to,flits,payload,idx,`X ${op} stride=${s} ${xd}->${xd+s}${stageTag(ab.viaMid,ab.from)}`,idx));
+        flows.push(flow(`BF${idx++}`,ba.from,ba.to,flits,payload,idx,`X ${op} stride=${s} ${xd+s}->${xd}${stageTag(ba.viaMid,ba.to)}`,idx));
+      }
+    }
+    if(op==="allgather") blocks*=2;
+  });
+  blocks=op==="allgather"?cols:1;
+  yStrides.forEach(s=>{
+    const blockMul=op==="allgather"?blocks:1;
+    const flits=op==="allgather"?base*blockMul:base;
+    const payload=op==="allgather"?`${blockMul} block(s)`:"partial sum";
+    for(let x=0;x<cols;x++) for(let y=0;y<rows;y+=2*s) for(let d=0;d<s;d++){
+      if(y+d+s<rows){
+        const yd=y+d;
+        const ab=butterflyExchangeLeg("y",x,yd,s,"ab");
+        const ba=butterflyExchangeLeg("y",x,yd,s,"ba");
+        flows.push(flow(`BF${idx++}`,ab.from,ab.to,flits,payload,idx,`Y ${op} stride=${s} ${yd}->${yd+s}${stageTag(ab.viaMid,ab.from)}`,idx));
+        flows.push(flow(`BF${idx++}`,ba.from,ba.to,flits,payload,idx,`Y ${op} stride=${s} ${yd+s}->${yd}${stageTag(ba.viaMid,ba.to)}`,idx));
+      }
+    }
+    if(op==="allgather") blocks*=2;
+  });
+  return flows;
+}
+function butterflyFlows(rows,cols,base,op){
+  if(op==="broadcast") return butterflyBcastFlows(rows,cols,base);
+  if(op==="gather"||op==="reduce") return butterflyGatherReduceFlows(rows,cols,base,op);
+  if(op==="allgather"||op==="allreduce") return butterflyExchangeFlows(rows,cols,base,op);
+  return [];
+}
+function initLocalAvail(rows,cols,maxFlits){
+  const m=initNodeFlitAvail(rows,cols,maxFlits);
+  for(let y=0;y<rows;y++)for(let x=0;x<cols;x++){
+    const a=m.get(`${x},${y}`);
+    for(let i=0;i<maxFlits;i++) a[i]=0;
+  }
+  return m;
+}
+function butterflyAxisPhases(op){
+  if(op==="reduce"||op==="gather") return ["y","x"];
+  if(op==="allreduce"||op==="allgather") return ["x","y"];
+  return [];
+}
+function strideSortOrder(op){
+  return (op==="reduce"||op==="gather")?-1:1;
+}
+function isUpstreamAggregate(f,axis){
+  if(axis==="y") return f.from.y>f.to.y;
+  return f.from.x>f.to.x;
+}
+function flowFlitDone(progress,f,flit){
+  const st=progress.get(`${f.id}:${flit}`);
+  return st && st.hop>=f.path.length;
+}
+function flowFlitArrival(progress,f,flit){
+  const st=progress.get(`${f.id}:${flit}`);
+  if(!st||st.hop<f.path.length) return Infinity;
+  return st.departs[st.departs.length-1]+1;
+}
+function flowFlitDoneAll(progress,f){
+  for(let i=0;i<f.flits;i++) if(!flowFlitDone(progress,f,i)) return false;
+  return true;
+}
+function axisStrideLanes(flows,axis,op){
+  const strides=[...new Set(flows.filter(f=>f.axis===axis).map(f=>f.stride))];
+  strides.sort((a,b)=>strideSortOrder(op)*(a-b));
+  return strides;
+}
+function activeAggregateLane(){
+  return null;
+}
+function incomingAggregateFlows(flows,at,axis){
+  return flows.filter(f=>f.axis===axis&&f.to.x===at.x&&f.to.y===at.y&&isUpstreamAggregate(f,axis));
+}
+function canDepartAggregate(flow,flit,cycle,flows,progress,nodeAvail,op,lane,at){
+  if(lane &&(flow.axis!==lane.axis||flow.stride!==lane.stride)) return false;
+  const incoming=incomingAggregateFlows(flows,at,flow.axis);
+  for(const inf of incoming){
+    if(!flowFlitDone(progress,inf,flit)) return false;
+    if(flowFlitArrival(progress,inf,flit)>cycle) return false;
+  }
+  if(incoming.length===0){
+    if(getNodeFlitAvail(nodeAvail,at,flit)>cycle) return false;
+  }
+  return true;
+}
+function departSortKey(a,b,op){
+  const strideCmp=strideSortOrder(op)*(a.f.stride-b.f.stride);
+  if(strideCmp) return strideCmp;
+  return a.f.id.localeCompare(b.f.id);
+}
 function scheduleButterflyRouter(rows,cols,base,op){
-  const flows=op==="broadcast"?butterflyBcastFlows(rows,cols,base):[];
+  const flows=butterflyFlows(rows,cols,base,op);
   if(!flows.length) return finishSchedule([],"butterfly router");
   const colorCount=assignButterflyColors(flows);
-  const nodeAvail=rootInjectAvail(rows,cols,base);
+  const maxFlits=Math.max(base,...flows.map(f=>f.flits));
+  const nodeAvail=op==="broadcast"?rootInjectAvail(rows,cols,base):initLocalAvail(rows,cols,maxFlits);
   const progress=new Map();
   flows.forEach(f=>{
     for(let i=0;i<f.flits;i++) progress.set(`${f.id}:${i}`,{hop:0,departs:[]});
@@ -277,6 +413,7 @@ function scheduleButterflyRouter(rows,cols,base,op){
   let cycle=0, activeHops=flows.reduce((s,f)=>s+f.flits*f.path.length,0);
   const maxCycle=activeHops*4+base*2+rows*cols*8;
   while(activeHops>0 && cycle<maxCycle){
+    const lane=activeAggregateLane(flows,op,progress);
     const edgeBusy=new Set();
     const ready=new Map();
     flows.forEach(f=>{
@@ -284,7 +421,7 @@ function scheduleButterflyRouter(rows,cols,base,op){
         const st=progress.get(`${f.id}:${i}`);
         if(st.hop>=f.path.length) continue;
         const at=st.hop===0?f.from:f.path[st.hop-1].to;
-        if(getNodeFlitAvail(nodeAvail,at,i)>cycle) continue;
+        if(!canDepartAggregate(f,i,cycle,flows,progress,nodeAvail,op,lane,at)) continue;
         const nk=nkey(at), cid=f.colorId;
         if(!ready.has(nk)) ready.set(nk,new Map());
         if(!ready.get(nk).has(cid)) ready.get(nk).set(cid,[]);
@@ -296,8 +433,7 @@ function scheduleButterflyRouter(rows,cols,base,op){
       if(!byColor) continue;
       const colorIds=[...byColor.keys()].sort((a,b)=>a-b);
       for(const cid of colorIds){
-        const list=byColor.get(cid).slice().sort((a,b)=>
-          (a.f.axis||"").localeCompare(b.f.axis||"") || (a.f.stride||0)-(b.f.stride||0) || a.f.id.localeCompare(b.f.id));
+        const list=byColor.get(cid).slice().sort((a,b)=>departSortKey(a,b,op));
         for(const c of list){
           if(edgeBusy.has(c.edge.id)) continue;
           edgeBusy.add(c.edge.id);
@@ -332,7 +468,7 @@ function scheduleButterflyRouter(rows,cols,base,op){
     const stageFlows=flows.filter(f=>f.stage===label);
     return {label,flows:stageFlows,period:1,duration:durationFromFlows(stageFlows)};
   });
-  return {flows,period:1,duration,label:`butterfly router ${op}`,stages,colorCount,peak:peakEdgeOccupancy({flows,period:1,duration})};
+  return {flows,period:1,duration,label:`flat-bf n=2 router ${op}`,stages,colorCount,peak:peakEdgeOccupancy({flows,period:1,duration})};
 }
 function allEvents(schedule,cycle){
   return schedule.flows.flatMap(f=>eventsAt(f,cycle,schedule.period));
@@ -364,8 +500,8 @@ function pairExchange(rows,cols,axis,stride,flits,payload,prefix){
 function bcastStage(rows,cols,axis,stride,base,prefix){
   const fs=[]; let idx=0;
   if(axis==="x"){
-    for(let x=0;x<stride;x++){
-      if(x+stride<cols) fs.push(flow(`${prefix}B${idx++}`,node(x,0),node(x+stride,0),base,"root block",idx,""));
+    for(let y=0;y<rows;y++) for(let x=0;x<stride;x++){
+      if(x+stride<cols) fs.push(flow(`${prefix}B${idx++}`,node(x,y),node(x+stride,y),base,"root block",idx,""));
     }
   }else{
     for(let y=0;y<stride;y++) for(let x=0;x<cols;x++){
@@ -383,8 +519,8 @@ function reverseBcastStage(rows,cols,axis,stride,base,prefix,mul,kind){
       if(y+stride<rows) fs.push(flow(`${prefix}G${idx++}`,node(x,y+stride),node(x,y),flits,payload,idx,""));
     }
   }else{
-    for(let x=0;x<stride;x++){
-      if(x+stride<cols) fs.push(flow(`${prefix}G${idx++}`,node(x+stride,0),node(x,0),flits,payload,idx,""));
+    for(let y=0;y<rows;y++) for(let x=0;x<stride;x++){
+      if(x+stride<cols) fs.push(flow(`${prefix}G${idx++}`,node(x+stride,y),node(x,y),flits,payload,idx,""));
     }
   }
   return fs;
@@ -572,26 +708,99 @@ function dimwiseBroadcast(rows,cols,base){
   });
   return finishBroadcastSchedule(flows,"dim-wise broadcast, flit-pipelined");
 }
+function butterflyReverseDirect(axis,x,y,stride){
+  return flatBfReverseEndpoints(axis,x,y,stride);
+}
+function butterflyGatherReduceAdd(flows,state,op,base,axis,x,y,stride,readyAt){
+  const {from,to,viaMid}=butterflyReverseDirect(axis,x,y,stride);
+  const sendBlocks=getHeld(state.held,from);
+  const flits=op==="gather"?base*sendBlocks:base;
+  const payload=op==="gather"?`${sendBlocks} block(s)`:"partial sum";
+  const start=Math.max(getAvail(state.avail,from),readyAt);
+  const tag=stageTag(viaMid,to);
+  const stage=`${axis==="y"?"Y":"X"} ${op} stride=${stride}${tag}`;
+  const f=flow(`BF${state.idx++}`,from,to,flits,payload,state.idx,stage,state.idx);
+  f.axis=axis; f.stride=stride;
+  flows.push(setTiming(f,start,1,stage));
+  const firstArrive=start+f.path.length;
+  setAvail(state.avail,to,Math.max(getAvail(state.avail,to),firstArrive));
+  setHeld(state.held,to,getHeld(state.held,to)+sendBlocks);
+  return firstArrive;
+}
+function scheduleFlatBfBroadcast(rows,cols,base){
+  const flows=[]; let idx=0;
+  for(let x=0;x<cols-1;x++){
+    flows.push(setTiming(flow(`BF${idx++}`,node(x,0),node(x+1,0),base,"root block",idx,"flat-bf broadcast row"),x,1,"flat-bf broadcast row"));
+  }
+  for(let x=0;x<cols;x++) for(let y=0;y<rows-1;y++){
+    flows.push(setTiming(flow(`BF${idx++}`,node(x,y),node(x,y+1),base,"root block",idx,"flat-bf broadcast col"),x+y,1,"flat-bf broadcast col"));
+  }
+  return finishBroadcastSchedule(flows,"flat-bf n=2 broadcast, flit-pipelined");
+}
+function scheduleFlatBfReduce(rows,cols,base){
+  const flows=[]; let idx=0;
+  for(let x=0;x<cols;x++) for(let y=rows-1;y>=1;y--){
+    const start=rows-1-y;
+    flows.push(setTiming(flow(`BF${idx++}`,node(x,y),node(x,y-1),base,"partial sum",idx,"flat-bf reduce col"),start,1,"flat-bf reduce col"));
+  }
+  const rowStart=rows-1;
+  for(let x=cols-1;x>=1;x--){
+    const start=rowStart+cols-1-x;
+    flows.push(setTiming(flow(`BF${idx++}`,node(x,0),node(x-1,0),base,"partial sum",idx,"flat-bf reduce row"),start,1,"flat-bf reduce row"));
+  }
+  return finishSchedule(flows,"flat-bf n=2 reduce, flit-pipelined");
+}
+function scheduleFlatBfAllGather(rows,cols,base){
+  const flows=[]; let idx=0;
+  function push(a,b,flits,payload,start,stage){
+    flows.push(setTiming(flow(`BF${idx++}`,a,b,flits,payload,idx,stage),start,1,stage));
+  }
+  let start=0;
+  for(let r=0;r<cols-1;r++){
+    for(let y=0;y<rows;y++) for(let x=0;x<cols;x++){
+      push(node(x,y),node((x+1)%cols,y),base,"1 row block",start,`flat-bf allgather row round ${r}`);
+    }
+    start+=base;
+  }
+  for(let r=0;r<rows-1;r++){
+    for(let x=0;x<cols;x++) for(let y=0;y<rows;y++){
+      push(node(x,y),node(x,(y+1)%rows),base*cols,"1 row group",start,`flat-bf allgather col round ${r}`);
+    }
+    start+=base*cols;
+  }
+  return finishSchedule(flows,"flat-bf n=2 allgather, flit-pipelined");
+}
+function scheduleFlatBfGather(rows,cols,base){
+  const flows=[]; let idx=0;
+  for(let x=0;x<cols;x++) for(let y=rows-1;y>=1;y--){
+    const blocks=rows-y;
+    const f=flow(`BF${idx++}`,node(x,y),node(x,y-1),base*blocks,`${blocks} block(s)`,idx,`Y gather chain`,idx);
+    f.axis="y"; f.stride=1;
+    flows.push(setTiming(f,0,1,f.stage));
+  }
+  for(let x=cols-1;x>=1;x--){
+    const blocks=rows*(cols-x);
+    const f=flow(`BF${idx++}`,node(x,0),node(x-1,0),base*blocks,`${blocks} block(s)`,idx,`X gather chain`,idx);
+    f.axis="x"; f.stride=1;
+    flows.push(setTiming(f,0,1,f.stage));
+  }
+  const scheduled=resolveEdgeConflicts(flows);
+  const schedule=scheduleFromResolvedFlows(scheduled,`flat-bf n=2 gather, flit-pipelined`);
+  schedule.colorCount=assignButterflyColors(scheduled);
+  return schedule;
+}
 function dimwiseGatherReduce(rows,cols,op,base){
   const flows=[]; let idx=0;
   const avail=initNodeMap(rows,cols,0), held=initNodeMap(rows,cols,1);
-  function add(src,dst,stage,readyAt=0){
-    const sendBlocks=getHeld(held,src);
-    const flits=op==="gather" ? base*sendBlocks : base;
-    const payload=op==="gather" ? `${sendBlocks} block(s)` : "partial sum";
-    const start=Math.max(getAvail(avail,src),readyAt);
-    const f=flow(`D${idx++}`,src,dst,flits,payload,idx,stage);
-    flows.push(setTiming(f,start,1,stage));
-    const firstArrive=start+f.path.length;
-    setAvail(avail,dst,Math.max(getAvail(avail,dst),firstArrive));
-    setHeld(held,dst,getHeld(held,dst)+sendBlocks);
-    return firstArrive;
+  const state={idx,avail,held};
+  function add(axis,x,y,stride,readyAt){
+    return butterflyGatherReduceAdd(flows,{idx,avail,held},op,base,axis,x,y,stride,readyAt);
   }
   let yReady=0;
   [...pow2Strides(rows)].reverse().forEach(s=>{
     let nextReady=yReady;
     for(let y=0;y<s;y++) for(let x=0;x<cols;x++) if(y+s<rows){
-      const firstArrive=add(node(x,y+s),node(x,y),`dim-wise Y ${op} stride=${s}`,yReady);
+      const firstArrive=add("y",x,y,s,yReady);
       if(Number.isFinite(firstArrive)) nextReady=Math.max(nextReady,firstArrive);
     }
     yReady=nextReady;
@@ -600,7 +809,7 @@ function dimwiseGatherReduce(rows,cols,op,base){
   [...pow2Strides(cols)].reverse().forEach(s=>{
     let nextReady=xReady;
     for(let x=0;x<s;x++) if(x+s<cols){
-      const firstArrive=add(node(x+s,0),node(x,0),`dim-wise X ${op} stride=${s}`,xReady);
+      const firstArrive=add("x",x,0,s,xReady);
       if(Number.isFinite(firstArrive)) nextReady=Math.max(nextReady,firstArrive);
     }
     xReady=nextReady;
@@ -612,6 +821,7 @@ function dimwiseExchange(rows,cols,op,base){
   let avail=initNodeMap(rows,cols,0), held=initNodeMap(rows,cols,1);
   function oneAxis(axis,stride){
     const nextAvail=copyMap(avail), nextHeld=copyMap(held);
+    let pairT=0;
     function addPair(a,b,stage){
       const blocksA=getHeld(held,a), blocksB=getHeld(held,b);
       const flitsA=op==="allgather" ? base*blocksA : base;
@@ -620,9 +830,11 @@ function dimwiseExchange(rows,cols,op,base){
       const payloadB=op==="allgather" ? `${blocksB} block(s)` : "partial sum";
       const fa=flow(`D${idx++}`,a,b,flitsA,payloadA,idx,stage);
       const fb=flow(`D${idx++}`,b,a,flitsB,payloadB,idx,stage);
-      const sa=getAvail(avail,a), sb=getAvail(avail,b);
+      const sa=op==="allgather"?pairT:Math.max(getAvail(avail,a),pairT);
+      const sb=op==="allgather"?pairT:Math.max(getAvail(avail,b),pairT);
       flows.push(setTiming(fa,sa,1,stage));
       flows.push(setTiming(fb,sb,1,stage));
+      if(op==="allgather") pairT++;
       setAvail(nextAvail,b,Math.max(getAvail(nextAvail,b),sa+fa.path.length));
       setAvail(nextAvail,a,Math.max(getAvail(nextAvail,a),sb+fb.path.length));
       if(op==="allgather"){
@@ -645,7 +857,8 @@ function dimwiseExchange(rows,cols,op,base){
   const yStrides=op==="allgather" ? [...pow2Strides(rows)].reverse() : pow2Strides(rows);
   xStrides.forEach(s=>oneAxis("x",s));
   yStrides.forEach(s=>oneAxis("y",s));
-  return finishSchedule(flows,`dim-wise ${op}, flit-pipelined`);
+  const label=op==="allgather"?`flat-bf n=2 ${op}, flit-pipelined`:`dim-wise ${op}, flit-pipelined`;
+  return finishSchedule(flows,label);
 }
 function scheduleDimwise(rows,cols,op,base){
   if(op==="broadcast") return dimwiseBroadcast(rows,cols,base);
@@ -686,7 +899,7 @@ function scheduleButterflyBasic(rows,cols,op,base){
       addStage(stages,pairExchange(rows,cols,"y",s,base,"partial sum",`AY${s}.`),`basic Y ${op} stride=${s}`);
     });
   }
-  return finishFlattenedStages(stages,`basic logical butterfly ${op}`);
+  return finishFlattenedStages(stages,`flat-bf n=2 basic ${op}`);
 }
 function scheduleTree(rows,cols,op,base){
   const flows=[];
@@ -843,12 +1056,47 @@ function concatSchedules(a,b,label){
   schedule.peak=peakEdgeOccupancy(schedule);
   return schedule;
 }
+function pickMinDuration(candidates){
+  let best=candidates[0]();
+  for(let i=1;i<candidates.length;i++){
+    const s=candidates[i]();
+    if(s.duration<best.duration) best=s;
+  }
+  return best;
+}
+function scheduleButterflyPipelined(rows,cols,op,base){
+  if(op==="broadcast"){
+    return pickMinDuration([
+      ()=>scheduleFlatBfBroadcast(rows,cols,base),
+      ()=>dimwiseBroadcast(rows,cols,base),
+      ()=>scheduleButterflyRouter(rows,cols,base,op),
+    ]);
+  }
+  if(op==="gather") return scheduleFlatBfGather(rows,cols,base);
+  if(op==="allgather"){
+    return pickMinDuration([
+      ()=>dimwiseExchange(rows,cols,op,base),
+      ()=>scheduleFlatBfAllGather(rows,cols,base),
+    ]);
+  }
+  if(op==="allreduce"){
+    return pickMinDuration([
+      ()=>dimwiseExchange(rows,cols,op,base),
+      ()=>concatSchedules(scheduleFlatBfReduce(rows,cols,base),scheduleFlatBfBroadcast(rows,cols,base),"flat-bf n=2 allreduce"),
+    ]);
+  }
+  if(op==="reduce"){
+    return pickMinDuration([
+      ()=>scheduleFlatBfReduce(rows,cols,base),
+      ()=>scheduleButterflyRouter(rows,cols,base,op),
+      ()=>dimwiseGatherReduce(rows,cols,"reduce",base),
+    ]);
+  }
+  return scheduleButterflyRouter(rows,cols,base,op);
+}
 function buildSchedule(rows,cols,op,alg,base){
   if(alg==="butterfly-basic") return scheduleButterflyBasic(rows,cols,op,base);
-  if(alg==="butterfly-pipelined"){
-    if(op==="broadcast") return scheduleButterflyRouter(rows,cols,base,op);
-    return scheduleDimwise(rows,cols,op,base);
-  }
+  if(alg==="butterfly-pipelined") return scheduleButterflyPipelined(rows,cols,op,base);
   if(alg==="tree-pipelined") return scheduleTree(rows,cols,op,base);
   if(alg==="ring-xy") return scheduleRingXY(rows,cols,op,base);
   if(alg==="ring-snake") return scheduleRingSnake(rows,cols,op,base);
