@@ -131,7 +131,7 @@ const ALG_NAMES={
 };
 const ALG_NOTES={
   "butterfly-basic":"Basic butterfly 保留阶段屏障；payload 会增长的 all-gather 使用大 stride 优先，避免大 payload 走长距离。",
-  "butterfly-pipelined":"无 stage 屏障，X/Y stride 重叠；stride 并行流按 color 错开争用边；router 仅调度有数据、非阻塞的 color（period=1 flit 流水）。",
+  "butterfly-pipelined":"无 stage 屏障；stride>1 从上一档 stride 已送达的中点起跳，避免与 stride=1 重复占边；router 仅调度有数据的 color。",
   "tree-pipelined":"2D tree 使用行/列链式树，按 flit 在相邻 mesh edge 上流水转发。",
   "ring-xy":"XY ring 先做行内并行 ring/chain 阶段，再做列内并行阶段；gather/reduce 反向聚合，all-reduce 近似为 reduce+broadcast。",
   "ring-snake":"Snake ring 是 legacy baseline：把 2D mesh 拉平成一条 snake 逻辑环/链。",
@@ -234,17 +234,32 @@ function rootInjectAvail(rows,cols,flits){
   for(let i=0;i<flits;i++) a[i]=i;
   return m;
 }
+function butterflyBcastEndpoints(axis,rows,cols,x,y,stride){
+  if(stride<=1){
+    if(axis==="x") return {from:node(x,0),to:node(x+stride,0),viaMid:false};
+    return {from:node(x,y),to:node(x,y+stride),viaMid:false};
+  }
+  const half=stride/2;
+  if(axis==="x"){
+    return {from:node(x+half,0),to:node(x+stride,0),viaMid:true};
+  }
+  return {from:node(x,y+half),to:node(x,y+stride),viaMid:true};
+}
 function butterflyBcastFlows(rows,cols,base){
   const flows=[]; let idx=0;
   pow2Strides(cols).forEach(s=>{
     for(let x=0;x<s;x++) if(x+s<cols){
-      const f=flow(`BF${idx++}`,node(x,0),node(x+s,0),base,"root block",idx,`X broadcast stride=${s}`,idx);
+      const {from,to,viaMid}=butterflyBcastEndpoints("x",rows,cols,x,0,s);
+      const tag=viaMid?` (midpoint ${from.x},${from.y})`:"";
+      const f=flow(`BF${idx++}`,from,to,base,"root block",idx,`X broadcast stride=${s}${tag}`,idx);
       f.axis="x"; f.stride=s; flows.push(f);
     }
   });
   pow2Strides(rows).forEach(s=>{
     for(let y=0;y<s;y++) for(let x=0;x<cols;x++) if(y+s<rows){
-      const f=flow(`BF${idx++}`,node(x,y),node(x,y+s),base,"root block",idx,`Y broadcast stride=${s}`,idx);
+      const {from,to,viaMid}=butterflyBcastEndpoints("y",rows,cols,x,y,s);
+      const tag=viaMid?` (midpoint ${from.x},${from.y})`:"";
+      const f=flow(`BF${idx++}`,from,to,base,"root block",idx,`Y broadcast stride=${s}${tag}`,idx);
       f.axis="y"; f.stride=s; flows.push(f);
     }
   });
