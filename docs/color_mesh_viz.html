@@ -69,7 +69,8 @@ svg text{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
   每条端到端流分配独立 color（时分虚拟网，数量不限）；路径为固定 XY 维序路由。
   每个 router 具备 <strong>多播</strong>：calendar 用 <strong>E/W/S/N 连接关系</strong> 表示（如 <code>W→E+S</code>、<code>PE→E</code>、端口缓冲 <code>E:■</code>）；每 hop 占 1 cycle，<strong>每个节点每个 cycle</strong> 更新四向端口状态。
   集合通信前为各 router 预配置 <strong>color calendar</strong>；全局调度保证同一 cycle 同一物理 edge 至多一个 flit。
-  <strong>Broadcast</strong> 用行/列多播树（共享 color bus）；<strong>Gather</strong> 为每 PE 向 root 的 XY 流；<strong>Reduce</strong> 为 2D 树：先列内逐级归约到 root 行，再行内到 root（每跳单周期，中间节点本地 reduce，非全量汇聚到 root）；<strong>All-reduce</strong> 为维度序 RHD：先横向（X）再纵向（Y）递归减半/加倍交换（与 <code>collective-mesh-viz</code> dim-wise exchange 一致），非树归约+多播。
+  <strong>Broadcast</strong> 用行/列多播树（共享 color bus）；<strong>Gather</strong> 为每 PE 向 root 的 XY 流；<strong>Reduce</strong> 为 2D 树：先列内逐级归约到 root 行，再行内到 root（每跳单周期，中间节点本地 reduce，非全量汇聚到 root）；  <strong>All-reduce</strong> 为维度序 RHD：先横向（X）再纵向（Y）递归减半/加倍交换（与 <code>collective-mesh-viz</code> dim-wise exchange 一致），非树归约+多播。
+  <strong>All-gather</strong> 为维度序 RHD（X/Y stride 从大到小），每阶段 flit 数随已收集块数倍增，使每 PE 最终持有全体 <code>rows×cols</code> 份数据块。
   <code>time_slot_tolerance</code>：T=1 表示入口 cycle t 的数据在 t+1 从该 color 出口发出；T=2 允许 router 内至多缓冲一拍（t+1 或 t+2 出口）。
   节点 index：<code>node = row×cols + col</code>，显示 <code>(x,y)</code> 为列、行。
 </div>
@@ -224,42 +225,6 @@ function buildMulticastBroadcastFlows(rows, cols, root, flits) {
   return flows;
 }
 
-function buildMulticastAllgatherFlows(rows, cols, flits) {
-  const flows = [];
-  let cid = 0;
-  for (let step = 0; step < cols - 1; step++) {
-    for (let r = 0; r < rows; r++) {
-      const p = [];
-      for (let c = 0; c < cols - 1; c++) {
-        p.push({id: eid(node(c, r), node(c + 1, r)), from: node(c, r), to: node(c + 1, r)});
-      }
-      if (p.length) flows.push(makeFlow(`re${r}s${step}`, cid, `c${cid} row+ r${r}`, p[0].from, p[p.length - 1].to, p, flits, step, "allgather"));
-      const pr = [];
-      for (let c = cols - 1; c > 0; c--) {
-        pr.push({id: eid(node(c, r), node(c - 1, r)), from: node(c, r), to: node(c - 1, r)});
-      }
-      if (pr.length) flows.push(makeFlow(`rw${r}s${step}`, cid + 1, `c${cid + 1} row- r${r}`, pr[0].from, pr[pr.length - 1].to, pr, flits, step, "allgather"));
-    }
-    cid += 2;
-  }
-  const base = Math.max(0, cols - 1);
-  for (let step = 0; step < rows - 1; step++) {
-    for (let c = 0; c < cols; c++) {
-      const p = [];
-      for (let r = 0; r < rows - 1; r++) {
-        p.push({id: eid(node(c, r), node(c, r + 1)), from: node(c, r), to: node(c, r + 1)});
-      }
-      if (p.length) flows.push(makeFlow(`cs${c}s${step}`, cid, `c${cid} col+ c${c}`, p[0].from, p[p.length - 1].to, p, flits, base + step, "allgather"));
-      const pn = [];
-      for (let r = rows - 1; r > 0; r--) {
-        pn.push({id: eid(node(c, r), node(c, r - 1)), from: node(c, r), to: node(c, r - 1)});
-      }
-      if (pn.length) flows.push(makeFlow(`cn${c}s${step}`, cid + 1, `c${cid + 1} col- c${c}`, pn[0].from, pn[pn.length - 1].to, pn, flits, base + step, "allgather"));
-    }
-    cid += 2;
-  }
-  return flows;
-}
 
 /** Each non-root PE injects and sends to root along fixed XY path (one VN per source). */
 function buildGatherToRootFlows(rows, cols, root, flits, payload) {
@@ -364,22 +329,21 @@ function pow2Strides(n) {
   return out;
 }
 
-/** Bidirectional partial-sum exchange along one axis (XY path between partners). */
-function addDimExchangePair(flows, cidRef, axis, x, y, stride, flits, release, payload) {
+/** Bidirectional exchange along one axis (XY path between partners). */
+function addDimExchangePair(flows, cidRef, axis, x, y, stride, flits, release, payload, idPrefix, tag) {
   const from = node(x, y);
   const to = axis === "x" ? node(x + stride, y) : node(x, y + stride);
-  const tag = axis === "x" ? `X RHD s=${stride}` : `Y RHD s=${stride}`;
   const pAB = path(from, to);
   const pBA = path(to, from);
   const cid = cidRef.v;
   flows.push(makeFlow(
-    `ar_${axis}${stride}_ab_${x}_${y}`,
+    `${idPrefix}_${axis}${stride}_ab_${x}_${y}`,
     cid,
     `c${cid} ${tag} (${from.x},${from.y})→(${to.x},${to.y})`,
     from, to, pAB, flits, release, payload,
   ));
   flows.push(makeFlow(
-    `ar_${axis}${stride}_ba_${x}_${y}`,
+    `${idPrefix}_${axis}${stride}_ba_${x}_${y}`,
     cid + 1,
     `c${cid + 1} ${tag} (${to.x},${to.y})→(${from.x},${from.y})`,
     to, from, pBA, flits, release, payload,
@@ -402,7 +366,10 @@ function buildDimwiseAllreduceFlows(rows, cols, flits) {
     for (let y = 0; y < rows; y++) {
       for (let x = 0; x < cols; x += 2 * s) {
         for (let d = 0; d < s; d++) {
-          if (x + d + s < cols) addDimExchangePair(flows, cidRef, "x", x + d, y, s, flits, release, payload);
+          if (x + d + s < cols) {
+            addDimExchangePair(flows, cidRef, "x", x + d, y, s, flits, release, payload, "ar",
+              `X RHD s=${s}`);
+          }
         }
       }
     }
@@ -412,11 +379,55 @@ function buildDimwiseAllreduceFlows(rows, cols, flits) {
     for (let x = 0; x < cols; x++) {
       for (let y = 0; y < rows; y += 2 * s) {
         for (let d = 0; d < s; d++) {
-          if (y + d + s < rows) addDimExchangePair(flows, cidRef, "y", x, y + d, s, flits, release, payload);
+          if (y + d + s < rows) {
+            addDimExchangePair(flows, cidRef, "y", x, y + d, s, flits, release, payload, "ar",
+              `Y RHD s=${s}`);
+          }
         }
       }
     }
     release += dimExchangeStageCycles(s, flits);
+  });
+  return flows;
+}
+
+/** All-gather: dim-wise RHD with reverse strides; flits per stage scale with blocks held (butterflyExchangeFlows). */
+function buildDimwiseAllgatherFlows(rows, cols, baseFlits) {
+  const flows = [];
+  const cidRef = {v: 0};
+  const payload = "allgather";
+  let release = 0;
+  let blocks = 1;
+  [...pow2Strides(cols)].reverse().forEach(s => {
+    const flits = baseFlits * blocks;
+    const tag = `X AG s=${s} ×${blocks}blk`;
+    for (let y = 0; y < rows; y++) {
+      for (let x = 0; x < cols; x += 2 * s) {
+        for (let d = 0; d < s; d++) {
+          if (x + d + s < cols) {
+            addDimExchangePair(flows, cidRef, "x", x + d, y, s, flits, release, payload, "ag", tag);
+          }
+        }
+      }
+    }
+    release += dimExchangeStageCycles(s, flits);
+    blocks *= 2;
+  });
+  blocks = cols;
+  [...pow2Strides(rows)].reverse().forEach(s => {
+    const flits = baseFlits * blocks;
+    const tag = `Y AG s=${s} ×${blocks}blk`;
+    for (let x = 0; x < cols; x++) {
+      for (let y = 0; y < rows; y += 2 * s) {
+        for (let d = 0; d < s; d++) {
+          if (y + d + s < rows) {
+            addDimExchangePair(flows, cidRef, "y", x, y + d, s, flits, release, payload, "ag", tag);
+          }
+        }
+      }
+    }
+    release += dimExchangeStageCycles(s, flits);
+    blocks *= 2;
   });
   return flows;
 }
@@ -427,7 +438,7 @@ function generateCollectiveFlows(pattern, rows, cols, flitsPerBlock, root) {
   if (pattern === "broadcast") return buildMulticastBroadcastFlows(rows, cols, root, flits);
   if (pattern === "gather") return buildGatherToRootFlows(rows, cols, root, flits, pattern);
   if (pattern === "reduce") return buildTreeReduceFlows(rows, cols, root, flits, pattern);
-  if (pattern === "allgather") return buildMulticastAllgatherFlows(rows, cols, flits);
+  if (pattern === "allgather") return buildDimwiseAllgatherFlows(rows, cols, flits);
   if (pattern === "allreduce") return buildDimwiseAllreduceFlows(rows, cols, flits);
   throw new Error(`Unknown pattern ${pattern}`);
 }
