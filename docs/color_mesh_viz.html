@@ -44,6 +44,10 @@ tr:last-child td{border-bottom:none}
 .cell{height:var(--cell-h);min-width:var(--cell-w);display:flex;align-items:center;justify-content:center;border-right:1px solid #eee;border-bottom:1px solid #eee;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding:0 4px}
 .head{background:#f4f5f7;font-weight:700}
 .rowhead{justify-content:flex-start;padding-left:8px;background:#fbfbfb;position:sticky;left:0;z-index:2}
+.rowhead.rot-head{background:#f3e8ff;font-weight:700}
+.cell.rot-slot{background:#f3e8ff;font-weight:600}
+.cell.rot-armed{font-weight:700}
+.cell.rot-on-slot{box-shadow:inset 3px 0 0 var(--accent)}
 .tag{display:inline-block;border:1px solid var(--border);border-radius:999px;padding:2px 8px;font-size:12px;background:#fff;margin-right:6px}
 .small{font-size:12px;color:var(--muted)}
 .warn{color:var(--warn)}
@@ -120,8 +124,12 @@ svg text{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
 </div>
 
 <h2>Router Color Calendar</h2>
-<p class="small">所选 router 的 color×cycle 表：行=经过该节点的 color VN；列=cycle。格子为端口切换 <code>in→out</code>、多播 <code>in→E+S</code>，或缓冲 <code>buf</code> / <code>wait</code>。</p>
+<p class="small">所选 router 的 color×cycle 表：前两行为 <strong>calendar 轮转状态</strong>（入口 mux 按 <code>slot = cycle mod P</code> 选当令 VN，P=该 router 配置的 color 数）；其后每行是一条 color VN 的端口切换 <code>in→out</code>、多播 <code>in→E+S</code>，或 <code>buf</code> / <code>wait</code>。当令行左侧紫条表示该行 VN 处于轮转当令 slot。</p>
 <div class="lane"><div class="lane-grid" id="routerCal"></div></div>
+
+<h3>全网格 Router 轮转（当前 cycle）</h3>
+<p class="small">每个 PE 的 calendar 轮转 slot、当令 color、本 cycle 实际点火的 VN（calendar 有编程的 color）。<code>match</code> 表示当令 color 与本 cycle 点火一致。</p>
+<div class="table-wrap"><table id="rotAll"></table></div>
 
 <h2>Color VN 泳道图</h2>
 <p class="small">每一行是一条 distinct color VN；格子显示该 color 在当前 cycle 占用的 flit 数。</p>
@@ -514,11 +522,14 @@ function buildCalendarSchedule(flows, T, cols) {
     eventsByCycle.get(ev.cycle).push(ev);
   }
 
+  const routerRot = buildRouterRotationStates(calendar);
+
   return {
     flows,
     events,
     eventsByCycle,
     calendar,
+    routerRot,
     duration: maxCycle + 1,
     period: 1,
     peak: 1,
@@ -528,6 +539,55 @@ function buildCalendarSchedule(flows, T, cols) {
     T,
     label: "calendar",
   };
+}
+
+/** Per-router calendar mux rotation: slot = cycle % P, armed = colorIds[slot]. */
+function buildRouterRotationStates(calendar) {
+  const maxIdx = calendar.size ? Math.max(...calendar.keys()) + 1 : 0;
+  const profiles = new Map();
+  for (const [nodeIdx, byColor] of calendar) {
+    const colorIds = [...byColor.keys()].sort((a, b) => a - b);
+    const period = Math.max(1, colorIds.length);
+    profiles.set(nodeIdx, {
+      nodeIdx,
+      period,
+      colorIds,
+      slotAt(cycle) { return cycle % period; },
+      armedColorAt(cycle) { return colorIds[this.slotAt(cycle)]; },
+      firingColorsAt(cycle) {
+        const busy = [];
+        const slots = byColor;
+        for (const cid of colorIds) {
+          const s = slots.get(cid)?.get(cycle);
+          if (s && s.text && s.text !== ".") busy.push(cid);
+        }
+        return busy;
+      },
+    });
+  }
+  for (let i = 0; i < maxIdx; i++) {
+    if (!profiles.has(i)) {
+      profiles.set(i, {
+        nodeIdx: i, period: 0, colorIds: [],
+        slotAt() { return 0; },
+        armedColorAt() { return null; },
+        firingColorsAt() { return []; },
+      });
+    }
+  }
+  return profiles;
+}
+
+function routerRotAt(schedule, routerIdx, cycle) {
+  const prof = schedule.routerRot?.get(routerIdx);
+  if (!prof || !prof.period) {
+    return {slot: "-", period: 0, armed: null, firing: [], match: false};
+  }
+  const slot = prof.slotAt(cycle);
+  const armed = prof.armedColorAt(cycle);
+  const firing = prof.firingColorsAt(cycle);
+  const match = armed !== null && firing.includes(armed);
+  return {slot, period: prof.period, armed, firing, match};
 }
 
 function allEvents(schedule, cycle) {
@@ -657,7 +717,11 @@ function renderMesh(schedule, rows, cols, cycle, colorFilter, showOverlay, rootI
     const p = pos(node(x, y), rows, cols, layout);
     const isRoot = idx === rootIdx;
     const label = showNodeLabel(x, y, rows, cols, layout);
-    nodes.push(`<g><circle cx="${p.x}" cy="${p.y}" r="${layout.nodeR}" fill="${isRoot ? '#fff3cd' : 'white'}" stroke="${isRoot ? '#9a5b00' : '#222'}" stroke-width="${isRoot ? 2 : 1}"/><title>${idx} (${x},${y})${isRoot ? ' [root]' : ''}</title>${label ? `<text x="${p.x}" y="${p.y + layout.nodeFont / 2 - 1}" font-size="${layout.nodeFont}" text-anchor="middle">${x},${y}</text>` : ""}</g>`);
+    const rot = schedule.routerRot ? routerRotAt(schedule, idx, cycle) : null;
+    const rotTxt = rot && rot.period
+      ? `<text x="${p.x}" y="${p.y + layout.nodeR + 9}" font-size="7" text-anchor="middle" fill="#5b21b6">s${rot.slot} c${rot.armed}</text>`
+      : "";
+    nodes.push(`<g><circle cx="${p.x}" cy="${p.y}" r="${layout.nodeR}" fill="${isRoot ? '#fff3cd' : 'white'}" stroke="${isRoot ? '#9a5b00' : '#222'}" stroke-width="${isRoot ? 2 : 1}"/><title>${idx} (${x},${y})${isRoot ? ' [root]' : ''}${rot?.period ? ` rot s${rot.slot}/c${rot.armed}` : ''}</title>${label ? `<text x="${p.x}" y="${p.y + layout.nodeFont / 2 - 1}" font-size="${layout.nodeFont}" text-anchor="middle">${x},${y}</text>` : ""}${rotTxt}</g>`);
   }
   const labels = layout.showFlitLabels ? evs.map(ev => {
     const p0 = pos(ev.edge.from, rows, cols, layout), p1 = pos(ev.edge.to, rows, cols, layout);
@@ -669,20 +733,25 @@ function renderMesh(schedule, rows, cols, cycle, colorFilter, showOverlay, rootI
   return `<svg width="${layout.width}" height="${layout.height}" viewBox="0 0 ${layout.width} ${layout.height}" role="img" aria-label="${rows} by ${cols} color mesh at cycle ${cycle}"><defs><marker id="arr" markerWidth="5" markerHeight="5" refX="4.5" refY="2.5" orient="auto"><path d="M0,0 L5,2.5 L0,5 Z" fill="context-stroke"/></marker><marker id="arrStatic" markerWidth="4" markerHeight="4" refX="3.5" refY="2" orient="auto"><path d="M0,0 L4,2 L0,4 Z" fill="context-stroke"/></marker></defs>${staticSvg}${lineSvg}${nodes.join("")}${labels}</svg>`;
 }
 
-function renderLaneGrid(el, rowLabels, cycles, valueAt) {
+function renderLaneGrid(el, rowLabels, cycles, valueAt, opts = {}) {
   const longest = Math.max(4, ...rowLabels.map(r => String(r).length));
   const labelWidth = Math.max(150, Math.min(320, longest * 7 + 24));
   const cellWidth = rowLabels.length > 160 ? 54 : 62;
   const cellHeight = rowLabels.length > 220 ? 24 : 28;
+  const rotHeads = opts.rotHeadRows || new Set();
   el.style.setProperty("--cell-w", `${cellWidth}px`);
   el.style.setProperty("--cell-h", `${cellHeight}px`);
   el.style.gridTemplateColumns = `${labelWidth}px repeat(${cycles.length}, ${cellWidth}px)`;
   el.innerHTML = `<div class="cell head rowhead">item</div>${cycles.map(c => `<div class="cell head">c${c}</div>`).join("")}` +
-    rowLabels.map(r => `<div class="cell rowhead" title="${r}">${r}</div>` + cycles.map(c => {
-      const v = valueAt(r, c);
-      const style = v.style || (v.color ? `color:${v.color};font-weight:700;background:${v.isBuf ? "#f0f4ff" : "#fafafa"}` : "");
-      return `<div class="cell" title="${v.text || ""}" style="${style}">${v.text || "."}</div>`;
-    }).join("")).join("");
+    rowLabels.map(r => {
+      const headCls = rotHeads.has(r) ? " rowhead rot-head" : "";
+      return `<div class="cell rowhead${headCls}" title="${r}">${r}</div>` + cycles.map(c => {
+        const v = valueAt(r, c);
+        const extraCls = v.cellClass ? ` ${v.cellClass}` : "";
+        const style = v.style || (v.color ? `color:${v.color};font-weight:700;background:${v.isBuf ? "#f0f4ff" : "#fafafa"}` : "");
+        return `<div class="cell${extraCls}" title="${v.title || v.text || ""}" style="${style}">${v.text || "."}</div>`;
+      }).join("");
+    }).join("");
 }
 
 function filteredEvents(schedule, cycle, colorFilter) {
@@ -712,28 +781,92 @@ function updateCalRouterOptions(rows, cols, root) {
   else sel.value = String(root);
 }
 
-function renderRouterCalendar(schedule, routerIdx, cycles) {
+function renderRouterCalendar(schedule, routerIdx, cycles, flows) {
+  const el = document.getElementById("routerCal");
   const byColor = schedule.calendar.get(routerIdx);
-  if (!byColor) {
-    renderLaneGrid(document.getElementById("routerCal"), ["(no traffic)"], cycles, () => ({text: ""}));
+  const prof = schedule.routerRot?.get(routerIdx);
+  const ROT_SLOT = "轮转 slot";
+  const ROT_ARMED = "当令 VN";
+  const ROT_FIRE = "点火 VN";
+  if (!byColor || !prof?.period) {
+    renderLaneGrid(el, ["(no traffic)"], cycles, () => ({text: ""}));
     return;
   }
   const colorIds = [...byColor.keys()].sort((a, b) => a - b);
-  const rowLabels = colorIds.map(id => {
-    const flow = schedule.flows.find(f => f.colorId === id);
+  const vnRows = colorIds.map(id => {
+    const flow = flows.find(f => f.colorId === id);
     return flow ? flow.label : `c${id}`;
   });
-  renderLaneGrid(document.getElementById("routerCal"), rowLabels, cycles, (rowLabel, cy) => {
+  const rowLabels = [ROT_SLOT, ROT_ARMED, ROT_FIRE, ...vnRows];
+  renderLaneGrid(el, rowLabels, cycles, (rowLabel, cy) => {
+    const rot = routerRotAt(schedule, routerIdx, cy);
+    if (rowLabel === ROT_SLOT) {
+      return {
+        text: `s${rot.slot}/${rot.period}`,
+        cellClass: "rot-slot",
+        title: `calendar mux slot = ${cy} mod ${rot.period}`,
+      };
+    }
+    if (rowLabel === ROT_ARMED) {
+      const flow = flows.find(f => f.colorId === rot.armed);
+      const col = flow?.color || COLOR_PALETTE[(rot.armed || 0) % MAX_COLORS];
+      return {
+        text: rot.armed === null ? "-" : `c${rot.armed}`,
+        color: col,
+        cellClass: "rot-armed",
+        title: flow ? flow.label : "",
+      };
+    }
+    if (rowLabel === ROT_FIRE) {
+      const txt = rot.firing.length ? rot.firing.map(c => `c${c}`).join("+") : "-";
+      return {
+        text: txt,
+        style: rot.match ? "background:#dcfce7;font-weight:600" : (rot.firing.length ? "background:#fff7ed" : ""),
+        title: rot.match ? "当令 VN 本 cycle 点火" : "当令与点火不一致（预编排跨 slot 发送）",
+      };
+    }
     const id = colorIds.find(cid => {
-      const flow = schedule.flows.find(f => f.colorId === cid);
+      const flow = flows.find(f => f.colorId === cid);
       return flow && flow.label === rowLabel;
     });
     if (id === undefined) return {text: ""};
     const slot = byColor.get(id)?.get(cy);
-    if (!slot) return {text: ""};
-    const style = slot.multicast ? "font-weight:700;background:#e8f5e9" : "";
-    return {text: slot.text, color: slot.color, isBuf: slot.isBuf, style};
-  });
+    const onRot = rot.armed === id;
+    if (!slot) {
+      return onRot ? {text: ".", cellClass: "rot-on-slot", title: "当令 slot，无切换编程"} : {text: ""};
+    }
+    let style = slot.multicast ? "font-weight:700;background:#e8f5e9" : "";
+    if (onRot) style += ";box-shadow:inset 3px 0 0 #1a4480";
+    return {
+      text: slot.text,
+      color: slot.color,
+      isBuf: slot.isBuf,
+      style,
+      cellClass: onRot ? "rot-on-slot" : "",
+      title: onRot ? "当令 VN · " + slot.text : slot.text,
+    };
+  }, {rotHeadRows: new Set([ROT_SLOT, ROT_ARMED, ROT_FIRE])});
+}
+
+function renderAllRouterRotation(schedule, rows, cols, cycle, root) {
+  const rowsData = [];
+  for (let i = 0; i < rows * cols; i++) {
+    const n = idxToNode(i, cols);
+    const rot = routerRotAt(schedule, i, cycle);
+    const prof = schedule.routerRot?.get(i);
+    rowsData.push([
+      `${i}${i === root ? " [root]" : ""}`,
+      `(${n.x},${n.y})`,
+      prof?.period || 0,
+      prof?.period ? `s${rot.slot}/${rot.period}` : "-",
+      rot.armed === null ? "-" : `c${rot.armed}`,
+      rot.firing.length ? rot.firing.map(c => `c${c}`).join("+") : "-",
+      rot.match ? "yes" : (rot.firing.length ? "no" : "-"),
+    ]);
+  }
+  renderTable(document.getElementById("rotAll"),
+    ["PE", "coord", "P", `slot@c${cycle}`, "armed", "firing", "match"],
+    rowsData);
 }
 
 function render() {
@@ -794,7 +927,8 @@ function render() {
   const start = totalCycles <= win ? 0 : Math.min(Math.max(0, cycle - 8), totalCycles - win);
   const cycles = Array.from({length: win}, (_, i) => start + i);
 
-  renderRouterCalendar(schedule, calRouter, cycles);
+  renderRouterCalendar(schedule, calRouter, cycles, schedule.flows);
+  renderAllRouterRotation(schedule, rows, cols, cycle, root);
 
   const colorIds = [...new Set(schedule.flows.map(f => f.colorId))].sort((a, b) => a - b);
   renderLaneGrid(document.getElementById("colorLane"),
