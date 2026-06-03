@@ -69,7 +69,7 @@ svg text{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
   每条端到端流分配独立 color（时分虚拟网，数量不限）；路径为固定 XY 维序路由。
   每个 router 具备 <strong>多播</strong>：calendar 用 <strong>E/W/S/N 连接关系</strong> 表示（如 <code>W→E+S</code>、<code>PE→E</code>、端口缓冲 <code>E:■</code>）；每 hop 占 1 cycle，<strong>每个节点每个 cycle</strong> 更新四向端口状态。
   集合通信前为各 router 预配置 <strong>color calendar</strong>；全局调度保证同一 cycle 同一物理 edge 至多一个 flit。
-  <strong>Broadcast</strong> 用行/列多播树（共享 color bus）；<strong>Gather / Reduce</strong> 为每个非 root PE 独立 <code>PE→…→root</code> 注入（XY 路由，每源一条 VN）。
+  <strong>Broadcast</strong> 用行/列多播树（共享 color bus）；<strong>Gather</strong> 为每 PE 向 root 的 XY 流；<strong>Reduce</strong> 为 2D 树：先列内逐级归约到 root 行，再行内到 root（每跳单周期，中间节点本地 reduce，非全量汇聚到 root）；<strong>All-reduce</strong> 为维度序 RHD：先横向（X）再纵向（Y）递归减半/加倍交换（与 <code>collective-mesh-viz</code> dim-wise exchange 一致），非树归约+多播。
   <code>time_slot_tolerance</code>：T=1 表示入口 cycle t 的数据在 t+1 从该 color 出口发出；T=2 允许 router 内至多缓冲一拍（t+1 或 t+2 出口）。
   节点 index：<code>node = row×cols + col</code>，显示 <code>(x,y)</code> 为列、行。
 </div>
@@ -290,35 +290,145 @@ function buildGatherToRootFlows(rows, cols, root, flits, payload) {
   return flows;
 }
 
-function buildMulticastAllreduceFlows(rows, cols, flits) {
-  const root = 0;
-  const reduce = buildGatherToRootFlows(rows, cols, root, flits, "allreduce");
-  const phaseBase = reduce.length
-    ? Math.max(...reduce.map(f => (f.release || 0) + f.path.length + f.flits))
-    : 0;
-  const bcast = buildMulticastBroadcastFlows(rows, cols, root, flits);
-  const phase2 = bcast.map(f => ({
-    ...f,
-    id: `ar_${f.id}`,
-    colorId: f.colorId + reduce.length,
-    label: `c${f.colorId + reduce.length} ${f.label.replace(/^c\d+\s*/, "")}`,
-    color: COLOR_PALETTE[(f.colorId + reduce.length) % MAX_COLORS],
-    release: (f.release || 0) + phaseBase,
-    stage: "allreduce",
-    payload: "allreduce",
-  }));
-  return [...reduce, ...phase2];
+function reduceColumnDepth(rows, rr) {
+  return Math.max(rr, rows - 1 - rr);
+}
+
+function reduceRowPhaseStart(rows, rr) {
+  return reduceColumnDepth(rows, rr);
+}
+
+function makeHopFlow(id, cid, label, from, to, flits, release, payload) {
+  const edge = {id: eid(from, to), from, to};
+  return makeFlow(id, cid, label, from, to, [edge], flits, release, payload);
+}
+
+/** 2D tree reduce: column hops toward root row, then row hops toward root (staggered release). */
+function buildTreeReduceFlows(rows, cols, root, flits, payload) {
+  const rr = Math.floor(root / cols), rc = root % cols;
+  const flows = [];
+  let cid = 0;
+
+  if (rr < rows - 1) {
+    for (let c = 0; c < cols; c++) {
+      for (let y = rows - 1; y > rr; y--) {
+        const from = node(c, y), to = node(c, y - 1);
+        flows.push(makeHopFlow(
+          `rc${c}y${y}n`, cid++,
+          `c${cid - 1} col${c} (${c},${y})→(${c},${y - 1})`,
+          from, to, flits, rows - 1 - y, payload,
+        ));
+      }
+    }
+  }
+  if (rr > 0) {
+    for (let c = 0; c < cols; c++) {
+      for (let y = 0; y < rr; y++) {
+        const from = node(c, y), to = node(c, y + 1);
+        flows.push(makeHopFlow(
+          `rc${c}y${y}s`, cid++,
+          `c${cid - 1} col${c} (${c},${y})→(${c},${y + 1})`,
+          from, to, flits, y, payload,
+        ));
+      }
+    }
+  }
+
+  const rowStart = reduceRowPhaseStart(rows, rr);
+  if (rc < cols - 1) {
+    for (let x = cols - 1; x > rc; x--) {
+      const from = node(x, rr), to = node(x - 1, rr);
+      flows.push(makeHopFlow(
+        `rr${x}w`, cid++,
+        `c${cid - 1} row (${x},${rr})→(${x - 1},${rr})`,
+        from, to, flits, rowStart + (cols - 1 - x), payload,
+      ));
+    }
+  }
+  if (rc > 0) {
+    for (let x = 0; x < rc; x++) {
+      const from = node(x, rr), to = node(x + 1, rr);
+      flows.push(makeHopFlow(
+        `rr${x}e`, cid++,
+        `c${cid - 1} row (${x},${rr})→(${x + 1},${rr})`,
+        from, to, flits, rowStart + x, payload,
+      ));
+    }
+  }
+  return flows;
+}
+
+function pow2Strides(n) {
+  const out = [];
+  for (let s = 1; s < n; s <<= 1) out.push(s);
+  return out;
+}
+
+/** Bidirectional partial-sum exchange along one axis (XY path between partners). */
+function addDimExchangePair(flows, cidRef, axis, x, y, stride, flits, release, payload) {
+  const from = node(x, y);
+  const to = axis === "x" ? node(x + stride, y) : node(x, y + stride);
+  const tag = axis === "x" ? `X RHD s=${stride}` : `Y RHD s=${stride}`;
+  const pAB = path(from, to);
+  const pBA = path(to, from);
+  const cid = cidRef.v;
+  flows.push(makeFlow(
+    `ar_${axis}${stride}_ab_${x}_${y}`,
+    cid,
+    `c${cid} ${tag} (${from.x},${from.y})→(${to.x},${to.y})`,
+    from, to, pAB, flits, release, payload,
+  ));
+  flows.push(makeFlow(
+    `ar_${axis}${stride}_ba_${x}_${y}`,
+    cid + 1,
+    `c${cid + 1} ${tag} (${to.x},${to.y})→(${from.x},${from.y})`,
+    to, from, pBA, flits, release, payload,
+  ));
+  cidRef.v += 2;
+}
+
+/** Min cycles until all nodes finish one dim-exchange stride (matches dimwiseExchange avail += path.length). */
+function dimExchangeStageCycles(stride, flits) {
+  return stride + Math.max(0, flits - 1);
+}
+
+/** All-reduce: horizontal (X) RHD strides, then vertical (Y) — dim-wise exchange like collective-mesh-viz. */
+function buildDimwiseAllreduceFlows(rows, cols, flits) {
+  const flows = [];
+  const cidRef = {v: 0};
+  const payload = "allreduce";
+  let release = 0;
+  pow2Strides(cols).forEach(s => {
+    for (let y = 0; y < rows; y++) {
+      for (let x = 0; x < cols; x += 2 * s) {
+        for (let d = 0; d < s; d++) {
+          if (x + d + s < cols) addDimExchangePair(flows, cidRef, "x", x + d, y, s, flits, release, payload);
+        }
+      }
+    }
+    release += dimExchangeStageCycles(s, flits);
+  });
+  pow2Strides(rows).forEach(s => {
+    for (let x = 0; x < cols; x++) {
+      for (let y = 0; y < rows; y += 2 * s) {
+        for (let d = 0; d < s; d++) {
+          if (y + d + s < rows) addDimExchangePair(flows, cidRef, "y", x, y + d, s, flits, release, payload);
+        }
+      }
+    }
+    release += dimExchangeStageCycles(s, flits);
+  });
+  return flows;
 }
 
 function generateCollectiveFlows(pattern, rows, cols, flitsPerBlock, root) {
   pattern = pattern.toLowerCase();
   const flits = Math.max(1, flitsPerBlock | 0);
   if (pattern === "broadcast") return buildMulticastBroadcastFlows(rows, cols, root, flits);
-  if (pattern === "gather" || pattern === "reduce") {
-    return buildGatherToRootFlows(rows, cols, root, flits, pattern);
-  }
+  if (pattern === "gather") return buildGatherToRootFlows(rows, cols, root, flits, pattern);
+  if (pattern === "reduce") return buildTreeReduceFlows(rows, cols, root, flits, pattern);
   if (pattern === "allgather") return buildMulticastAllgatherFlows(rows, cols, flits);
-  if (pattern === "allreduce") return buildMulticastAllreduceFlows(rows, cols, flits);
+  if (pattern === "allreduce") return buildDimwiseAllreduceFlows(rows, cols, flits);
   throw new Error(`Unknown pattern ${pattern}`);
 }
 
