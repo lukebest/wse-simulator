@@ -126,7 +126,7 @@ svg text{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
 </div>
 
 <h2>Router Color Calendar（E/W/S/N 连接）</h2>
-<p class="small">所选 router：列=cycle（每 hop 前进一列）；行=<strong>port E/W/S/N</strong> 在该 cycle 的角色（<code>→</code> 发出、<code>↓</code> 经该口转入、<code>■</code> 缓冲、<code>·</code> 空闲），以及 <strong>连接 EWSN</strong> 合并行（如 <code>W→E+S</code>）。其后为各 color VN 的 EWSN 连接编程。调度保证全网每 cycle 每节点均有状态（无流量为 <code>----</code>）。</p>
+<p class="small">列=<strong>cycle</strong>（每 hop 一列）；行=<strong>router（PE）</strong>。格子为该 PE 在该 cycle 的 EWSN 合并连接（如 <code>PE→E</code>、<code>W→E+S</code>、<code>E:■</code>，空闲为 <code>·</code>）。<strong>Calendar router</strong> 下拉用于高亮对应行；窗口随当前 cycle 滑动。</p>
 <div class="lane"><div class="lane-grid" id="routerCal"></div></div>
 
 <h3>全网格连接状态（当前 cycle）</h3>
@@ -855,9 +855,6 @@ function updateCalRouterOptions(rows, cols, root) {
   else sel.value = String(root);
 }
 
-const PORT_ROW_LABELS = ["port E", "port W", "port S", "port N", "连接 EWSN"];
-const PORT_ROW_DIR = { "port E": "E", "port W": "W", "port S": "S", "port N": "N" };
-
 function nodeConnAt(schedule, routerIdx, cycle) {
   const tl = schedule.nodeConn?.get(routerIdx);
   if (!tl || cycle < 0 || cycle >= tl.length) {
@@ -866,48 +863,37 @@ function nodeConnAt(schedule, routerIdx, cycle) {
   return tl[cycle];
 }
 
-function renderRouterCalendar(schedule, routerIdx, cycles, flows) {
+function peRowLabel(idx, cols, root) {
+  const n = idxToNode(idx, cols);
+  return `${idx} (${n.x},${n.y})${idx === root ? " [root]" : ""}`;
+}
+
+function connCellText(conn, maxLen = 14) {
+  if (conn === IDLE_CONN) return "·";
+  return conn.length > maxLen ? `${conn.slice(0, maxLen - 1)}…` : conn;
+}
+
+/** Rows = every router, columns = cycles; cell = merged EWSN conn at (router, cycle). */
+function renderRouterConnMatrix(schedule, rows, cols, cycles, root, highlightIdx) {
   const el = document.getElementById("routerCal");
-  const byColor = schedule.calendar.get(routerIdx);
-  const colorIds = byColor ? [...byColor.keys()].sort((a, b) => a - b) : [];
-  const vnRows = colorIds.map(id => {
-    const flow = flows.find(f => f.colorId === id);
-    return flow ? `c${id} ${flow.label}` : `c${id}`;
-  });
-  const rowLabels = [...PORT_ROW_LABELS, ...vnRows];
+  const n = rows * cols;
+  const rowLabels = Array.from({length: n}, (_, i) => peRowLabel(i, cols, root));
+  const dense = n > 64 || cycles.length > 28;
   renderLaneGrid(el, rowLabels, cycles, (rowLabel, cy) => {
-    const st = nodeConnAt(schedule, routerIdx, cy);
-    const dir = PORT_ROW_DIR[rowLabel];
-    if (dir) {
-      const v = st.ports[dir];
-      const active = v !== "·";
-      return {
-        text: v,
-        cellClass: active ? "port-active" : "",
-        title: `cycle ${cy} · port ${dir}`,
-      };
-    }
-    if (rowLabel === "连接 EWSN") {
-      const active = st.conn !== IDLE_CONN;
-      return {
-        text: st.conn,
-        cellClass: active ? "conn-ewns" : "",
-        title: active ? st.conn : `cycle ${cy} idle`,
-      };
-    }
-    const id = colorIds.find(cid => rowLabel.startsWith(`c${cid} `));
-    if (id === undefined) return {text: ""};
-    const slot = byColor.get(id)?.get(cy);
-    if (!slot) return {text: "·", title: "无编程"};
-    const style = slot.multicast ? "font-weight:700;background:#e8f5e9" : "";
+    const idx = parseInt(rowLabel, 10);
+    const st = nodeConnAt(schedule, idx, cy);
+    const active = st.conn !== IDLE_CONN;
+    const hl = idx === highlightIdx;
+    let style = active ? "font-size:10px;font-weight:600;background:#fafafa" : "";
+    if (hl) style += ";box-shadow:inset 3px 0 0 #1a4480";
+    if (active && !hl) style += ";background:#eef6ff";
     return {
-      text: slot.conn || slot.text,
-      color: slot.color,
-      isBuf: slot.isBuf,
+      text: connCellText(st.conn, dense ? 10 : 14),
+      title: `PE ${idx} @ cycle ${cy}\n${st.conn}\n${COMPASS_DIRS.map(d => `${d}:${st.ports[d]}`).join(" ")}`,
       style,
-      title: slot.conn,
+      cellClass: hl ? "rot-on-slot" : (active ? "conn-ewns" : ""),
     };
-  }, {rotHeadRows: new Set(["连接 EWSN"])});
+  });
 }
 
 function renderAllRouterRotation(schedule, rows, cols, cycle, root) {
@@ -986,7 +972,7 @@ function render() {
   const start = totalCycles <= win ? 0 : Math.min(Math.max(0, cycle - 8), totalCycles - win);
   const cycles = Array.from({length: win}, (_, i) => start + i);
 
-  renderRouterCalendar(schedule, calRouter, cycles, schedule.flows);
+  renderRouterConnMatrix(schedule, rows, cols, cycles, root, calRouter);
   renderAllRouterRotation(schedule, rows, cols, cycle, root);
 
   const colorIds = [...new Set(schedule.flows.map(f => f.colorId))].sort((a, b) => a - b);
