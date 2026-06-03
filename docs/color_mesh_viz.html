@@ -30,6 +30,7 @@ button.secondary{background:#fff;color:#1a4480}
 .metric{border:1px solid var(--border);border-radius:8px;padding:10px;background:#fff}
 .metric .name{font-size:12px;color:var(--muted)}
 .metric .value{font-size:22px;font-weight:700;margin-top:2px}
+.metric .value.good{color:var(--good)}
 .metric .sub{font-size:12px;color:var(--muted);margin-top:2px}
 .table-wrap{overflow:auto;border:1px solid var(--border);border-radius:8px}
 table{border-collapse:collapse;width:100%;font-size:12px;background:#fff}
@@ -59,10 +60,11 @@ svg text{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
 <div class="intro">
   本页展示 <strong>Color 虚拟网络（VN）</strong> 机制下的 2D Mesh 集合通信调度，与
   <code>collective-mesh-viz.html</code> 的逻辑 butterfly / tree / ring 算法视图互补。
-  每条 flit 携带 catalog color ID，沿编译期静态路由表（方向总线或 XY/YX 单播）逐 hop 前进；
-  不同 color 可在不同物理链路上并行，同 color 同链路则时分复用。
-  调度模型：start = delay_cycles，period = 1，路径由 <code>expandPath(plan, src, dst, color)</code> 展开。
-  节点内部用线性 index（<code>node = row×cols + col</code>），显示为 <code>(x,y)</code> 其中 x=列、y=行。
+  每条端到端流分配独立 color（时分虚拟网，数量不限）；路径为固定 XY 维序路由。
+  集合通信前为每个 router 预配置 <strong>color calendar</strong>：各 cycle 上 active color 与端口切换；
+  全局调度保证同一 cycle 同一物理 edge 至多一个 flit（无冲突无阻塞）。
+  <code>time_slot_tolerance</code>：T=1 表示入口 cycle t 的数据在 t+1 从该 color 出口发出；T=2 允许 router 内至多缓冲一拍（t+1 或 t+2 出口）。
+  节点 index：<code>node = row×cols + col</code>，显示 <code>(x,y)</code> 为列、行。
 </div>
 
 <div class="controls">
@@ -77,13 +79,8 @@ svg text{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
       <option value="allgather">All-gather</option>
     </select>
   </label>
-  <label>Color budget
-    <select id="budget">
-      <option value="parallel">Parallel (bus VNs)</option>
-      <option value="compact">Compact (2 unicast)</option>
-      <option value="minimal">Minimal (1 unicast)</option>
-      <option value="xy_baseline">XY baseline (1 VN)</option>
-    </select>
+  <label>time_slot_tolerance (T)
+    <input id="tolerance" type="number" min="1" max="8" value="1" title="Max in-router dwell: exit in [t+1, t+T]">
   </label>
   <label>Root PE index <input id="root" type="number" min="0" value="0"></label>
   <label>Flits per block <input id="flits" type="number" min="1" max="24" value="3"></label>
@@ -91,14 +88,17 @@ svg text{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
   <label>Color filter
     <select id="colorFilter"><option value="all">All colors</option></select>
   </label>
-  <label class="check-row"><input id="routeOverlay" type="checkbox"> 显示所选 color 静态路由箭头</label>
+  <label>Calendar router
+    <select id="calRouter"></select>
+  </label>
+  <label class="check-row"><input id="routeOverlay" type="checkbox"> 显示所选 color XY 路径箭头</label>
   <button id="apply">重新生成</button>
 </div>
 
 <div class="metrics" id="metrics"></div>
-<p class="small">指标说明：Makespan 为最后一个 flit 离开最后一条 edge 的 cycle；Distinct colors 为本次 collective 使用的 catalog ID 数；Peak edge sharing 为同一 cycle 同一有向物理 edge 上重叠 flit 数（理想无冲突为 1）。</p>
+<p class="small">指标说明：Makespan 为最后 flit 占用最后一条 edge 的 cycle+1；Colors 为 VN 流条数；Peak edge sharing 恒为 1（calendar 调度无冲突）；Max buffering 为单 router 最大 dwell（拍数）。</p>
 
-<h2>Color budget 对比</h2>
+<h2>time_slot_tolerance 对比</h2>
 <div class="table-wrap"><table id="compare"></table></div>
 
 <div class="grid2">
@@ -118,6 +118,10 @@ svg text{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
   </div>
 </div>
 
+<h2>Router Color Calendar</h2>
+<p class="small">所选 router 的 color×cycle 表：行=经过该节点的 color VN；列=cycle。格子为端口切换 <code>in→out</code> 或缓冲 <code>buf</code>。</p>
+<div class="lane"><div class="lane-grid" id="routerCal"></div></div>
+
 <h2>Color VN 泳道图</h2>
 <p class="small">每一行是一条 distinct color VN；格子显示该 color 在当前 cycle 占用的 flit 数。</p>
 <div class="lane"><div class="lane-grid" id="colorLane"></div></div>
@@ -131,66 +135,9 @@ svg text{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
 <div class="lane"><div class="lane-grid" id="timeline"></div></div>
 
 <script>
-// --- Color catalog (color_catalog.py) ---
-const MAX_COLORS = 24;
-const C_UNICAST_XY = 0, C_UNICAST_YX = 1;
-const C_BCAST_ROW_EAST = 2, C_BCAST_COL_SOUTH = 3;
-const C_GATHER_COL_NORTH = 4, C_GATHER_ROW_WEST = 5;
-const C_REDUCE_COL_NORTH = 6, C_REDUCE_ROW_WEST = 7;
-const C_AG_ROW_EAST = 8, C_AG_ROW_WEST = 9;
-const C_AG_COL_SOUTH = 10, C_AG_COL_NORTH = 11;
-const C_AR_RS_ROW_EAST = 12, C_AR_AG_ROW_WEST = 13;
-const C_AR_RS_COL_SOUTH = 14, C_AR_AG_COL_NORTH = 15;
-const C_BCAST_ROW_WEST = 16, C_BCAST_COL_NORTH = 17;
-const C_GATHER_COL_SOUTH = 18, C_GATHER_ROW_EAST = 19;
-const C_REDUCE_COL_SOUTH = 20, C_REDUCE_ROW_EAST = 21;
-const C_SPARE_XY_0 = 22, C_SPARE_YX_0 = 23;
-
-const DIRS = {east:[0,1], west:[0,-1], south:[1,0], north:[-1,0]};
-
-const CATALOG = {
-  [C_UNICAST_XY]: ["unicast_xy", "unicast", "xy"],
-  [C_UNICAST_YX]: ["unicast_yx", "unicast", "yx"],
-  [C_BCAST_ROW_EAST]: ["bcast_row_east", "bus", "east"],
-  [C_BCAST_COL_SOUTH]: ["bcast_col_south", "bus", "south"],
-  [C_GATHER_COL_NORTH]: ["gather_col_north", "bus", "north"],
-  [C_GATHER_ROW_WEST]: ["gather_row_west", "bus", "west"],
-  [C_REDUCE_COL_NORTH]: ["reduce_col_north", "bus", "north"],
-  [C_REDUCE_ROW_WEST]: ["reduce_row_west", "bus", "west"],
-  [C_AG_ROW_EAST]: ["allgather_row_east", "bus", "east"],
-  [C_AG_ROW_WEST]: ["allgather_row_west", "bus", "west"],
-  [C_AG_COL_SOUTH]: ["allgather_col_south", "bus", "south"],
-  [C_AG_COL_NORTH]: ["allgather_col_north", "bus", "north"],
-  [C_AR_RS_ROW_EAST]: ["allreduce_rs_row_east", "bus", "east"],
-  [C_AR_AG_ROW_WEST]: ["allreduce_ag_row_west", "bus", "west"],
-  [C_AR_RS_COL_SOUTH]: ["allreduce_rs_col_south", "bus", "south"],
-  [C_AR_AG_COL_NORTH]: ["allreduce_ag_col_north", "bus", "north"],
-  [C_BCAST_ROW_WEST]: ["bcast_row_west", "bus", "west"],
-  [C_BCAST_COL_NORTH]: ["bcast_col_north", "bus", "north"],
-  [C_GATHER_COL_SOUTH]: ["gather_col_south", "bus", "south"],
-  [C_GATHER_ROW_EAST]: ["gather_row_east", "bus", "east"],
-  [C_REDUCE_COL_SOUTH]: ["reduce_col_south", "bus", "south"],
-  [C_REDUCE_ROW_EAST]: ["reduce_row_east", "bus", "east"],
-  [C_SPARE_XY_0]: ["spare_xy_0", "unicast", "xy"],
-  [C_SPARE_YX_0]: ["spare_yx_0", "unicast", "yx"],
-};
-
+const MAX_COLORS = 256;
 const COLOR_PALETTE = Array.from({length: MAX_COLORS}, (_, i) =>
   `hsl(${Math.round((i * 137.508) % 360)}, ${58 + (i % 3) * 8}%, ${42 + (i % 2) * 8}%)`);
-
-const BUDGET_NAMES = {
-  xy_baseline: "XY baseline (1 VN)",
-  minimal: "Color minimal",
-  compact: "Color compact",
-  parallel: "Color parallel",
-};
-
-const ColorBudget = {MINIMAL:"minimal", COMPACT:"compact", PARALLEL:"parallel"};
-const BUDGET_COLORS = {
-  minimal: [C_UNICAST_XY, C_UNICAST_XY],
-  compact: [C_UNICAST_XY, C_UNICAST_YX],
-  parallel: [C_UNICAST_XY, C_UNICAST_YX],
-};
 
 let current = null;
 
@@ -204,113 +151,7 @@ function nodeIdx(n, cols) { return n.y * cols + n.x; }
 function eid(a, b) { return `${a.x},${a.y}->${b.x},${b.y}`; }
 function elabel(e) { return e.id; }
 
-// --- color.py ---
-function unicastStep(current, dst, mode, rows, cols) {
-  if (current === dst) return current;
-  const r = Math.floor(current / cols), c = current % cols;
-  const dr = Math.floor(dst / cols), dc = dst % cols;
-  if (mode === "xy") {
-    if (r < dr) return (r + 1) * cols + c;
-    if (r > dr) return (r - 1) * cols + c;
-    if (c < dc) return r * cols + (c + 1);
-    if (c > dc) return r * cols + (c - 1);
-  } else if (mode === "yx") {
-    if (c < dc) return r * cols + (c + 1);
-    if (c > dc) return r * cols + (c - 1);
-    if (r < dr) return (r + 1) * cols + c;
-    if (r > dr) return (r - 1) * cols + c;
-  }
-  return null;
-}
-
-function buildIdealPlan(rows, cols, numColors = MAX_COLORS) {
-  numColors = Math.min(numColors, MAX_COLORS);
-  const dest = {};
-  const unicastModes = {};
-  for (let cid = 0; cid < numColors; cid++) {
-    const [name, kind, spec] = CATALOG[cid];
-    if (kind === "unicast") {
-      unicastModes[cid] = spec;
-    } else {
-      const [dr, dc] = DIRS[spec];
-      for (let node = 0; node < rows * cols; node++) {
-        const r = Math.floor(node / cols), c = node % cols;
-        const nr = r + dr, nc = c + dc;
-        if (!dest[node]) dest[node] = {};
-        if (0 <= nr && nr < rows && 0 <= nc && nc < cols) {
-          dest[node][cid] = [nr * cols + nc];
-        } else {
-          dest[node][cid] = [];
-        }
-      }
-    }
-  }
-  return {rows, cols, numColors, dest, unicastModes};
-}
-
-function buildBaselinePlan(rows, cols) {
-  return {rows, cols, numColors: 1, dest: {}, unicastModes: {0: "xy"}};
-}
-
-function nextHops(plan, node, colorId, dst = null) {
-  const table = plan.dest[node] || {};
-  const hops = table[colorId];
-  if (hops && hops.length) return hops;
-  if (dst !== null && plan.unicastModes[colorId] !== undefined) {
-    const nxt = unicastStep(node, dst, plan.unicastModes[colorId], plan.rows, plan.cols);
-    if (nxt !== null && nxt !== node) return [nxt];
-  }
-  return [];
-}
-
-function expandPath(plan, src, dst, colorId) {
-  const path = [];
-  let current = src;
-  const guard = plan.rows * plan.cols * 4;
-  for (let step = 0; current !== dst && step < guard; step++) {
-    const hops = nextHops(plan, current, colorId, dst);
-    if (!hops.length) break;
-    const next = hops[0];
-    if (next === current) break;
-    const from = idxToNode(current, plan.cols);
-    const to = idxToNode(next, plan.cols);
-    path.push({id: eid(from, to), from, to});
-    current = next;
-  }
-  return path;
-}
-
-// --- color_usage.py ---
-function pickTreeColors(root, rows, cols, gather) {
-  const r = Math.floor(root / cols), c = root % cols;
-  let rowC, colC;
-  if (gather) {
-    rowC = c === 0 ? C_GATHER_ROW_WEST : (c === cols - 1 ? C_GATHER_ROW_EAST : C_GATHER_ROW_WEST);
-    colC = r === 0 ? C_GATHER_COL_NORTH : (r === rows - 1 ? C_GATHER_COL_SOUTH : C_GATHER_COL_NORTH);
-  } else {
-    rowC = c === 0 ? C_BCAST_ROW_EAST : (c === cols - 1 ? C_BCAST_ROW_WEST : C_BCAST_ROW_EAST);
-    colC = r === 0 ? C_BCAST_COL_SOUTH : (r === rows - 1 ? C_BCAST_COL_NORTH : C_BCAST_COL_SOUTH);
-  }
-  return [rowC, colC];
-}
-function pickBroadcastColors(root, rows, cols) { return pickTreeColors(root, rows, cols, false); }
-function pickReduceColors(root, rows, cols) {
-  const [rowC, colC] = pickTreeColors(root, rows, cols, true);
-  const rowMap = {[C_GATHER_ROW_WEST]: C_REDUCE_ROW_WEST, [C_GATHER_ROW_EAST]: C_REDUCE_ROW_EAST};
-  const colMap = {[C_GATHER_COL_NORTH]: C_REDUCE_COL_NORTH, [C_GATHER_COL_SOUTH]: C_REDUCE_COL_SOUTH};
-  return [rowMap[rowC] ?? C_REDUCE_ROW_WEST, colMap[colC] ?? C_REDUCE_COL_NORTH];
-}
-function primarySecondary(budget) { return BUDGET_COLORS[budget] || BUDGET_COLORS.minimal; }
-function busDirection(colorId) {
-  const [, kind, spec] = CATALOG[colorId];
-  if (kind !== "bus") throw new Error(`Color ${colorId} is not a directional bus`);
-  return spec;
-}
-function distinctColors(packets) {
-  return new Set(packets.map(p => p.color)).size;
-}
-
-// --- collective.py packet helpers ---
+// --- Traffic (end-to-end XY packets) ---
 function cedge(src, dst, chunk, payload, delay, color) {
   return {src, dst, size_bytes: chunk, payload, delay_cycles: delay, color};
 }
@@ -339,324 +180,7 @@ function generateBaselineCollectiveRoot(pattern, rows, cols, chunkBytes, root) {
   throw new Error(`Unknown pattern ${pattern}`);
 }
 
-function idealBroadcast(rows, cols, chunk, root = 0) {
-  const [rowC, colC] = pickBroadcastColors(root, rows, cols);
-  const rr = Math.floor(root / cols), rc = root % cols;
-  const rowDir = busDirection(rowC), colDir = busDirection(colC);
-  const pk = [];
-  if (rowDir === "east") {
-    for (let c = rc; c < cols - 1; c++) {
-      const src = rr * cols + c;
-      pk.push(cedge(src, src + 1, chunk, "broadcast", c - rc, rowC));
-    }
-  } else {
-    for (let c = rc; c > 0; c--) {
-      const src = rr * cols + c;
-      pk.push(cedge(src, src - 1, chunk, "broadcast", rc - c, rowC));
-    }
-  }
-  const base = Math.max(1, cols - 1);
-  if (colDir === "south") {
-    for (let c = 0; c < cols; c++) {
-      for (let r = rr; r < rows - 1; r++) {
-        pk.push(cedge(r * cols + c, (r + 1) * cols + c, chunk, "broadcast", base + r - rr, colC));
-      }
-    }
-  } else {
-    for (let c = 0; c < cols; c++) {
-      for (let r = rr; r > 0; r--) {
-        pk.push(cedge(r * cols + c, (r - 1) * cols + c, chunk, "broadcast", base + rr - r, colC));
-      }
-    }
-  }
-  return pk;
-}
-
-function idealTreeToRoot(rows, cols, chunk, payload, colColor, rowColor, root = 0) {
-  const rr = Math.floor(root / cols), rc = root % cols;
-  const colDir = busDirection(colColor), rowDir = busDirection(rowColor);
-  const pk = [];
-  if (colDir === "north") {
-    for (let c = 0; c < cols; c++) {
-      for (let r = rows - 1; r > rr; r--) {
-        const level = (rows - 1) - r;
-        pk.push(cedge(r * cols + c, (r - 1) * cols + c, chunk, payload, level, colColor));
-      }
-    }
-  } else {
-    for (let c = 0; c < cols; c++) {
-      for (let r = 0; r < rr; r++) {
-        const level = rr - r - 1;
-        pk.push(cedge(r * cols + c, (r + 1) * cols + c, chunk, payload, level, colColor));
-      }
-    }
-  }
-  const base = Math.max(0, rows - 1);
-  if (rowDir === "west") {
-    for (let c = cols - 1; c > rc; c--) {
-      pk.push(cedge(rr * cols + c, rr * cols + c - 1, chunk, payload, base + c - rc, rowColor));
-    }
-  } else {
-    for (let c = 0; c < rc; c++) {
-      pk.push(cedge(rr * cols + c, rr * cols + c + 1, chunk, payload, base + rc - c, rowColor));
-    }
-  }
-  return pk;
-}
-
-function idealAllgather(rows, cols, chunk) {
-  const pk = [];
-  for (let step = 0; step < cols - 1; step++) {
-    for (let r = 0; r < rows; r++) {
-      for (let c = 0; c < cols - 1; c++) {
-        pk.push(cedge(r * cols + c, r * cols + c + 1, chunk, "allgather", step, C_AG_ROW_EAST));
-      }
-      for (let c = cols - 1; c > 0; c--) {
-        pk.push(cedge(r * cols + c, r * cols + c - 1, chunk, "allgather", step, C_AG_ROW_WEST));
-      }
-    }
-  }
-  const base = Math.max(0, cols - 1);
-  for (let step = 0; step < rows - 1; step++) {
-    for (let c = 0; c < cols; c++) {
-      for (let r = 0; r < rows - 1; r++) {
-        pk.push(cedge(r * cols + c, (r + 1) * cols + c, chunk, "allgather", base + step, C_AG_COL_SOUTH));
-      }
-      for (let r = rows - 1; r > 0; r--) {
-        pk.push(cedge(r * cols + c, (r - 1) * cols + c, chunk, "allgather", base + step, C_AG_COL_NORTH));
-      }
-    }
-  }
-  return pk;
-}
-
-function idealAllreduce(rows, cols, chunk) {
-  const pk = [];
-  let t = 0;
-  for (let step = 0; step < cols - 1; step++) {
-    for (let r = 0; r < rows; r++) {
-      for (let c = 0; c < cols - 1; c++) {
-        pk.push(cedge(r * cols + c, r * cols + c + 1, chunk, "allreduce", t + step, C_AR_RS_ROW_EAST));
-      }
-    }
-  }
-  t += Math.max(1, cols - 1);
-  for (let step = 0; step < cols - 1; step++) {
-    for (let r = 0; r < rows; r++) {
-      for (let c = cols - 1; c > 0; c--) {
-        pk.push(cedge(r * cols + c, r * cols + c - 1, chunk, "allreduce", t + step, C_AR_AG_ROW_WEST));
-      }
-    }
-  }
-  t += Math.max(1, cols - 1);
-  for (let step = 0; step < rows - 1; step++) {
-    for (let c = 0; c < cols; c++) {
-      for (let r = 0; r < rows - 1; r++) {
-        pk.push(cedge(r * cols + c, (r + 1) * cols + c, chunk, "allreduce", t + step, C_AR_RS_COL_SOUTH));
-      }
-    }
-  }
-  t += Math.max(1, rows - 1);
-  for (let step = 0; step < rows - 1; step++) {
-    for (let c = 0; c < cols; c++) {
-      for (let r = rows - 1; r > 0; r--) {
-        pk.push(cedge(r * cols + c, (r - 1) * cols + c, chunk, "allreduce", t + step, C_AR_AG_COL_NORTH));
-      }
-    }
-  }
-  return pk;
-}
-
-function minimalBroadcast(rows, cols, chunk, root = 0, budget) {
-  const [fwd, rev] = primarySecondary(budget);
-  const rr = Math.floor(root / cols), rc = root % cols;
-  const pk = [];
-  if (rc < cols - 1) {
-    for (let c = rc; c < cols - 1; c++) {
-      const src = rr * cols + c;
-      pk.push(cedge(src, src + 1, chunk, "broadcast", c - rc, fwd));
-    }
-  } else if (rc > 0) {
-    for (let c = rc; c > 0; c--) {
-      const src = rr * cols + c;
-      pk.push(cedge(src, src - 1, chunk, "broadcast", rc - c, rev));
-    }
-  }
-  const base = Math.max(1, cols - 1);
-  if (rr < rows - 1) {
-    for (let c = 0; c < cols; c++) {
-      for (let r = rr; r < rows - 1; r++) {
-        pk.push(cedge(r * cols + c, (r + 1) * cols + c, chunk, "broadcast", base + r - rr, fwd));
-      }
-    }
-  } else if (rr > 0) {
-    for (let c = 0; c < cols; c++) {
-      for (let r = rr; r > 0; r--) {
-        pk.push(cedge(r * cols + c, (r - 1) * cols + c, chunk, "broadcast", base + rr - r, rev));
-      }
-    }
-  }
-  if (budget === ColorBudget.MINIMAL) pk.forEach(e => { e.color = fwd; });
-  return pk;
-}
-
-function minimalTreeToRoot(rows, cols, chunk, payload, root = 0, budget) {
-  const [fwd, rev] = primarySecondary(budget);
-  const rr = Math.floor(root / cols), rc = root % cols;
-  const pk = [];
-  for (let c = 0; c < cols; c++) {
-    for (let r = rows - 1; r > rr; r--) {
-      const level = (rows - 1) - r;
-      pk.push(cedge(r * cols + c, (r - 1) * cols + c, chunk, payload, level, fwd));
-    }
-    for (let r = 0; r < rr; r++) {
-      const level = rr - r - 1;
-      pk.push(cedge(r * cols + c, (r + 1) * cols + c, chunk, payload, level, rev));
-    }
-  }
-  const base = Math.max(0, rows - 1);
-  for (let c = cols - 1; c > rc; c--) {
-    pk.push(cedge(rr * cols + c, rr * cols + c - 1, chunk, payload, base + c - rc, rev));
-  }
-  for (let c = 0; c < rc; c++) {
-    pk.push(cedge(rr * cols + c, rr * cols + c + 1, chunk, payload, base + rc - c, fwd));
-  }
-  if (budget === ColorBudget.MINIMAL) pk.forEach(e => { e.color = fwd; });
-  return pk;
-}
-
-function minimalAllgather(rows, cols, chunk, budget) {
-  const [fwd, rev] = primarySecondary(budget);
-  const pk = [];
-  for (let step = 0; step < cols - 1; step++) {
-    const dFwd = budget === ColorBudget.COMPACT ? step : step * 2;
-    const dRev = budget === ColorBudget.COMPACT ? step : step * 2 + 1;
-    for (let r = 0; r < rows; r++) {
-      for (let c = 0; c < cols - 1; c++) {
-        pk.push(cedge(r * cols + c, r * cols + c + 1, chunk, "allgather", dFwd, fwd));
-      }
-    }
-    for (let r = 0; r < rows; r++) {
-      for (let c = cols - 1; c > 0; c--) {
-        const cRev = budget === ColorBudget.COMPACT ? rev : fwd;
-        pk.push(cedge(r * cols + c, r * cols + c - 1, chunk, "allgather", dRev, cRev));
-      }
-    }
-  }
-  const rowSpan = budget === ColorBudget.COMPACT ? Math.max(1, cols - 1) : Math.max(1, (cols - 1) * 2);
-  const base = rowSpan;
-  for (let step = 0; step < rows - 1; step++) {
-    const dFwd = budget === ColorBudget.COMPACT ? base + step : base + step * 2;
-    const dRev = budget === ColorBudget.COMPACT ? base + step : base + step * 2 + 1;
-    for (let c = 0; c < cols; c++) {
-      for (let r = 0; r < rows - 1; r++) {
-        pk.push(cedge(r * cols + c, (r + 1) * cols + c, chunk, "allgather", dFwd, fwd));
-      }
-    }
-    for (let c = 0; c < cols; c++) {
-      for (let r = rows - 1; r > 0; r--) {
-        const cRev = budget === ColorBudget.COMPACT ? rev : fwd;
-        pk.push(cedge(r * cols + c, (r - 1) * cols + c, chunk, "allgather", dRev, cRev));
-      }
-    }
-  }
-  return pk;
-}
-
-function minimalAllreduce(rows, cols, chunk, budget) {
-  const [fwd, rev] = primarySecondary(budget);
-  const pk = [];
-  let t = 0;
-  function appendRowEast(delayBase) {
-    for (let step = 0; step < cols - 1; step++) {
-      for (let r = 0; r < rows; r++) {
-        for (let c = 0; c < cols - 1; c++) {
-          pk.push(cedge(r * cols + c, r * cols + c + 1, chunk, "allreduce", delayBase + step, fwd));
-        }
-      }
-    }
-  }
-  function appendRowWest(delayBase) {
-    for (let step = 0; step < cols - 1; step++) {
-      for (let r = 0; r < rows; r++) {
-        for (let c = cols - 1; c > 0; c--) {
-          const color = budget === ColorBudget.COMPACT ? rev : fwd;
-          let d = delayBase + step;
-          if (budget === ColorBudget.MINIMAL) d = delayBase + step * 2 + 1;
-          pk.push(cedge(r * cols + c, r * cols + c - 1, chunk, "allreduce", d, color));
-        }
-      }
-    }
-  }
-  function appendColSouth(delayBase) {
-    for (let step = 0; step < rows - 1; step++) {
-      for (let c = 0; c < cols; c++) {
-        for (let r = 0; r < rows - 1; r++) {
-          pk.push(cedge(r * cols + c, (r + 1) * cols + c, chunk, "allreduce", delayBase + step, fwd));
-        }
-      }
-    }
-  }
-  function appendColNorth(delayBase) {
-    for (let step = 0; step < rows - 1; step++) {
-      for (let c = 0; c < cols; c++) {
-        for (let r = rows - 1; r > 0; r--) {
-          const color = budget === ColorBudget.COMPACT ? rev : fwd;
-          let d = delayBase + step;
-          if (budget === ColorBudget.MINIMAL) d = delayBase + step * 2 + 1;
-          pk.push(cedge(r * cols + c, (r - 1) * cols + c, chunk, "allreduce", d, color));
-        }
-      }
-    }
-  }
-  if (budget === ColorBudget.MINIMAL) {
-    appendRowEast(t); t += Math.max(1, (cols - 1) * 2);
-    appendRowWest(t); t += Math.max(1, (cols - 1) * 2);
-    appendColSouth(t); t += Math.max(1, (rows - 1) * 2);
-    appendColNorth(t);
-  } else {
-    appendRowEast(t); t += Math.max(1, cols - 1);
-    appendRowWest(t); t += Math.max(1, cols - 1);
-    appendColSouth(t); t += Math.max(1, rows - 1);
-    appendColNorth(t);
-  }
-  return pk;
-}
-
-function generateIdealCollective(pattern, rows, cols, chunkBytes, root = 0, colorBudget = ColorBudget.PARALLEL) {
-  const chunk = Math.max(1, chunkBytes | 0);
-  pattern = pattern.toLowerCase();
-  if (colorBudget === ColorBudget.PARALLEL) {
-    if (pattern === "broadcast") return idealBroadcast(rows, cols, chunk, root);
-    if (pattern === "gather") {
-      const [rowC, colC] = pickTreeColors(root, rows, cols, true);
-      return idealTreeToRoot(rows, cols, chunk, "gather", colC, rowC, root);
-    }
-    if (pattern === "reduce") {
-      const [rowC, colC] = pickReduceColors(root, rows, cols);
-      return idealTreeToRoot(rows, cols, chunk, "reduce", colC, rowC, root);
-    }
-    if (pattern === "allgather") return idealAllgather(rows, cols, chunk);
-    if (pattern === "allreduce") return idealAllreduce(rows, cols, chunk);
-    throw new Error(`Unknown pattern ${pattern}`);
-  }
-  if (pattern === "broadcast") return minimalBroadcast(rows, cols, chunk, root, colorBudget);
-  if (pattern === "gather" || pattern === "reduce") {
-    return minimalTreeToRoot(rows, cols, chunk, pattern, root, colorBudget);
-  }
-  if (pattern === "allgather") return minimalAllgather(rows, cols, chunk, colorBudget);
-  if (pattern === "allreduce") return minimalAllreduce(rows, cols, chunk, colorBudget);
-  throw new Error(`Unknown pattern ${pattern}`);
-}
-
-function generateCollective(budgetKey, pattern, rows, cols, chunkBytes, root) {
-  if (budgetKey === "xy_baseline") {
-    return generateBaselineCollectiveRoot(pattern, rows, cols, chunkBytes, root);
-  }
-  return generateIdealCollective(pattern, rows, cols, chunkBytes, root, budgetKey);
-}
-
-// --- Scheduling (collective-mesh-viz pattern) ---
+// --- XY routing ---
 function path(a, b) {
   const p = [];
   let c = {x: a.x, y: a.y};
@@ -673,129 +197,184 @@ function path(a, b) {
   return p;
 }
 
-function periodOf(f, defaultPeriod = 1) { return f.period ?? defaultPeriod ?? 1; }
-
-function duration(flows, period = 1) {
-  return Math.max(1, ...flows.map(f => (f.start || 0) + (f.flits - 1) * periodOf(f, period) + f.path.length));
+function portDir(from, to) {
+  if (to.x > from.x) return "E";
+  if (to.x < from.x) return "W";
+  if (to.y > from.y) return "S";
+  if (to.y < from.y) return "N";
+  return "-";
 }
 
-function eventsAt(f, cycle, defaultPeriod) {
-  const start = f.start || 0, period = periodOf(f, defaultPeriod);
-  const out = [];
-  for (let i = 0; i < f.flits; i++) {
-    const off = cycle - (start + i * period);
-    if (off >= 0 && off < f.path.length) {
-      out.push({flow: f, flit: i, edge: f.path[off], label: `${f.id}.f${i}`});
-    }
-  }
-  return out;
-}
+function edgeKey(cycle, edgeId) { return `${cycle}|${edgeId}`; }
 
-function eventAt(f, cycle, defaultPeriod) {
-  return eventsAt(f, cycle, defaultPeriod)[0] || null;
-}
-
-function allEvents(schedule, cycle) {
-  return schedule.flows.flatMap(f => eventsAt(f, cycle, schedule.period));
-}
-
-function flowConflicts(f, start, occupied) {
-  const period = periodOf(f, 1);
-  for (let i = 0; i < f.flits; i++) {
-    const base = start + i * period;
-    for (let h = 0; h < f.path.length; h++) {
-      if (occupied.has(`${base + h}|${f.path[h].id}`)) return true;
-    }
-  }
-  return false;
-}
-
-function reserveFlow(f, occupied) {
-  const period = periodOf(f, 1), start = f.start || 0;
-  for (let i = 0; i < f.flits; i++) {
-    const base = start + i * period;
-    for (let h = 0; h < f.path.length; h++) occupied.add(`${base + h}|${f.path[h].id}`);
-  }
-}
-
-function resolveEdgeConflicts(flows) {
-  const occupied = new Set(), resolved = new Array(flows.length);
-  const ordered = flows.map((f, i) => ({...f, order: i})).sort((a, b) => (a.start || 0) - (b.start || 0) || a.order - b.order);
-  ordered.forEach(f => {
-    let start = f.start || 0;
-    while (flowConflicts(f, start, occupied)) start++;
-    const out = {...f, start};
-    delete out.order;
-    resolved[f.order] = out;
-    reserveFlow(out, occupied);
-  });
-  return resolved;
-}
-
-function peakEdgeOccupancy(schedule) {
-  let peak = 0;
-  for (let c = 0; c < schedule.duration; c++) {
-    const counts = new Map();
-    allEvents(schedule, c).forEach(e => counts.set(e.edge.id, (counts.get(e.edge.id) || 0) + 1));
-    peak = Math.max(peak, ...counts.values(), 0);
-  }
-  return peak;
-}
-
-function timedSchedule(flows, label) {
-  const period = Math.max(1, ...flows.map(f => periodOf(f, 1)));
-  const dur = duration(flows, period);
-  return {flows, period, duration: dur, label};
-}
-
-function finishSchedule(flows, label) {
-  const scheduled = resolveEdgeConflicts(flows);
-  const schedule = timedSchedule(scheduled, label);
-  schedule.peak = peakEdgeOccupancy(schedule);
-  return schedule;
-}
-
-function packetsToFlows(packets, rows, cols, flitsPerBlock, plan) {
+function packetsToFlows(packets, cols, flitsPerBlock) {
   return packets.map((pkt, i) => {
     const from = idxToNode(pkt.src, cols);
     const to = idxToNode(pkt.dst, cols);
-    const p = expandPath(plan, pkt.src, pkt.dst, pkt.color);
-    const [cname] = CATALOG[pkt.color] || [`c${pkt.color}`];
+    const p = path(from, to);
     return {
       id: `S${i}`,
-      label: `c${pkt.color}: (${from.x},${from.y})->(${to.x},${to.y})`,
+      label: `c${i}: (${from.x},${from.y})->(${to.x},${to.y})`,
       from, to,
       srcIdx: pkt.src, dstIdx: pkt.dst,
-      colorId: pkt.color,
-      colorName: cname,
+      colorId: i,
+      colorName: `vn${i}`,
       flits: flitsPerBlock,
       payload: pkt.payload,
-      path: p.length ? p : path(from, to),
-      color: COLOR_PALETTE[pkt.color % MAX_COLORS],
-      start: pkt.delay_cycles || 0,
-      period: 1,
+      path: p,
+      color: COLOR_PALETTE[i % MAX_COLORS],
+      release: pkt.delay_cycles || 0,
       stage: pkt.payload,
     };
   });
 }
 
-function buildScheduleFromPackets(packets, rows, cols, flitsPerBlock, plan, label) {
-  const flows = packetsToFlows(packets, rows, cols, flitsPerBlock, plan);
-  return finishSchedule(flows, label);
+function addCalendarSlot(calendar, nodeIdx, colorId, cycle, text, flowColor, isBuf) {
+  if (!calendar.has(nodeIdx)) calendar.set(nodeIdx, new Map());
+  const byColor = calendar.get(nodeIdx);
+  if (!byColor.has(colorId)) byColor.set(colorId, new Map());
+  byColor.get(colorId).set(cycle, {text, color: flowColor, isBuf});
 }
 
-function summarize(rows, cols, op, base, root) {
-  return ["xy_baseline", "minimal", "compact", "parallel"].map(budget => {
-    const pkts = generateCollective(budget, op, rows, cols, base, root);
-    const plan = budget === "xy_baseline" ? buildBaselinePlan(rows, cols) : buildIdealPlan(rows, cols);
-    const schedule = buildScheduleFromPackets(pkts, rows, cols, base, plan, BUDGET_NAMES[budget]);
+function buildCalendarSchedule(flows, T, cols) {
+  const reserved = new Set();
+  const events = [];
+  const calendar = new Map();
+  let maxCycle = 0;
+  let maxDwell = 0;
+  let totalStall = 0;
+
+  const ordered = [...flows].sort((a, b) =>
+    (a.release || 0) - (b.release || 0) || a.path.length - b.path.length || a.colorId - b.colorId);
+
+  function earliestEdge(cycle, edgeId, limit = 200000) {
+    for (let t = cycle; t < limit; t++) {
+      if (!reserved.has(edgeKey(t, edgeId))) return t;
+    }
+    return limit;
+  }
+
+  for (const flow of ordered) {
+    let prevFirstEdge = -1;
+    for (let flit = 0; flit < flow.flits; flit++) {
+      const releaseAt = (flow.release || 0) + flit;
+      if (!flow.path.length) continue;
+
+      const maxAttempts = Math.max(8192, flows.length * flow.path.length * flow.flits * 128);
+      let scheduled = false;
+      let stall = 0;
+
+      for (let attempt = 0; attempt < maxAttempts && !scheduled; attempt++) {
+        const times = [];
+        let ok = true;
+        let t0 = Math.max(releaseAt + stall, prevFirstEdge >= 0 ? prevFirstEdge + 1 : releaseAt + stall);
+        t0 = earliestEdge(t0, flow.path[0].id);
+        times.push(t0);
+
+        for (let h = 1; h < flow.path.length && ok; h++) {
+          const prevT = times[h - 1];
+          const edge = flow.path[h];
+          let found = false;
+          for (let t = prevT + 1; t <= prevT + T; t++) {
+            if (!reserved.has(edgeKey(t, edge.id))) {
+              times.push(t);
+              found = true;
+              break;
+            }
+          }
+          if (!found) ok = false;
+        }
+
+        if (!ok) { stall++; continue; }
+
+        totalStall += stall;
+        prevFirstEdge = times[0];
+        const injectAt = releaseAt + stall;
+
+        for (let h = 0; h < flow.path.length; h++) {
+          const t = times[h];
+          const edge = flow.path[h];
+          const dwell = h > 0 ? times[h] - times[h - 1] - 1 : 0;
+          maxDwell = Math.max(maxDwell, dwell);
+          maxCycle = Math.max(maxCycle, t);
+          reserved.add(edgeKey(t, edge.id));
+
+          events.push({
+            cycle: t, flow, flit, hop: h, edge, dwell,
+            label: `${flow.id}.f${flit}`,
+          });
+
+          const srcIdx2 = nodeIdx(flow.from, cols);
+          if (h === 0) {
+            for (let b = injectAt; b < t; b++) {
+              addCalendarSlot(calendar, srcIdx2, flow.colorId, b, "wait", flow.color, true);
+            }
+            const outD = portDir(edge.from, edge.to);
+            addCalendarSlot(calendar, srcIdx2, flow.colorId, t, `inj->${outD}`, flow.color, false);
+          } else {
+            const rNode = flow.path[h - 1].to;
+            const rIdx = nodeIdx(rNode, cols);
+            const inD = portDir(flow.path[h - 1].from, rNode);
+            const outD = portDir(edge.from, edge.to);
+            for (let b = times[h - 1] + 1; b < times[h]; b++) {
+              addCalendarSlot(calendar, rIdx, flow.colorId, b, "buf", flow.color, true);
+            }
+            addCalendarSlot(calendar, rIdx, flow.colorId, t, `${inD}->${outD}`, flow.color, false);
+          }
+        }
+        scheduled = true;
+      }
+      if (!scheduled) throw new Error(`Failed to schedule ${flow.id} flit ${flit}`);
+    }
+  }
+
+  const eventsByCycle = new Map();
+  for (const ev of events) {
+    if (!eventsByCycle.has(ev.cycle)) eventsByCycle.set(ev.cycle, []);
+    eventsByCycle.get(ev.cycle).push(ev);
+  }
+
+  return {
+    flows,
+    events,
+    eventsByCycle,
+    calendar,
+    duration: maxCycle + 1,
+    period: 1,
+    peak: 1,
+    maxDwell,
+    totalStall,
+    colorsUsed: flows.length,
+    T,
+    label: "calendar",
+  };
+}
+
+function allEvents(schedule, cycle) {
+  const raw = schedule.eventsByCycle.get(cycle) || [];
+  return raw.map(ev => ({flow: ev.flow, flit: ev.flit, edge: ev.edge, label: ev.label}));
+}
+
+function eventAt(flow, cycle, schedule) {
+  return allEvents(schedule, cycle).find(e => e.flow === flow) || null;
+}
+
+function buildScheduleFromPackets(packets, cols, flitsPerBlock, T) {
+  const flows = packetsToFlows(packets, cols, flitsPerBlock);
+  return buildCalendarSchedule(flows, T, cols);
+}
+
+function summarizeTolerance(rows, cols, op, flits, root) {
+  return [1, 2, 3, 4].map(T => {
+    const pkts = generateBaselineCollectiveRoot(op, rows, cols, flits, root);
+    const schedule = buildScheduleFromPackets(pkts, cols, flits, T);
     return {
-      budget: BUDGET_NAMES[budget],
-      budgetKey: budget,
+      T,
       duration: schedule.duration,
-      distinct: distinctColors(pkts),
-      peak: schedule.peak ?? peakEdgeOccupancy(schedule),
-      streams: pkts.length,
+      maxDwell: schedule.maxDwell,
+      totalStall: schedule.totalStall,
+      peak: schedule.peak,
+      streams: schedule.flows.length,
     };
   });
 }
@@ -847,24 +426,19 @@ function trimSeg(p0, p1, t = 13) {
   return {x1: p0.x + dx / len * t, y1: p0.y + dy / len * t, x2: p1.x - dx / len * t, y2: p1.y - dy / len * t};
 }
 
-function renderStaticRoutes(plan, rows, cols, layout, colorId) {
+function renderFlowPathOverlay(schedule, rows, cols, layout, colorId) {
   if (colorId === "all" || colorId === null) return "";
-  const cid = +colorId;
-  const col = COLOR_PALETTE[cid % MAX_COLORS];
-  const lines = [];
-  for (let node = 0; node < rows * cols; node++) {
-    const hops = nextHops(plan, node, cid, null);
-    if (!hops.length) continue;
-    const from = idxToNode(node, cols);
-    const to = idxToNode(hops[0], cols);
-    const p0 = pos(from, rows, cols, layout), p1 = pos(to, rows, cols, layout);
+  const flow = schedule.flows.find(f => f.colorId === +colorId);
+  if (!flow || !flow.path.length) return "";
+  const col = flow.color;
+  return flow.path.map(edge => {
+    const p0 = pos(edge.from, rows, cols, layout), p1 = pos(edge.to, rows, cols, layout);
     const tr = trimSeg(p0, p1, layout.trim * 0.7);
-    lines.push(`<line x1="${tr.x1}" y1="${tr.y1}" x2="${tr.x2}" y2="${tr.y2}" stroke="${col}" stroke-width="1" stroke-opacity="0.35" marker-end="url(#arrStatic)"/>`);
-  }
-  return lines.join("");
+    return `<line x1="${tr.x1}" y1="${tr.y1}" x2="${tr.x2}" y2="${tr.y2}" stroke="${col}" stroke-width="1" stroke-opacity="0.35" marker-end="url(#arrStatic)"/>`;
+  }).join("");
 }
 
-function renderMesh(schedule, rows, cols, cycle, plan, colorFilter, showOverlay, rootIdx) {
+function renderMesh(schedule, rows, cols, cycle, colorFilter, showOverlay, rootIdx) {
   const layout = meshLayout(rows, cols);
   let evs = allEvents(schedule, cycle);
   if (colorFilter !== "all") evs = evs.filter(e => e.flow.colorId === +colorFilter);
@@ -883,7 +457,7 @@ function renderMesh(schedule, rows, cols, cycle, plan, colorFilter, showOverlay,
     lines.push({from: node(x, y + 1), to: node(x, y)});
   }
   const overlayColor = showOverlay ? (colorFilter !== "all" ? colorFilter : null) : null;
-  const staticSvg = showOverlay ? renderStaticRoutes(plan, rows, cols, layout, overlayColor) : "";
+  const staticSvg = showOverlay ? renderFlowPathOverlay(schedule, rows, cols, layout, overlayColor) : "";
   const lineSvg = lines.map(e => {
     const id = eid(e.from, e.to);
     const p0 = pos(e.from, rows, cols, layout), p1 = pos(e.to, rows, cols, layout);
@@ -926,7 +500,8 @@ function renderLaneGrid(el, rowLabels, cycles, valueAt) {
   el.innerHTML = `<div class="cell head rowhead">item</div>${cycles.map(c => `<div class="cell head">c${c}</div>`).join("")}` +
     rowLabels.map(r => `<div class="cell rowhead" title="${r}">${r}</div>` + cycles.map(c => {
       const v = valueAt(r, c);
-      return `<div class="cell" title="${v.text || ""}" style="${v.color ? `color:${v.color};font-weight:700;background:#fafafa` : ""}">${v.text || "."}</div>`;
+      const style = v.style || (v.color ? `color:${v.color};font-weight:700;background:${v.isBuf ? "#f0f4ff" : "#fafafa"}` : "");
+      return `<div class="cell" title="${v.text || ""}" style="${style}">${v.text || "."}</div>`;
     }).join("")).join("");
 }
 
@@ -936,35 +511,69 @@ function filteredEvents(schedule, cycle, colorFilter) {
   return evs;
 }
 
-function updateColorFilterOptions(packets) {
+function updateColorFilterOptions(flows) {
   const sel = document.getElementById("colorFilter");
   const prev = sel.value;
-  const ids = [...new Set(packets.map(p => p.color))].sort((a, b) => a - b);
   sel.innerHTML = `<option value="all">All colors</option>` +
-    ids.map(id => {
-      const [name] = CATALOG[id] || [`c${id}`];
-      return `<option value="${id}">c${id} ${name}</option>`;
-    }).join("");
+    flows.map(f => `<option value="${f.colorId}">${f.label}</option>`).join("");
   if ([...sel.options].some(o => o.value === prev)) sel.value = prev;
+}
+
+function updateCalRouterOptions(rows, cols, root) {
+  const sel = document.getElementById("calRouter");
+  const prev = sel.value;
+  const opts = [];
+  for (let i = 0; i < rows * cols; i++) {
+    const n = idxToNode(i, cols);
+    opts.push(`<option value="${i}">${i} (${n.x},${n.y})${i === root ? " [root]" : ""}</option>`);
+  }
+  sel.innerHTML = opts.join("");
+  if ([...sel.options].some(o => o.value === prev)) sel.value = prev;
+  else sel.value = String(root);
+}
+
+function renderRouterCalendar(schedule, routerIdx, cycles) {
+  const byColor = schedule.calendar.get(routerIdx);
+  if (!byColor) {
+    renderLaneGrid(document.getElementById("routerCal"), ["(no traffic)"], cycles, () => ({text: ""}));
+    return;
+  }
+  const colorIds = [...byColor.keys()].sort((a, b) => a - b);
+  const rowLabels = colorIds.map(id => {
+    const flow = schedule.flows.find(f => f.colorId === id);
+    return flow ? flow.label : `c${id}`;
+  });
+  renderLaneGrid(document.getElementById("routerCal"), rowLabels, cycles, (rowLabel, cy) => {
+    const id = colorIds.find(cid => {
+      const flow = schedule.flows.find(f => f.colorId === cid);
+      return flow && flow.label === rowLabel;
+    });
+    if (id === undefined) return {text: ""};
+    const slot = byColor.get(id)?.get(cy);
+    if (!slot) return {text: ""};
+    return {text: slot.text, color: slot.color, isBuf: slot.isBuf};
+  });
 }
 
 function render() {
   const rows = Math.max(2, Math.min(16, +document.getElementById("rows").value || 4));
   const cols = Math.max(2, Math.min(16, +document.getElementById("cols").value || 4));
   const op = document.getElementById("op").value;
-  const budget = document.getElementById("budget").value;
+  const T = Math.max(1, Math.min(8, +document.getElementById("tolerance").value || 1));
+  document.getElementById("tolerance").value = T;
   const root = Math.max(0, Math.min(rows * cols - 1, +document.getElementById("root").value || 0));
   document.getElementById("root").max = rows * cols - 1;
   const base = Math.max(1, Math.min(24, +document.getElementById("flits").value || 1));
   const colorFilter = document.getElementById("colorFilter").value;
   const showOverlay = document.getElementById("routeOverlay").checked;
+  const calRouter = Math.max(0, Math.min(rows * cols - 1, +document.getElementById("calRouter").value || root));
 
-  const packets = generateCollective(budget, op, rows, cols, base, root);
-  const plan = budget === "xy_baseline" ? buildBaselinePlan(rows, cols) : buildIdealPlan(rows, cols);
-  const schedule = buildScheduleFromPackets(packets, rows, cols, base, plan, BUDGET_NAMES[budget]);
-  current = {rows, cols, op, budget, root, base, schedule, plan, packets};
+  const packets = generateBaselineCollectiveRoot(op, rows, cols, base, root);
+  const schedule = buildScheduleFromPackets(packets, cols, base, T);
+  current = {rows, cols, op, T, root, base, schedule, packets};
 
-  updateColorFilterOptions(packets);
+  updateColorFilterOptions(schedule.flows);
+  updateCalRouterOptions(rows, cols, root);
 
   const cycleInput = document.getElementById("cycle");
   cycleInput.max = Math.max(0, schedule.duration);
@@ -972,21 +581,21 @@ function render() {
   cycleInput.value = cycle;
 
   const evs = filteredEvents(schedule, cycle, colorFilter);
-  const distinct = distinctColors(packets);
 
   document.getElementById("metrics").innerHTML = [
     ["Mesh", `${rows}×${cols}`, `${rows * cols} PEs · root ${root} (${root % cols},${Math.floor(root / cols)})`],
-    ["Makespan", `${schedule.duration} cycles`, `${packets.length} VN streams · ${BUDGET_NAMES[budget]}`],
-    ["Distinct colors", `${distinct}`, `catalog max ${MAX_COLORS}`],
-    ["Peak edge sharing", `${schedule.peak ?? peakEdgeOccupancy(schedule)}`, `active flits: ${evs.length}`],
-  ].map(m => `<div class="metric"><div class="name">${m[0]}</div><div class="value">${m[1]}</div><div class="sub">${m[2]}</div></div>`).join("");
+    ["Makespan", `${schedule.duration} cycles`, `${schedule.flows.length} VN streams · T=${T}`],
+    ["Colors (VN)", `${schedule.colorsUsed}`, `XY end-to-end · calendar scheduled`],
+    ["Peak edge sharing", `${schedule.peak}`, `conflict-free`, true],
+    ["Max buffering", `${schedule.maxDwell} beat`, `source stall ${schedule.totalStall} cycles`],
+  ].map(m => `<div class="metric"><div class="name">${m[0]}</div><div class="value${m[3] ? " good" : ""}">${m[1]}</div><div class="sub">${m[2]}</div></div>`).join("");
 
-  const comp = summarize(rows, cols, op, base, root);
+  const comp = summarizeTolerance(rows, cols, op, base, root);
   renderTable(document.getElementById("compare"),
-    ["Color budget", "Makespan (cycles)", "Distinct colors", "Peak edge sharing", "VN streams"],
-    comp.map(r => [r.budget, r.duration, r.distinct, r.peak, r.streams]));
+    ["T (tolerance)", "Makespan", "Max buffering", "Source stall", "Peak edge", "VN streams"],
+    comp.map(r => [`T=${r.T}`, r.duration, r.maxDwell, r.totalStall, r.peak, r.streams]));
 
-  document.getElementById("mesh").innerHTML = renderMesh(schedule, rows, cols, cycle, plan, colorFilter, showOverlay, root);
+  document.getElementById("mesh").innerHTML = renderMesh(schedule, rows, cols, cycle, colorFilter, showOverlay, root);
   document.getElementById("cycleTag").textContent = `cycle ${cycle} / ${schedule.duration}`;
   document.getElementById("activeTag").textContent = `active ${evs.length}`;
 
@@ -1004,15 +613,14 @@ function render() {
   const start = totalCycles <= win ? 0 : Math.min(Math.max(0, cycle - 8), totalCycles - win);
   const cycles = Array.from({length: win}, (_, i) => start + i);
 
+  renderRouterCalendar(schedule, calRouter, cycles);
+
   const colorIds = [...new Set(schedule.flows.map(f => f.colorId))].sort((a, b) => a - b);
   renderLaneGrid(document.getElementById("colorLane"),
-    colorIds.map(id => {
-      const [name] = CATALOG[id] || [`c${id}`];
-      return `c${id} ${name}`;
-    }),
+    colorIds.map(id => schedule.flows.find(f => f.colorId === id)?.label || `c${id}`),
     cycles,
     (rowLabel, cy) => {
-      const id = colorIds.find(cid => rowLabel.startsWith(`c${cid} `));
+      const id = colorIds.find(cid => schedule.flows.find(f => f.colorId === cid)?.label === rowLabel);
       if (id === undefined) return {text: ""};
       const es = filteredEvents(schedule, cy, "all").filter(e => e.flow.colorId === id);
       if (!es.length) return {text: ""};
@@ -1033,7 +641,7 @@ function render() {
   renderLaneGrid(document.getElementById("timeline"), streams, cycles, (label, cy) => {
     const f = schedule.flows.find(x => x.label === label);
     if (!f || (colorFilter !== "all" && f.colorId !== +colorFilter)) return {text: ""};
-    const e = eventAt(f, cy, schedule.period);
+    const e = eventAt(f, cy, schedule);
     return e ? {text: elabel(e.edge), color: f.color} : {text: ""};
   });
 }
@@ -1044,6 +652,7 @@ document.getElementById("next").onclick = () => { const c = document.getElementB
 document.getElementById("cycle").onchange = render;
 document.getElementById("colorFilter").onchange = render;
 document.getElementById("routeOverlay").onchange = render;
+document.getElementById("calRouter").onchange = render;
 render();
 </script>
 </body>
