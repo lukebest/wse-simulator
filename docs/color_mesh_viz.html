@@ -48,6 +48,8 @@ tr:last-child td{border-bottom:none}
 .cell.rot-slot{background:#f3e8ff;font-weight:600}
 .cell.rot-armed{font-weight:700}
 .cell.rot-on-slot{box-shadow:inset 3px 0 0 var(--accent)}
+.cell.port-active{font-weight:700;background:#eef6ff}
+.cell.conn-ewns{font-size:10px;font-weight:600;background:#fafafa}
 .tag{display:inline-block;border:1px solid var(--border);border-radius:999px;padding:2px 8px;font-size:12px;background:#fff;margin-right:6px}
 .small{font-size:12px;color:var(--muted)}
 .warn{color:var(--warn)}
@@ -65,7 +67,7 @@ svg text{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
   本页展示 <strong>Color 虚拟网络（VN）</strong> 机制下的 2D Mesh 集合通信调度，与
   <code>collective-mesh-viz.html</code> 的逻辑 butterfly / tree / ring 算法视图互补。
   每条端到端流分配独立 color（时分虚拟网，数量不限）；路径为固定 XY 维序路由。
-  每个 router 具备 <strong>多播</strong>：同一 cycle、同一 color 可将入口 flit 复制到多个出端口（calendar 显示为 <code>in→E+S</code>）。
+  每个 router 具备 <strong>多播</strong>：calendar 用 <strong>E/W/S/N 连接关系</strong> 表示（如 <code>W→E+S</code>、<code>PE→E</code>、端口缓冲 <code>E:■</code>）；每 hop 占 1 cycle，<strong>每个节点每个 cycle</strong> 更新四向端口状态。
   集合通信前为各 router 预配置 <strong>color calendar</strong>；全局调度保证同一 cycle 同一物理 edge 至多一个 flit。
   Broadcast / Gather 等采用行/列 <strong>多播树</strong>（共享 color 的 bus VN），而非逐 PE 单播。
   <code>time_slot_tolerance</code>：T=1 表示入口 cycle t 的数据在 t+1 从该 color 出口发出；T=2 允许 router 内至多缓冲一拍（t+1 或 t+2 出口）。
@@ -123,12 +125,12 @@ svg text{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
   </div>
 </div>
 
-<h2>Router Color Calendar</h2>
-<p class="small">所选 router 的 color×cycle 表：前两行为 <strong>calendar 轮转状态</strong>（入口 mux 按 <code>slot = cycle mod P</code> 选当令 VN，P=该 router 配置的 color 数）；其后每行是一条 color VN 的端口切换 <code>in→out</code>、多播 <code>in→E+S</code>，或 <code>buf</code> / <code>wait</code>。当令行左侧紫条表示该行 VN 处于轮转当令 slot。</p>
+<h2>Router Color Calendar（E/W/S/N 连接）</h2>
+<p class="small">所选 router：列=cycle（每 hop 前进一列）；行=<strong>port E/W/S/N</strong> 在该 cycle 的角色（<code>→</code> 发出、<code>↓</code> 经该口转入、<code>■</code> 缓冲、<code>·</code> 空闲），以及 <strong>连接 EWSN</strong> 合并行（如 <code>W→E+S</code>）。其后为各 color VN 的 EWSN 连接编程。调度保证全网每 cycle 每节点均有状态（无流量为 <code>----</code>）。</p>
 <div class="lane"><div class="lane-grid" id="routerCal"></div></div>
 
-<h3>全网格 Router 轮转（当前 cycle）</h3>
-<p class="small">每个 PE 的 calendar 轮转 slot、当令 color、本 cycle 实际点火的 VN（calendar 有编程的 color）。<code>match</code> 表示当令 color 与本 cycle 点火一致。</p>
+<h3>全网格连接状态（当前 cycle）</h3>
+<p class="small">每个 PE 在当前 cycle 的 E/W/S/N 合并连接与四向端口摘要。</p>
 <div class="table-wrap"><table id="rotAll"></table></div>
 
 <h2>Color VN 泳道图</h2>
@@ -387,10 +389,19 @@ function packetsToFlows(packets, cols, flitsPerBlock) {
   });
 }
 
-function formatSwitchLabel(inDir, outDirs) {
-  const outs = [...new Set(outDirs)].sort().join("+");
-  if (!outs) return inDir === "inj" ? "idle" : `${inDir}->-`;
-  return `${inDir}->${outs}`;
+const COMPASS_DIRS = ["E", "W", "S", "N"];
+const IDLE_CONN = "----";
+
+function formatConnEWNS(inDir, outDirs, isBuf) {
+  if (isBuf) {
+    if (inDir === "wait") return "PE:wait";
+    if (inDir && COMPASS_DIRS.includes(inDir)) return `${inDir}:■`;
+    return "■";
+  }
+  const inn = inDir === "inj" ? "PE" : inDir;
+  const outs = [...new Set(outDirs)].filter(d => COMPASS_DIRS.includes(d)).sort();
+  if (!outs.length) return inn === "PE" ? "PE:·" : `${inn}:·`;
+  return `${inn}→${outs.join("+")}`;
 }
 
 function recordRouterSwitch(calendar, nodeIdx, colorId, cycle, inDir, outDir, flowColor, isBuf) {
@@ -400,21 +411,24 @@ function recordRouterSwitch(calendar, nodeIdx, colorId, cycle, inDir, outDir, fl
   const slots = byColor.get(colorId);
   const prev = slots.get(cycle);
   if (prev) {
-    const outs = prev.outDirs || (prev.text.includes("->") ? prev.text.split("->")[1].split("+") : []);
-    if (outDir && !outs.includes(outDir)) outs.push(outDir);
+    const outs = [...(prev.outDirs || [])];
+    if (outDir && COMPASS_DIRS.includes(outDir) && !outs.includes(outDir)) outs.push(outDir);
+    const conn = formatConnEWNS(prev.inDir, outs, prev.isBuf && isBuf);
     slots.set(cycle, {
-      text: formatSwitchLabel(prev.inDir || "inj", outs),
+      text: conn,
+      conn,
       inDir: prev.inDir,
       outDirs: outs,
       color: flowColor,
-      isBuf: prev.isBuf && isBuf,
-      multicast: outs.length > 1,
+      isBuf: prev.isBuf || isBuf,
+      multicast: !isBuf && outs.length > 1,
     });
   } else {
-    const outs = outDir ? [outDir] : [];
-    const text = isBuf ? (inDir === "wait" ? "wait" : "buf") : formatSwitchLabel(inDir, outs);
+    const outs = outDir && COMPASS_DIRS.includes(outDir) ? [outDir] : [];
+    const conn = formatConnEWNS(inDir, outs, isBuf);
     slots.set(cycle, {
-      text,
+      text: conn,
+      conn,
       inDir,
       outDirs: outs,
       color: flowColor,
@@ -424,7 +438,58 @@ function recordRouterSwitch(calendar, nodeIdx, colorId, cycle, inDir, outDir, fl
   }
 }
 
-function buildCalendarSchedule(flows, T, cols) {
+function portsFromSlot(slot) {
+  const p = {E: "·", W: "·", S: "·", N: "·"};
+  if (!slot) return p;
+  if (slot.isBuf) {
+    if (slot.inDir && COMPASS_DIRS.includes(slot.inDir)) p[slot.inDir] = "■";
+    return p;
+  }
+  const inn = slot.inDir === "inj" ? null : slot.inDir;
+  const outs = slot.outDirs || [];
+  if (inn && COMPASS_DIRS.includes(inn)) p[inn] = "↓";
+  if (slot.inDir === "inj") {
+    for (const o of outs) if (COMPASS_DIRS.includes(o)) p[o] = "PE→";
+  } else {
+    for (const o of outs) if (COMPASS_DIRS.includes(o)) p[o] = p[o] === "·" ? "→" : "→";
+  }
+  return p;
+}
+
+function mergePortStates(dst, src) {
+  for (const d of COMPASS_DIRS) {
+    if (src[d] === "·") continue;
+    dst[d] = dst[d] === "·" ? src[d] : `${dst[d]}${src[d]}`;
+  }
+}
+
+/** Every node, every cycle: merged EWSN conn + per-port role (updated each hop/cycle). */
+function buildNodeConnTimeline(calendar, nodeCount, duration) {
+  const timeline = new Map();
+  for (let i = 0; i < nodeCount; i++) {
+    const cycles = [];
+    for (let c = 0; c < duration; c++) {
+      cycles.push({conn: IDLE_CONN, ports: {E: "·", W: "·", S: "·", N: "·"}, colors: []});
+    }
+    timeline.set(i, cycles);
+  }
+  for (const [nodeIdx, byColor] of calendar) {
+    if (nodeIdx >= nodeCount) continue;
+    for (const [colorId, slots] of byColor) {
+      for (const [cycle, slot] of slots) {
+        if (cycle < 0 || cycle >= duration) continue;
+        const entry = timeline.get(nodeIdx)[cycle];
+        entry.colors.push(colorId);
+        mergePortStates(entry.ports, portsFromSlot(slot));
+        const part = slot.conn || slot.text;
+        entry.conn = entry.conn === IDLE_CONN ? part : `${entry.conn}; ${part}`;
+      }
+    }
+  }
+  return timeline;
+}
+
+function buildCalendarSchedule(flows, T, cols, nodeCount) {
   const reserved = new Set();
   const events = [];
   const calendar = new Map();
@@ -523,14 +588,17 @@ function buildCalendarSchedule(flows, T, cols) {
   }
 
   const routerRot = buildRouterRotationStates(calendar);
+  const duration = maxCycle + 1;
+  const nodeConn = buildNodeConnTimeline(calendar, nodeCount, duration);
 
   return {
     flows,
     events,
     eventsByCycle,
     calendar,
+    nodeConn,
     routerRot,
-    duration: maxCycle + 1,
+    duration,
     period: 1,
     peak: 1,
     maxDwell,
@@ -559,7 +627,7 @@ function buildRouterRotationStates(calendar) {
         const slots = byColor;
         for (const cid of colorIds) {
           const s = slots.get(cid)?.get(cycle);
-          if (s && s.text && s.text !== ".") busy.push(cid);
+          if (s && s.conn && s.conn !== IDLE_CONN && !s.conn.endsWith(":·")) busy.push(cid);
         }
         return busy;
       },
@@ -599,15 +667,15 @@ function eventAt(flow, cycle, schedule) {
   return allEvents(schedule, cycle).find(e => e.flow === flow) || null;
 }
 
-function buildScheduleFromPackets(packets, cols, flitsPerBlock, T) {
+function buildScheduleFromPackets(packets, cols, flitsPerBlock, T, nodeCount) {
   const flows = packetsToFlows(packets, cols, flitsPerBlock);
-  return buildCalendarSchedule(flows, T, cols);
+  return buildCalendarSchedule(flows, T, cols, nodeCount);
 }
 
 function summarizeTolerance(rows, cols, op, flits, root) {
   return [1, 2, 3, 4].map(T => {
     const flows = generateCollectiveFlows(op, rows, cols, flits, root);
-    const schedule = buildCalendarSchedule(flows, T, cols);
+    const schedule = buildCalendarSchedule(flows, T, cols, rows * cols);
     return {
       T,
       duration: schedule.duration,
@@ -717,11 +785,14 @@ function renderMesh(schedule, rows, cols, cycle, colorFilter, showOverlay, rootI
     const p = pos(node(x, y), rows, cols, layout);
     const isRoot = idx === rootIdx;
     const label = showNodeLabel(x, y, rows, cols, layout);
-    const rot = schedule.routerRot ? routerRotAt(schedule, idx, cycle) : null;
-    const rotTxt = rot && rot.period
-      ? `<text x="${p.x}" y="${p.y + layout.nodeR + 9}" font-size="7" text-anchor="middle" fill="#5b21b6">s${rot.slot} c${rot.armed}</text>`
+    const st = nodeConnAt(schedule, idx, cycle);
+    const connShort = st.conn !== IDLE_CONN
+      ? (st.conn.length > 14 ? `${st.conn.slice(0, 12)}…` : st.conn)
       : "";
-    nodes.push(`<g><circle cx="${p.x}" cy="${p.y}" r="${layout.nodeR}" fill="${isRoot ? '#fff3cd' : 'white'}" stroke="${isRoot ? '#9a5b00' : '#222'}" stroke-width="${isRoot ? 2 : 1}"/><title>${idx} (${x},${y})${isRoot ? ' [root]' : ''}${rot?.period ? ` rot s${rot.slot}/c${rot.armed}` : ''}</title>${label ? `<text x="${p.x}" y="${p.y + layout.nodeFont / 2 - 1}" font-size="${layout.nodeFont}" text-anchor="middle">${x},${y}</text>` : ""}${rotTxt}</g>`);
+    const connTxt = connShort
+      ? `<text x="${p.x}" y="${p.y + layout.nodeR + 9}" font-size="6.5" text-anchor="middle" fill="#1a4480">${connShort}</text>`
+      : "";
+    nodes.push(`<g><circle cx="${p.x}" cy="${p.y}" r="${layout.nodeR}" fill="${isRoot ? '#fff3cd' : 'white'}" stroke="${isRoot ? '#9a5b00' : '#222'}" stroke-width="${isRoot ? 2 : 1}"/><title>${idx} (${x},${y})${isRoot ? ' [root]' : ''} @c${cycle} ${st.conn}</title>${label ? `<text x="${p.x}" y="${p.y + layout.nodeFont / 2 - 1}" font-size="${layout.nodeFont}" text-anchor="middle">${x},${y}</text>` : ""}${connTxt}</g>`);
   }
   const labels = layout.showFlitLabels ? evs.map(ev => {
     const p0 = pos(ev.edge.from, rows, cols, layout), p1 = pos(ev.edge.to, rows, cols, layout);
@@ -781,91 +852,76 @@ function updateCalRouterOptions(rows, cols, root) {
   else sel.value = String(root);
 }
 
+const PORT_ROW_LABELS = ["port E", "port W", "port S", "port N", "连接 EWSN"];
+const PORT_ROW_DIR = { "port E": "E", "port W": "W", "port S": "S", "port N": "N" };
+
+function nodeConnAt(schedule, routerIdx, cycle) {
+  const tl = schedule.nodeConn?.get(routerIdx);
+  if (!tl || cycle < 0 || cycle >= tl.length) {
+    return {conn: IDLE_CONN, ports: {E: "·", W: "·", S: "·", N: "·"}};
+  }
+  return tl[cycle];
+}
+
 function renderRouterCalendar(schedule, routerIdx, cycles, flows) {
   const el = document.getElementById("routerCal");
   const byColor = schedule.calendar.get(routerIdx);
-  const prof = schedule.routerRot?.get(routerIdx);
-  const ROT_SLOT = "轮转 slot";
-  const ROT_ARMED = "当令 VN";
-  const ROT_FIRE = "点火 VN";
-  if (!byColor || !prof?.period) {
-    renderLaneGrid(el, ["(no traffic)"], cycles, () => ({text: ""}));
-    return;
-  }
-  const colorIds = [...byColor.keys()].sort((a, b) => a - b);
+  const colorIds = byColor ? [...byColor.keys()].sort((a, b) => a - b) : [];
   const vnRows = colorIds.map(id => {
     const flow = flows.find(f => f.colorId === id);
-    return flow ? flow.label : `c${id}`;
+    return flow ? `c${id} ${flow.label}` : `c${id}`;
   });
-  const rowLabels = [ROT_SLOT, ROT_ARMED, ROT_FIRE, ...vnRows];
+  const rowLabels = [...PORT_ROW_LABELS, ...vnRows];
   renderLaneGrid(el, rowLabels, cycles, (rowLabel, cy) => {
-    const rot = routerRotAt(schedule, routerIdx, cy);
-    if (rowLabel === ROT_SLOT) {
+    const st = nodeConnAt(schedule, routerIdx, cy);
+    const dir = PORT_ROW_DIR[rowLabel];
+    if (dir) {
+      const v = st.ports[dir];
+      const active = v !== "·";
       return {
-        text: `s${rot.slot}/${rot.period}`,
-        cellClass: "rot-slot",
-        title: `calendar mux slot = ${cy} mod ${rot.period}`,
+        text: v,
+        cellClass: active ? "port-active" : "",
+        title: `cycle ${cy} · port ${dir}`,
       };
     }
-    if (rowLabel === ROT_ARMED) {
-      const flow = flows.find(f => f.colorId === rot.armed);
-      const col = flow?.color || COLOR_PALETTE[(rot.armed || 0) % MAX_COLORS];
+    if (rowLabel === "连接 EWSN") {
+      const active = st.conn !== IDLE_CONN;
       return {
-        text: rot.armed === null ? "-" : `c${rot.armed}`,
-        color: col,
-        cellClass: "rot-armed",
-        title: flow ? flow.label : "",
+        text: st.conn,
+        cellClass: active ? "conn-ewns" : "",
+        title: active ? st.conn : `cycle ${cy} idle`,
       };
     }
-    if (rowLabel === ROT_FIRE) {
-      const txt = rot.firing.length ? rot.firing.map(c => `c${c}`).join("+") : "-";
-      return {
-        text: txt,
-        style: rot.match ? "background:#dcfce7;font-weight:600" : (rot.firing.length ? "background:#fff7ed" : ""),
-        title: rot.match ? "当令 VN 本 cycle 点火" : "当令与点火不一致（预编排跨 slot 发送）",
-      };
-    }
-    const id = colorIds.find(cid => {
-      const flow = flows.find(f => f.colorId === cid);
-      return flow && flow.label === rowLabel;
-    });
+    const id = colorIds.find(cid => rowLabel.startsWith(`c${cid} `));
     if (id === undefined) return {text: ""};
     const slot = byColor.get(id)?.get(cy);
-    const onRot = rot.armed === id;
-    if (!slot) {
-      return onRot ? {text: ".", cellClass: "rot-on-slot", title: "当令 slot，无切换编程"} : {text: ""};
-    }
-    let style = slot.multicast ? "font-weight:700;background:#e8f5e9" : "";
-    if (onRot) style += ";box-shadow:inset 3px 0 0 #1a4480";
+    if (!slot) return {text: "·", title: "无编程"};
+    const style = slot.multicast ? "font-weight:700;background:#e8f5e9" : "";
     return {
-      text: slot.text,
+      text: slot.conn || slot.text,
       color: slot.color,
       isBuf: slot.isBuf,
       style,
-      cellClass: onRot ? "rot-on-slot" : "",
-      title: onRot ? "当令 VN · " + slot.text : slot.text,
+      title: slot.conn,
     };
-  }, {rotHeadRows: new Set([ROT_SLOT, ROT_ARMED, ROT_FIRE])});
+  }, {rotHeadRows: new Set(["连接 EWSN"])});
 }
 
 function renderAllRouterRotation(schedule, rows, cols, cycle, root) {
   const rowsData = [];
   for (let i = 0; i < rows * cols; i++) {
     const n = idxToNode(i, cols);
-    const rot = routerRotAt(schedule, i, cycle);
-    const prof = schedule.routerRot?.get(i);
+    const st = nodeConnAt(schedule, i, cycle);
+    const portSum = COMPASS_DIRS.map(d => `${d}:${st.ports[d]}`).join(" ");
     rowsData.push([
       `${i}${i === root ? " [root]" : ""}`,
       `(${n.x},${n.y})`,
-      prof?.period || 0,
-      prof?.period ? `s${rot.slot}/${rot.period}` : "-",
-      rot.armed === null ? "-" : `c${rot.armed}`,
-      rot.firing.length ? rot.firing.map(c => `c${c}`).join("+") : "-",
-      rot.match ? "yes" : (rot.firing.length ? "no" : "-"),
+      st.conn,
+      portSum,
     ]);
   }
   renderTable(document.getElementById("rotAll"),
-    ["PE", "coord", "P", `slot@c${cycle}`, "armed", "firing", "match"],
+    ["PE", "coord", `conn@c${cycle}`, "E W S N ports"],
     rowsData);
 }
 
@@ -883,7 +939,7 @@ function render() {
   const calRouter = Math.max(0, Math.min(rows * cols - 1, +document.getElementById("calRouter").value || root));
 
   const flows = generateCollectiveFlows(op, rows, cols, base, root);
-  const schedule = buildCalendarSchedule(flows, T, cols);
+  const schedule = buildCalendarSchedule(flows, T, cols, rows * cols);
   current = {rows, cols, op, T, root, base, schedule, flows};
 
   updateColorFilterOptions(schedule.flows);
