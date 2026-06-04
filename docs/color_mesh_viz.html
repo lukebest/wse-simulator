@@ -90,6 +90,9 @@ svg text{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
   <label>time_slot_tolerance (T)
     <input id="tolerance" type="number" min="1" max="8" value="1" title="Max in-router dwell: exit in [t+1, t+T]">
   </label>
+  <label>Period P (周期模式)
+    <input id="periodP" type="number" min="0" max="512" value="0" title="0 = 用 L*（最大有向边负载）作为帧长">
+  </label>
   <label>Root PE index <input id="root" type="number" min="0" value="0"></label>
   <label>Flits per block <input id="flits" type="number" min="1" max="24" value="3"></label>
   <label>Cycle <input id="cycle" type="number" min="0" value="0"></label>
@@ -100,13 +103,15 @@ svg text{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
     <select id="calRouter"></select>
   </label>
   <label class="check-row"><input id="routeOverlay" type="checkbox"> 显示所选 color XY 路径箭头</label>
+  <label class="check-row"><input id="periodicMode" type="checkbox"> 周期稳态日历（ingress t→egress t+1, mod P）</label>
   <button id="apply">重新生成</button>
 </div>
 
 <div class="metrics" id="metrics"></div>
 <p class="small">指标说明：Makespan 为最后 flit 占用最后一条 edge 的 cycle+1；Colors 为 VN 流条数；Peak edge sharing 恒为 1（calendar 调度无冲突）；Max buffering 为单 router 最大 dwell（拍数）。</p>
 
-<h2>time_slot_tolerance 对比</h2>
+<h2>time_slot_tolerance 对比 / 周期可行性</h2>
+<p class="small">勾选 <strong>周期稳态日历</strong> 后，本表改为展示周期相位求解器结果：<code>L*</code>（最大有向边负载 = 周期下界 P）、各 T 在 <code>P=L*</code> 下是否可行、以及 <code>T=1</code> 的最小周期 <code>min P</code>。详见 <code>docs/perfect_slot_calendar.md</code>。</p>
 <div class="table-wrap"><table id="compare"></table></div>
 
 <div class="grid2">
@@ -733,6 +738,199 @@ function buildCalendarSchedule(flows, T, cols, nodeCount) {
   };
 }
 
+// ============================================================================
+// Periodic (steady-state) perfect time-slot relay calendar.
+// Frame of length P repeats forever. Each flow f gets a start phase phi_f in
+// Z_P; with per-hop advance in [1,T] the directed edge e_h of f is occupied at
+// slot (phi_f + sum of hop steps) mod P. Conflict-free = no two flows share the
+// same (directed edge, slot mod P). T=1 => every hop advances exactly +1
+// (ingress slot t -> egress slot t+1, no buffering) and diagonals are rigid.
+// ============================================================================
+
+/** Max directed-edge load = lower bound on period P (one flit per stream per frame). */
+function computeEdgeLoad(flows) {
+  const m = new Map();
+  for (const f of flows) for (const e of f.path) m.set(e.id, (m.get(e.id) || 0) + 1);
+  let L = 0, witness = null;
+  for (const [id, v] of m) if (v > L) { L = v; witness = id; }
+  return {L: Math.max(1, L), witness, edgeCount: m.size};
+}
+
+/**
+ * Phase-offset solver on a periodic frame of length P with per-hop advance in [1,T].
+ * Backtracks over per-flow phase phi in Z_P; for T>1 each hop greedily takes the
+ * smallest free step in [1,T] (heuristic). For T=1 the diagonal is rigid, so the
+ * phase backtracking is a complete decision procedure within the iteration budget.
+ * Returns {ok, P, T, assign:Map(flow->{phi,slots}), exhausted, witness}.
+ */
+function buildPeriodicCalendar(flows, P, T, opts = {}) {
+  const budget = opts.budget || 300000;
+  const valid = flows.filter(f => f.path.length);
+  const load = new Map();
+  for (const f of valid) for (const e of f.path) load.set(e.id, (load.get(e.id) || 0) + 1);
+  const flowWeight = f => {
+    let w = 0;
+    for (const e of f.path) w = Math.max(w, load.get(e.id) || 0);
+    return w;
+  };
+  const ordered = [...valid].sort((a, b) =>
+    flowWeight(b) - flowWeight(a) || b.path.length - a.path.length || a.colorId - b.colorId);
+
+  const occ = new Map();
+  const key = (eid, slot) => `${eid}|${slot}`;
+  const assign = new Map();
+  let iter = 0;
+  let exhausted = false;
+
+  function tryPlace(flow, phi) {
+    const slots = [];
+    const s0 = ((phi % P) + P) % P;
+    if (occ.has(key(flow.path[0].id, s0))) return null;
+    slots.push(s0);
+    for (let h = 1; h < flow.path.length; h++) {
+      const e = flow.path[h];
+      let placed = false;
+      for (let step = 1; step <= T; step++) {
+        const s = (slots[h - 1] + step) % P;
+        if (!occ.has(key(e.id, s))) { slots.push(s); placed = true; break; }
+      }
+      if (!placed) return null;
+    }
+    return slots;
+  }
+  function reserve(flow, slots) {
+    flow.path.forEach((e, h) => occ.set(key(e.id, slots[h]), flow.id));
+  }
+  function release(flow, slots) {
+    flow.path.forEach((e, h) => occ.delete(key(e.id, slots[h])));
+  }
+  function backtrack(i) {
+    if (i >= ordered.length) return true;
+    if (iter++ > budget) { exhausted = true; return false; }
+    const flow = ordered[i];
+    for (let phi = 0; phi < P; phi++) {
+      const slots = tryPlace(flow, phi);
+      if (!slots) continue;
+      reserve(flow, slots);
+      assign.set(flow, {phi, slots});
+      if (backtrack(i + 1)) return true;
+      release(flow, slots);
+      assign.delete(flow);
+      if (exhausted) return false;
+    }
+    return false;
+  }
+
+  const ok = backtrack(0);
+  return {ok, P, T, assign, exhausted, witness: ok ? null : computeEdgeLoad(valid).witness};
+}
+
+/** Smallest T in [1,cap] for which a periodic calendar of period P exists. */
+function findMinTolerance(flows, P, cap = 8, opts = {}) {
+  for (let T = 1; T <= cap; T++) {
+    const r = buildPeriodicCalendar(flows, P, T, opts);
+    if (r.ok) return {T, result: r};
+    if (r.exhausted) return {T: null, exhausted: true};
+  }
+  return {T: null};
+}
+
+/** Smallest period P (>= L*) for which a T=1 (rigid diagonal) calendar exists. */
+function findMinPeriod(flows, opts = {}) {
+  const el = computeEdgeLoad(flows);
+  const cap = opts.cap || (el.L + Math.max(8, Math.ceil(el.L * 0.5)));
+  for (let P = el.L; P <= cap; P++) {
+    const r = buildPeriodicCalendar(flows, P, 1, opts);
+    if (r.ok) return {P, result: r, L: el.L};
+    if (r.exhausted) return {P: null, exhausted: true, L: el.L};
+  }
+  return {P: null, L: el.L};
+}
+
+/** Independent re-check: no two flows occupy the same (directed edge, slot mod P). */
+function verifyPeriodic(flows, P, assign) {
+  const occ = new Map();
+  for (const flow of flows) {
+    const a = assign.get(flow);
+    if (!a) continue;
+    flow.path.forEach((e, h) => {
+      const k = `${e.id}|${a.slots[h]}`;
+      if (occ.has(k)) return {ok: false};
+      occ.set(k, flow.id);
+    });
+  }
+  // recompute properly (forEach can't early-return the outer result)
+  const seen = new Set();
+  for (const flow of flows) {
+    const a = assign.get(flow);
+    if (!a) continue;
+    for (let h = 0; h < flow.path.length; h++) {
+      const k = `${flow.path[h].id}|${a.slots[h]}`;
+      if (seen.has(k)) return {ok: false, collision: k};
+      seen.add(k);
+    }
+  }
+  return {ok: true};
+}
+
+/** Build a render-compatible schedule from a periodic placement (slots are mod P). */
+function buildPeriodicSchedule(flows, P, T, cols, nodeCount, placement) {
+  const calendar = new Map();
+  const events = [];
+  let maxDwell = 0;
+  for (const flow of flows) {
+    const a = placement.assign.get(flow);
+    if (!a) continue;
+    const slots = a.slots;
+    for (let h = 0; h < flow.path.length; h++) {
+      const t = slots[h];
+      const edge = flow.path[h];
+      events.push({cycle: t, flow, flit: 0, hop: h, edge, dwell: 0, label: `${flow.id}`});
+      const srcIdx2 = nodeIdx(flow.from, cols);
+      if (h === 0) {
+        const outD = portDir(edge.from, edge.to);
+        recordRouterSwitch(calendar, srcIdx2, flow.colorId, t, "inj", outD, flow.color, false);
+      } else {
+        const rNode = flow.path[h - 1].to;
+        const rIdx = nodeIdx(rNode, cols);
+        const inD = portDir(flow.path[h - 1].from, rNode);
+        const outD = portDir(edge.from, edge.to);
+        const prev = slots[h - 1];
+        const gap = ((t - prev - 1) % P + P) % P;
+        maxDwell = Math.max(maxDwell, gap);
+        for (let b = 1; b <= gap; b++) {
+          recordRouterSwitch(calendar, rIdx, flow.colorId, (prev + b) % P, "buf", null, flow.color, true);
+        }
+        recordRouterSwitch(calendar, rIdx, flow.colorId, t, inD, outD, flow.color, false);
+      }
+    }
+  }
+  const eventsByCycle = new Map();
+  for (const ev of events) {
+    if (!eventsByCycle.has(ev.cycle)) eventsByCycle.set(ev.cycle, []);
+    eventsByCycle.get(ev.cycle).push(ev);
+  }
+  const routerRot = buildRouterRotationStates(calendar);
+  const nodeConn = buildNodeConnTimeline(calendar, nodeCount, P);
+  return {
+    flows, events, eventsByCycle, calendar, nodeConn, routerRot,
+    duration: P, period: P, peak: 1, maxDwell, totalStall: 0,
+    colorsUsed: flows.length, T, label: `periodic P=${P}`, periodic: true,
+  };
+}
+
+/** Feasibility summary across T=1..4 at P=L*, plus the min-period at T=1. */
+function summarizePeriodic(rows, cols, op, root) {
+  const flows = generateCollectiveFlows(op, rows, cols, 1, root);
+  const el = computeEdgeLoad(flows);
+  const perT = [1, 2, 3, 4].map(T => {
+    const r = buildPeriodicCalendar(flows, el.L, T);
+    return {T, ok: r.ok, exhausted: r.exhausted};
+  });
+  const minP = findMinPeriod(flows);
+  return {L: el.L, witness: el.witness, perT, minP};
+}
+
 /** Per-router calendar mux rotation: slot = cycle % P, armed = colorIds[slot]. */
 function buildRouterRotationStates(calendar) {
   const maxIdx = calendar.size ? Math.max(...calendar.keys()) + 1 : 0;
@@ -1047,36 +1245,92 @@ function render() {
   const colorFilter = document.getElementById("colorFilter").value;
   const showOverlay = document.getElementById("routeOverlay").checked;
   const calRouter = Math.max(0, Math.min(rows * cols - 1, +document.getElementById("calRouter").value || root));
+  const periodic = document.getElementById("periodicMode").checked;
+  const periodPInput = Math.max(0, Math.min(512, +document.getElementById("periodP").value || 0));
 
   const flows = generateCollectiveFlows(op, rows, cols, base, root);
-  const schedule = buildCalendarSchedule(flows, T, cols, rows * cols);
-  current = {rows, cols, op, T, root, base, schedule, flows};
+
+  let schedule, periodicInfo = null;
+  if (periodic) {
+    const el = computeEdgeLoad(flows);
+    const P = periodPInput > 0 ? periodPInput : el.L;
+    const placement = buildPeriodicCalendar(flows, P, T);
+    const minT = findMinTolerance(flows, el.L);
+    const minP = findMinPeriod(flows);
+    periodicInfo = {el, P, placement, minT, minP};
+    if (placement.ok) {
+      schedule = buildPeriodicSchedule(flows, P, T, cols, rows * cols, placement);
+    } else if (minT.T !== null) {
+      // fall back to a feasible relaxed solution at P=L* so the views still render
+      const relaxed = buildPeriodicCalendar(flows, el.L, minT.T);
+      schedule = buildPeriodicSchedule(flows, el.L, minT.T, cols, rows * cols, relaxed);
+      periodicInfo.renderedT = minT.T;
+      periodicInfo.renderedP = el.L;
+    } else {
+      // nothing feasible found within budget: render an empty frame
+      schedule = buildPeriodicSchedule(flows, P, T, cols, rows * cols, {assign: new Map()});
+      periodicInfo.empty = true;
+    }
+  } else {
+    schedule = buildCalendarSchedule(flows, T, cols, rows * cols);
+  }
+  current = {rows, cols, op, T, root, base, schedule, flows, periodic, periodicInfo};
 
   updateColorFilterOptions(schedule.flows);
   updateCalRouterOptions(rows, cols, root);
 
   const cycleInput = document.getElementById("cycle");
-  cycleInput.max = Math.max(0, schedule.duration);
-  let cycle = Math.max(0, Math.min(+cycleInput.value || 0, schedule.duration));
+  const cycleMax = periodic ? Math.max(0, schedule.duration - 1) : Math.max(0, schedule.duration);
+  cycleInput.max = cycleMax;
+  let cycle = Math.max(0, Math.min(+cycleInput.value || 0, cycleMax));
   cycleInput.value = cycle;
 
   const evs = filteredEvents(schedule, cycle, colorFilter);
 
-  document.getElementById("metrics").innerHTML = [
-    ["Mesh", `${rows}×${cols}`, `${rows * cols} PEs · root ${root} (${root % cols},${Math.floor(root / cols)})`],
-    ["Makespan", `${schedule.duration} cycles`, `${schedule.flows.length} VN streams · T=${T}`],
-    ["Colors (VN)", `${schedule.colorsUsed}`, `multicast tree buses · per-router calendar`],
-    ["Peak edge sharing", `${schedule.peak}`, `conflict-free`, true],
-    ["Max buffering", `${schedule.maxDwell} beat`, `source stall ${schedule.totalStall} cycles`],
-  ].map(m => `<div class="metric"><div class="name">${m[0]}</div><div class="value${m[3] ? " good" : ""}">${m[1]}</div><div class="sub">${m[2]}</div></div>`).join("");
+  if (periodic) {
+    const {el, P, placement, minT, minP} = periodicInfo;
+    const feasible = placement.ok;
+    const minTtxt = minT.T !== null ? `T=${minT.T}` : (minT.exhausted ? "搜索超限" : ">8");
+    const minPtxt = minP.P !== null ? `P=${minP.P}` : (minP.exhausted ? "搜索超限" : ">cap");
+    document.getElementById("metrics").innerHTML = [
+      ["Mesh", `${rows}×${cols}`, `${rows * cols} PEs · root ${root} · ${schedule.flows.length} streams`],
+      ["L* (下界)", `${el.L}`, `瓶颈边 ${el.witness || "-"} · P ≥ L*`],
+      ["Period P", `${P}`, `帧长（${periodPInput > 0 ? "手动" : "默认 L*"}）`],
+      ["T=1 完美解?", feasible && T === 1 ? "可行" : (feasible ? `可行 (T=${T})` : "不可行"),
+        feasible ? `每跳 +1 · dwell ${schedule.maxDwell}` : `瓶颈边 ${placement.witness || el.witness}`, feasible],
+      ["minT @ P=L*", minTtxt, `min P @ T=1: ${minPtxt}`, minT.T === 1],
+    ].map(m => `<div class="metric"><div class="name">${m[0]}</div><div class="value${m[3] ? " good" : ""}">${m[1]}</div><div class="sub">${m[2]}</div></div>`).join("");
 
-  const comp = summarizeTolerance(rows, cols, op, base, root);
-  renderTable(document.getElementById("compare"),
-    ["T (tolerance)", "Makespan", "Max buffering", "Source stall", "Peak edge", "VN streams"],
-    comp.map(r => [`T=${r.T}`, r.duration, r.maxDwell, r.totalStall, r.peak, r.streams]));
+    const comp = summarizePeriodic(rows, cols, op, root);
+    renderTable(document.getElementById("compare"),
+      ["维度", "结果", "说明"],
+      [
+        ["L* (最大有向边负载 = P 下界)", `${comp.L}`, `瓶颈边 ${comp.witness || "-"}`],
+        ["T=1 @ P=L*", comp.perT[0].ok ? "可行" : (comp.perT[0].exhausted ? "搜索超限" : "不可行"), "每跳 +1，无缓冲"],
+        ["T=2 @ P=L*", comp.perT[1].ok ? "可行" : "—", "每端口 ≤1 拍缓冲"],
+        ["T=3 @ P=L*", comp.perT[2].ok ? "可行" : "—", "每端口 ≤2 拍缓冲"],
+        ["T=4 @ P=L*", comp.perT[3].ok ? "可行" : "—", "每端口 ≤3 拍缓冲"],
+        ["min P @ T=1", comp.minP.P !== null ? `${comp.minP.P}` : "搜索超限", comp.minP.P === comp.L ? "= L*（最优）" : "> L*"],
+      ]);
+  } else {
+    document.getElementById("metrics").innerHTML = [
+      ["Mesh", `${rows}×${cols}`, `${rows * cols} PEs · root ${root} (${root % cols},${Math.floor(root / cols)})`],
+      ["Makespan", `${schedule.duration} cycles`, `${schedule.flows.length} VN streams · T=${T}`],
+      ["Colors (VN)", `${schedule.colorsUsed}`, `multicast tree buses · per-router calendar`],
+      ["Peak edge sharing", `${schedule.peak}`, `conflict-free`, true],
+      ["Max buffering", `${schedule.maxDwell} beat`, `source stall ${schedule.totalStall} cycles`],
+    ].map(m => `<div class="metric"><div class="name">${m[0]}</div><div class="value${m[3] ? " good" : ""}">${m[1]}</div><div class="sub">${m[2]}</div></div>`).join("");
+
+    const comp = summarizeTolerance(rows, cols, op, base, root);
+    renderTable(document.getElementById("compare"),
+      ["T (tolerance)", "Makespan", "Max buffering", "Source stall", "Peak edge", "VN streams"],
+      comp.map(r => [`T=${r.T}`, r.duration, r.maxDwell, r.totalStall, r.peak, r.streams]));
+  }
 
   document.getElementById("mesh").innerHTML = renderMesh(schedule, rows, cols, cycle, colorFilter, showOverlay, root);
-  document.getElementById("cycleTag").textContent = `cycle ${cycle} / ${schedule.duration}`;
+  document.getElementById("cycleTag").textContent = periodic
+    ? `slot ${cycle} / 帧 P=${schedule.period}`
+    : `cycle ${cycle} / ${schedule.duration}`;
   document.getElementById("activeTag").textContent = `active ${evs.length}`;
 
   renderTable(document.getElementById("active"), ["flit", "color", "VN stream", "edge", "payload"],
@@ -1088,10 +1342,16 @@ function render() {
       e.flow.payload,
     ]));
 
-  const totalCycles = schedule.duration + 1;
-  const win = Math.min(36, Math.max(8, totalCycles));
-  const start = totalCycles <= win ? 0 : Math.min(Math.max(0, cycle - 8), totalCycles - win);
-  const cycles = Array.from({length: win}, (_, i) => start + i);
+  let cycles;
+  if (periodic) {
+    // show exactly one frame: slots 0..P-1
+    cycles = Array.from({length: schedule.period}, (_, i) => i);
+  } else {
+    const totalCycles = schedule.duration + 1;
+    const win = Math.min(36, Math.max(8, totalCycles));
+    const start = totalCycles <= win ? 0 : Math.min(Math.max(0, cycle - 8), totalCycles - win);
+    cycles = Array.from({length: win}, (_, i) => start + i);
+  }
 
   renderRouterConnMatrix(schedule, rows, cols, cycles, root, calRouter);
   renderAllRouterRotation(schedule, rows, cols, cycle, root);
@@ -1134,6 +1394,8 @@ document.getElementById("cycle").onchange = render;
 document.getElementById("colorFilter").onchange = render;
 document.getElementById("routeOverlay").onchange = render;
 document.getElementById("calRouter").onchange = render;
+document.getElementById("periodicMode").onchange = render;
+document.getElementById("periodP").onchange = render;
 render();
 </script>
 </body>
