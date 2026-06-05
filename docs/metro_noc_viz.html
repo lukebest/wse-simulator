@@ -1,0 +1,487 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>Metro NoC 完美时隙中继日历</title>
+<style>
+:root{
+  --ink:#1b1b1b;--muted:#666;--border:#dedede;--soft:#f6f7f9;
+  --accent:#1a4480;--warn:#9a5b00;--bad:#a33;--good:#166534;
+  --e:#2563eb;--s:#16a34a;--w:#ca8a04;--n:#9333ea;
+}
+*{box-sizing:border-box}
+body{font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei","Segoe UI",sans-serif;
+  max-width:1920px;margin:24px auto;padding:0 24px;color:var(--ink);line-height:1.55}
+h1{border-bottom:2px solid #333;padding-bottom:8px;margin:0 0 10px}
+h2{font-size:20px;color:var(--accent);margin:28px 0 10px}
+h3{font-size:15px;margin:0 0 8px}
+code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;background:#f0f1f3;padding:1px 4px;border-radius:3px}
+.intro{background:#fffbe6;border-left:4px solid #ffc107;padding:10px 14px;border-radius:4px;margin:14px 0;font-size:14px}
+.controls{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px;align-items:end;background:var(--soft);
+  border:1px solid var(--border);padding:12px;border-radius:8px;margin:12px 0}
+label{display:flex;flex-direction:column;gap:4px;font-size:12px;color:var(--muted)}
+input,select,button{font:inherit;border:1px solid #cfcfcf;border-radius:6px;background:#fff;padding:6px 8px}
+button{cursor:pointer;background:#1a4480;color:#fff;border-color:#1a4480}
+button.secondary{background:#fff;color:#1a4480}
+.grid2{display:grid;grid-template-columns:minmax(640px,1.35fr) minmax(380px,.65fr);gap:16px;align-items:start}
+.card{border:1px solid var(--border);border-radius:8px;background:#fff;padding:12px;margin:10px 0}
+.card,.table-wrap,.viz{min-width:0}
+.mesh-card{overflow:hidden}
+.metrics{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}
+.metric{border:1px solid var(--border);border-radius:8px;padding:10px;background:#fff}
+.metric .name{font-size:12px;color:var(--muted)}
+.metric .value{font-size:22px;font-weight:700;margin-top:2px}
+.metric .value.good{color:var(--good)}
+.metric .sub{font-size:12px;color:var(--muted);margin-top:2px}
+.table-wrap{overflow:auto;border:1px solid var(--border);border-radius:8px}
+table{border-collapse:collapse;width:100%;font-size:12px;background:#fff}
+th,td{border-bottom:1px solid #eee;border-right:1px solid #eee;padding:6px 8px;text-align:left;white-space:nowrap}
+th{background:#f4f5f7;color:#333;position:sticky;top:0;z-index:1}
+tr:last-child td{border-bottom:none}
+.viz{border:1px solid var(--border);border-radius:8px;background:#fafafa;padding:10px;overflow:auto}
+#mesh svg{display:block;margin:0 auto;max-width:none}
+.lane{overflow:auto;border:1px solid var(--border);border-radius:8px;max-height:520px}
+.lane-grid{display:grid;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:11px;min-width:max-content;--cell-w:52px;--cell-h:26px}
+.cell{height:var(--cell-h);min-width:var(--cell-w);display:flex;align-items:center;justify-content:center;border-right:1px solid #eee;border-bottom:1px solid #eee;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding:0 4px}
+.head{background:#f4f5f7;font-weight:700}
+.rowhead{justify-content:flex-start;padding-left:8px;background:#fbfbfb;position:sticky;left:0;z-index:2}
+.cell.dir-E{background:#eff6ff;color:var(--e);font-weight:600}
+.cell.dir-S{background:#f0fdf4;color:var(--s);font-weight:600}
+.cell.dir-W{background:#fefce8;color:var(--w);font-weight:600}
+.cell.dir-N{background:#faf5ff;color:var(--n);font-weight:600}
+.cell.hit{background:#dcfce7;font-weight:700}
+.cell.inj-slot{box-shadow:inset 0 0 0 2px var(--accent)}
+.tag{display:inline-block;border:1px solid var(--border);border-radius:999px;padding:2px 8px;font-size:12px;background:#fff;margin-right:6px}
+.small{font-size:12px;color:var(--muted)}
+svg text{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+.check-row{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--muted);margin-top:4px}
+.check-row input{width:auto;margin:0}
+.legend{display:flex;flex-wrap:wrap;gap:10px;margin:8px 0;font-size:12px}
+.legend span{display:inline-flex;align-items:center;gap:4px}
+.legend i{display:inline-block;width:14px;height:14px;border-radius:3px}
+@media (max-width:1100px){.grid2{grid-template-columns:1fr}.metrics{grid-template-columns:repeat(2,1fr)}}
+</style>
+</head>
+<body>
+<h1>Metro NoC — 完美时隙中继日历</h1>
+<div class="intro">
+  <strong>Metro NoC</strong> 是一种全网同步的周期中继日历：所有 router 共享同一时隙表。
+  对 <code>N×N</code> 2D Mesh，一帧长度为 <code>P = 4(N−1)</code>，依次为
+  <code>N−1</code> 个东向时隙、<code>N−1</code> 个南向、<code>N−1</code> 个西向、<code>N−1</code> 个北向。
+  每一拍全网只允许沿该方向中继（ingress 在 <code>t</code> 收到 → 同拍或下一拍从对应出口转发，此处建模为<strong>每拍至多前进一跳</strong>）。
+  在 <code>(0,0)</code> 的 <code>slot_0</code> 注入，一个周期内可沿<strong>最外圈</strong>走完整一圈；
+  到达任意节点由<strong>源 PE 的注入时隙</strong> <code>φ ∈ [0,P)</code> 选择，跟随 Metro 流动即可。
+  与源 Manhattan 距离越近的节点，从该源出发能命中它的注入时隙通常越多（见下方可达性矩阵）。
+</div>
+
+<div class="controls">
+  <label>Mesh N (N×N) <input id="n" type="number" min="2" max="16" value="4"></label>
+  <label>源列 srcX <input id="srcX" type="number" min="0" value="0"></label>
+  <label>源行 srcY <input id="srcY" type="number" min="0" value="0"></label>
+  <label>注入时隙 φ <input id="injSlot" type="number" min="0" value="0"></label>
+  <label>当前时隙 slot <input id="slot" type="number" min="0" value="0"></label>
+  <label class="check-row"><input id="showPath" type="checkbox" checked> 显示演示包轨迹</label>
+  <label class="check-row"><input id="showRing" type="checkbox" checked> 高亮最外圈</label>
+  <button id="apply">重新生成</button>
+</div>
+
+<div class="metrics" id="metrics"></div>
+<p class="small">周期 <code>P=4(N−1)</code>；演示包在时隙 <code>φ</code> 于源注入后，每拍按全局方向前进（若该向有出边）。</p>
+
+<div class="legend">
+  <span><i style="background:#eff6ff;border:1px solid var(--e)"></i> 东 E</span>
+  <span><i style="background:#f0fdf4;border:1px solid var(--s)"></i> 南 S</span>
+  <span><i style="background:#fefce8;border:1px solid var(--w)"></i> 西 W</span>
+  <span><i style="background:#faf5ff;border:1px solid var(--n)"></i> 北 N</span>
+  <span><i style="background:#dcfce7;border:1px solid var(--good)"></i> 演示包所在 PE</span>
+</div>
+
+<h2>全局 Metro 时隙表</h2>
+<p class="small">列 = 时隙 <code>0 … P−1</code>；所有 router 在同一列使用相同方向。</p>
+<div class="lane"><div class="lane-grid" id="globalCal"></div></div>
+
+<div class="grid2">
+  <div class="card mesh-card">
+    <h3>当前时隙 Mesh（全网方向 + 演示包位置）</h3>
+    <div class="viz" id="mesh"></div>
+    <div style="margin-top:8px">
+      <button class="secondary" id="prev">Prev</button>
+      <button class="secondary" id="next">Next</button>
+      <span class="tag" id="slotTag"></span>
+    </div>
+  </div>
+  <div class="card">
+    <h3>演示包：逐时隙位置</h3>
+    <div class="table-wrap"><table id="pathTable"></table></div>
+  </div>
+</div>
+
+<h2>源 → 各 PE 可达性（注入时隙计数）</h2>
+<p class="small">单元格 = 从所选源出发、在一个周期内能到达该 PE 的<strong>不同注入时隙 φ</strong> 个数（0…P）。距离源越近往往越大。</p>
+<div class="lane"><div class="lane-grid" id="reachGrid"></div></div>
+
+<h2>Router 连接日历（所选 PE）</h2>
+<p class="small">行 = 所选源 PE 的 router；列 = 时隙。格子为 EWSN 连接（<code>PE→E</code>、<code>W→E</code>、<code>·</code> 等）。</p>
+<div class="lane"><div class="lane-grid" id="routerCal"></div></div>
+
+<h2>最外圈注入 φ=0 可达演示</h2>
+<p class="small">固定源 <code>(0,0)</code>、<code>φ=0</code>，一帧内经过的 PE（应覆盖整条外圈）。</p>
+<div class="table-wrap"><table id="ringTable"></table></div>
+
+<script>
+const DIRS = ["E", "S", "W", "N"];
+const DELTA = {E: [1, 0], S: [0, 1], W: [-1, 0], N: [0, -1]};
+const DIR_COLOR = {E: "#2563eb", S: "#16a34a", W: "#ca8a04", N: "#9333ea"};
+const IN_FROM = {E: "W", S: "N", W: "E", N: "S"};
+
+function metroPeriod(N) {
+  const slots = [];
+  for (const d of DIRS) for (let i = 0; i < N - 1; i++) slots.push(d);
+  return {N, P: slots.length, slots};
+}
+
+function canMove(x, y, dir, N) {
+  const [dx, dy] = DELTA[dir];
+  const nx = x + dx, ny = y + dy;
+  return nx >= 0 && nx < N && ny >= 0 && ny < N;
+}
+
+function isOuterRing(x, y, N) {
+  return x === 0 || x === N - 1 || y === 0 || y === N - 1;
+}
+
+/** Simulate one flit injected at (sx,sy) at global slot inj; returns per-slot positions. */
+function simulateMetro(N, sx, sy, inj, metro) {
+  let x = sx, y = sy;
+  const trace = [];
+  for (let step = 0; step < metro.P; step++) {
+    const slot = (inj + step) % metro.P;
+    const dir = metro.slots[slot];
+    trace.push({slot, dir, x, y, moved: false});
+    if (canMove(x, y, dir, N)) {
+      x += DELTA[dir][0];
+      y += DELTA[dir][1];
+      trace[trace.length - 1].moved = true;
+      trace[trace.length - 1].nx = x;
+      trace[trace.length - 1].ny = y;
+    }
+  }
+  return trace;
+}
+
+/** All PE visited at any point during the period (including start). */
+function visitedSet(trace) {
+  const s = new Set();
+  trace.forEach(t => s.add(`${t.x},${t.y}`));
+  return s;
+}
+
+/** For each destination, count injection slots phi that reach it within one period. */
+function reachabilityMatrix(N, sx, sy, metro) {
+  const grid = Array.from({length: N}, () => Array(N).fill(0));
+  for (let phi = 0; phi < metro.P; phi++) {
+    const trace = simulateMetro(N, sx, sy, phi, metro);
+    const vis = visitedSet(trace);
+    for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
+      if (vis.has(`${x},${y}`)) grid[y][x]++;
+    }
+  }
+  return grid;
+}
+
+function manhattan(x0, y0, x1, y1) {
+  return Math.abs(x1 - x0) + Math.abs(y1 - y0);
+}
+
+/** Router mux connection at (x,y) during global slot s. */
+function routerConnAt(N, x, y, slot, metro) {
+  const dir = metro.slots[slot];
+  if (!canMove(x, y, dir, N)) return "·";
+  const inDir = x === 0 && dir === "E" ? "inj" : IN_FROM[dir];
+  const outDir = dir;
+  if (inDir === "inj") return `PE→${outDir}`;
+  return `${inDir}→${outDir}`;
+}
+
+function posAtSlot(trace, slot) {
+  const t = trace.find(r => r.slot === slot);
+  return t ? {x: t.x, y: t.y} : null;
+}
+
+// --- Rendering helpers ---
+function renderTable(el, headers, rows) {
+  el.innerHTML = `<thead><tr>${headers.map(h => `<th>${h}</th>`).join("")}</tr></thead><tbody>${
+    rows.map(r => `<tr>${r.map(c => `<td>${c}</td>`).join("")}</tr>`).join("")
+  }</tbody>`;
+}
+
+function renderLaneGrid(el, rowLabels, cols, valueAt, opts = {}) {
+  const colLabels = opts.colLabels || cols.map((_, i) => String(i));
+  const colsN = cols.length;
+  el.style.gridTemplateColumns = `minmax(120px,160px) repeat(${colsN}, var(--cell-w))`;
+  const cells = [`<div class="cell head rowhead"> </div>`];
+  colLabels.forEach(c => cells.push(`<div class="cell head">${c}</div>`));
+  rowLabels.forEach((rl, ri) => {
+    cells.push(`<div class="cell rowhead">${rl}</div>`);
+    cols.forEach((c, ci) => {
+      const v = valueAt(rl, c, ri, ci);
+      const cls = ["cell", v.cls, v.inj ? "inj-slot" : ""].filter(Boolean).join(" ");
+      cells.push(`<div class="${cls}" title="${v.title || ""}">${v.text}</div>`);
+    });
+  });
+  el.innerHTML = cells.join("");
+}
+
+function meshLayout(N) {
+  const step = N >= 14 ? 46 : N >= 10 ? 50 : N >= 7 ? 58 : 76;
+  const pad = N >= 14 ? 34 : 38;
+  const width = Math.max(420, pad * 2 + (N - 1) * step);
+  const height = Math.max(360, pad * 2 + (N - 1) * step);
+  const dense = N >= 13;
+  return {
+    width, height, pad, dense, N, step,
+    nodeR: dense ? 5.5 : (N >= 10 ? 7 : 10),
+    nodeFont: dense ? 6 : (N >= 10 ? 7 : 8),
+    edgeOffset: dense ? 2.4 : 3.5,
+    trim: dense ? 8 : (N >= 10 ? 10 : 13),
+  };
+}
+
+function pos(x, y, layout) {
+  const {N, width, height, pad} = layout;
+  const sx = N === 1 ? 0 : (width - pad * 2) / (N - 1);
+  const sy = N === 1 ? 0 : (height - pad * 2) / (N - 1);
+  return {x: pad + x * sx, y: pad + y * sy};
+}
+
+function trimSeg(p0, p1, t) {
+  const dx = p1.x - p0.x, dy = p1.y - p0.y, len = Math.max(1, Math.hypot(dx, dy));
+  return {x1: p0.x + dx / len * t, y1: p0.y + dy / len * t, x2: p1.x - dx / len * t, y2: p1.y - dy / len * t};
+}
+
+function renderMesh(N, metro, slot, trace, reach, opts) {
+  const layout = meshLayout(N);
+  const dir = metro.slots[slot];
+  const pkt = posAtSlot(trace, slot);
+  const lines = [];
+  for (let y = 0; y < N; y++) for (let x = 0; x < N - 1; x++) {
+    lines.push({from: [x, y], to: [x + 1, y], id: "E", fwd: "E"});
+    lines.push({from: [x + 1, y], to: [x, y], id: "W", fwd: "W"});
+  }
+  for (let x = 0; x < N; x++) for (let y = 0; y < N - 1; y++) {
+    lines.push({from: [x, y], to: [x, y + 1], id: "S", fwd: "S"});
+    lines.push({from: [x, y + 1], to: [x, y], id: "N", fwd: "N"});
+  }
+  const lineSvg = lines.map(e => {
+    const p0 = pos(e.from[0], e.from[1], layout);
+    const p1 = pos(e.to[0], e.to[1], layout);
+    const rev = e.from[0] > e.to[0] || e.from[1] > e.to[1];
+    const off = rev ? -layout.edgeOffset : layout.edgeOffset;
+    const ox = e.from[1] === e.to[1] ? 0 : off;
+    const oy = e.from[0] === e.to[0] ? 0 : off;
+    const tr = trimSeg({x: p0.x + ox, y: p0.y + oy}, {x: p1.x + ox, y: p1.y + oy}, layout.trim);
+    const active = e.fwd === dir;
+    const col = active ? DIR_COLOR[dir] : "#ddd";
+    const sw = active ? 2.8 : 1;
+    const op = active ? 0.95 : 0.35;
+    return `<line x1="${tr.x1}" y1="${tr.y1}" x2="${tr.x2}" y2="${tr.y2}" stroke="${col}" stroke-width="${sw}" stroke-opacity="${op}" marker-end="${active ? "url(#arr)" : ""}"/>`;
+  }).join("");
+
+  const nodes = [];
+  for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
+    const p = pos(x, y, layout);
+    const isSrc = x === opts.sx && y === opts.sy;
+    const onRing = opts.showRing && isOuterRing(x, y, N);
+    const hasPkt = pkt && pkt.x === x && pkt.y === y;
+    const rc = reach[y][x];
+    const fill = hasPkt ? "#bbf7d0" : (onRing ? "#fffbeb" : "white");
+    const stroke = isSrc ? "#9a5b00" : (hasPkt ? "#166534" : "#222");
+    const sw = isSrc || hasPkt ? 2 : 1;
+    const conn = routerConnAt(N, x, y, slot, metro);
+    nodes.push(`<g><circle cx="${p.x}" cy="${p.y}" r="${layout.nodeR}" fill="${fill}" stroke="${stroke}" stroke-width="${sw}"/>
+      <title>(${x},${y}) reach=${rc} @slot${slot} ${dir} ${conn}</title>
+      <text x="${p.x}" y="${p.y + layout.nodeFont / 2 - 1}" font-size="${layout.nodeFont}" text-anchor="middle">${x},${y}</text>
+      ${rc > 0 && !layout.dense ? `<text x="${p.x}" y="${p.y + layout.nodeR + 8}" font-size="6" text-anchor="middle" fill="#666">${rc}</text>` : ""}
+    </g>`);
+  }
+
+  return `<svg width="${layout.width}" height="${layout.height}" xmlns="http://www.w3.org/2000/svg">
+    <defs><marker id="arr" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 z" fill="${DIR_COLOR[dir]}"/></marker></defs>
+    ${lineSvg}${nodes.join("")}
+    <text x="8" y="16" font-size="11" fill="#333">slot ${slot}/${metro.P - 1} · 全网 ${dir}</text>
+  </svg>`;
+}
+
+function renderGlobalCal(metro, injSlot) {
+  const N = metro.N;
+  const cols = metro.slots.map((_, i) => i);
+  const blockAt = i => {
+    const seg = N - 1;
+    if (i < seg) return "E块";
+    if (i < 2 * seg) return "S块";
+    if (i < 3 * seg) return "W块";
+    return "N块";
+  };
+  renderLaneGrid(document.getElementById("globalCal"),
+    ["全网方向"],
+    cols,
+    (_, __, ri, ci) => ({
+      text: metro.slots[ci],
+      cls: `dir-${metro.slots[ci]}`,
+      inj: ci === injSlot,
+      title: `slot ${ci} (${blockAt(ci)})`,
+    }),
+    {colLabels: cols.map(i => `${i}`)},
+  );
+}
+
+function renderRouterCal(N, metro, sx, sy, injSlot) {
+  const cols = metro.slots.map((_, i) => i);
+  renderLaneGrid(document.getElementById("routerCal"),
+    [`PE (${sx},${sy})`],
+    cols,
+    (_, __, ri, ci) => {
+      const conn = routerConnAt(N, sx, sy, ci, metro);
+      const d = metro.slots[ci];
+      return {
+        text: conn,
+        cls: conn !== "·" ? `dir-${d}` : "",
+        inj: ci === injSlot,
+        title: `slot ${ci} ${d}: ${conn}`,
+      };
+    },
+    {colLabels: cols.map(i => String(i))},
+  );
+}
+
+function renderReachGrid(N, reach, sx, sy) {
+  const cols = Array.from({length: N}, (_, x) => x);
+  const rowLabels = Array.from({length: N}, (_, y) => `y=${y}`);
+  const max = Math.max(1, ...reach.flat());
+  renderLaneGrid(document.getElementById("reachGrid"),
+    rowLabels,
+    cols,
+    (rl, c, ri, ci) => {
+      const v = reach[ri][ci];
+      const d = manhattan(sx, sy, ci, ri);
+      const intensity = v / max;
+      const good = v > 0;
+      return {
+        text: String(v),
+        cls: good ? "hit" : "",
+        title: `(${ci},${ri}) dist=${d} · ${v} 个注入时隙可达`,
+      };
+    },
+    {colLabels: cols.map(x => `x=${x}`)},
+  );
+}
+
+let current = null;
+
+function render() {
+  const N = Math.max(2, Math.min(16, +document.getElementById("n").value || 4));
+  document.getElementById("n").value = N;
+  const metro = metroPeriod(N);
+  metro.N = N;
+
+  const sx = Math.max(0, Math.min(N - 1, +document.getElementById("srcX").value || 0));
+  const sy = Math.max(0, Math.min(N - 1, +document.getElementById("srcY").value || 0));
+  document.getElementById("srcX").value = sx;
+  document.getElementById("srcY").value = sy;
+  document.getElementById("srcX").max = N - 1;
+  document.getElementById("srcY").max = N - 1;
+
+  let inj = (+document.getElementById("injSlot").value || 0) % metro.P;
+  document.getElementById("injSlot").max = metro.P - 1;
+  document.getElementById("injSlot").value = inj;
+
+  let slot = (+document.getElementById("slot").value || 0) % metro.P;
+  document.getElementById("slot").max = metro.P - 1;
+  document.getElementById("slot").value = slot;
+
+  const showPath = document.getElementById("showPath").checked;
+  const showRing = document.getElementById("showRing").checked;
+
+  const trace = simulateMetro(N, sx, sy, inj, metro);
+  const reach = reachabilityMatrix(N, sx, sy, metro);
+
+  const ringTrace = simulateMetro(N, 0, 0, 0, metro);
+  const ringVis = visitedSet(ringTrace);
+  const outerNodes = [];
+  for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
+    if (isOuterRing(x, y, N)) outerNodes.push({x, y, hit: ringVis.has(`${x},${y}`)});
+  }
+  const ringOk = outerNodes.every(n => n.hit);
+
+  const avgReach = (pred) => {
+    let s = 0, c = 0;
+    for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
+      const d = manhattan(sx, sy, x, y);
+      if (pred(d)) { s += reach[y][x]; c++; }
+    }
+    return c ? (s / c).toFixed(1) : "-";
+  };
+  const nearAvg = avgReach(d => d <= 2);
+  const farAvg = avgReach(d => d >= N - 1);
+
+  document.getElementById("metrics").innerHTML = [
+    ["Mesh", `${N}×${N}`, `${N * N} PEs · 周期 P=${metro.P}`],
+    ["时隙结构", `${N - 1}×(E,S,W,N)`, `slot 0…${metro.P - 1} 循环`],
+    ["源 / 注入", `(${sx},${sy}) @ φ=${inj}`, `当前 slot=${slot} → ${metro.slots[slot]}`],
+    ["外圈 φ=0@(0,0)", ringOk ? "全覆盖" : "未全覆盖", `${outerNodes.filter(n => n.hit).length}/${outerNodes.length} 外圈 PE`, ringOk],
+    ["可达 φ 均值", `近(≤2)=${nearAvg}`, `远(≥${N - 1})=${farAvg} · 越大=可选注入时隙越多`, +nearAvg > +farAvg],
+  ].map(m => `<div class="metric"><div class="name">${m[0]}</div><div class="value${m[3] ? " good" : ""}">${m[1]}</div><div class="sub">${m[2]}</div></div>`).join("");
+
+  renderGlobalCal(metro, inj);
+
+  document.getElementById("mesh").innerHTML = renderMesh(N, metro, slot, showPath ? trace : [], reach, {
+    sx, sy, showRing,
+  });
+  document.getElementById("slotTag").textContent = `slot ${slot} · ${metro.slots[slot]} · φ=${inj}`;
+
+  renderTable(document.getElementById("pathTable"),
+    ["slot", "方向", "位置", "移动"],
+    trace.map(t => [
+      t.slot,
+      t.dir,
+      `(${t.x},${t.y})`,
+      t.moved ? `→ (${t.nx},${t.ny})` : "—",
+    ]),
+  );
+
+  renderReachGrid(N, reach, sx, sy);
+  renderRouterCal(N, metro, sx, sy, inj);
+
+  renderTable(document.getElementById("ringTable"),
+    ["PE", "外圈?", "φ=0 可达?"],
+    outerNodes.map(n => [
+      `(${n.x},${n.y})`,
+      "是",
+      n.hit ? "是" : "否",
+    ]),
+  );
+
+  current = {N, metro, sx, sy, inj, slot, trace, reach};
+}
+
+document.getElementById("apply").onclick = render;
+document.getElementById("prev").onclick = () => {
+  const s = document.getElementById("slot");
+  const P = current?.metro?.P || 12;
+  s.value = ((+s.value || 0) - 1 + P) % P;
+  render();
+};
+document.getElementById("next").onclick = () => {
+  const s = document.getElementById("slot");
+  const P = current?.metro?.P || 12;
+  s.value = ((+s.value || 0) + 1) % P;
+  render();
+};
+document.getElementById("slot").onchange = render;
+document.getElementById("injSlot").onchange = render;
+document.getElementById("showPath").onchange = render;
+document.getElementById("showRing").onchange = render;
+render();
+</script>
+</body>
+</html>
