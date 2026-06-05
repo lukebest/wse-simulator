@@ -40,8 +40,9 @@ th{background:#f4f5f7;color:#333;position:sticky;top:0;z-index:1}
 tr:last-child td{border-bottom:none}
 .viz{border:1px solid var(--border);border-radius:8px;background:#fafafa;padding:10px;overflow:auto}
 #mesh svg{display:block;margin:0 auto;max-width:none}
-.lane{overflow:auto;border:1px solid var(--border);border-radius:8px;max-height:520px}
+.lane{overflow:auto;border:1px solid var(--border);border-radius:8px;max-height:min(70vh,720px)}
 .lane-grid{display:grid;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:11px;min-width:max-content;--cell-w:52px;--cell-h:26px}
+.lane-grid.dense-pkts{--cell-h:20px;font-size:10px;--cell-w:46px}
 .cell{height:var(--cell-h);min-width:var(--cell-w);display:flex;align-items:center;justify-content:center;border-right:1px solid #eee;border-bottom:1px solid #eee;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding:0 4px}
 .head{background:#f4f5f7;font-weight:700}
 .rowhead{justify-content:flex-start;padding-left:8px;background:#fbfbfb;position:sticky;left:0;z-index:2}
@@ -72,16 +73,30 @@ svg text{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
   在 <code>(0,0)</code> 的 <code>slot_0</code> 注入，一个周期内可沿<strong>最外圈</strong>走完整一圈；
   到达任意节点由<strong>源 PE 的注入时隙</strong> <code>φ ∈ [0,P)</code> 选择，跟随 Metro 流动即可。
   与源 Manhattan 距离越近的节点，从该源出发能命中它的注入时隙通常越多（见下方可达性矩阵）。
+  <strong>集合通信</strong>：每个包/flit 单独一行（<strong>broadcast</strong> 为行/列多播树逐 hop；gather 为每源一包；reduce 为树 hop；allgather/allreduce 为每次交换一包）。可调 <strong>Flits/包</strong>：broadcast 每 hop 连续占 F 拍；其余 collective 将每条流展开为 F 个 flit（注入 <code>φ+k</code>）。泳道在 Mesh 图下方，时间轴可超出单帧 <code>P</code>。
 </div>
 
 <div class="controls">
   <label>Mesh N (N×N) <input id="n" type="number" min="2" max="16" value="4"></label>
+  <label>集合通信
+    <select id="collective">
+      <option value="none">（无，仅演示包）</option>
+      <option value="broadcast">Broadcast</option>
+      <option value="gather">Gather</option>
+      <option value="reduce">Reduce</option>
+      <option value="allgather">All-gather</option>
+      <option value="allreduce">All-reduce</option>
+    </select>
+  </label>
+  <label>Root PE <input id="root" type="number" min="0" value="0" title="node = row×N + col"></label>
+  <label>Flits / 包 <input id="flits" type="number" min="1" max="24" value="1" title="每条流连续占用的时隙数"></label>
   <label>源列 srcX <input id="srcX" type="number" min="0" value="0"></label>
   <label>源行 srcY <input id="srcY" type="number" min="0" value="0"></label>
   <label>注入时隙 φ <input id="injSlot" type="number" min="0" value="0"></label>
   <label>当前时隙 slot <input id="slot" type="number" min="0" value="0"></label>
   <label class="check-row"><input id="showPath" type="checkbox" checked> 显示演示包轨迹</label>
   <label class="check-row"><input id="showRing" type="checkbox" checked> 高亮最外圈</label>
+  <label class="check-row"><input id="showCollective" type="checkbox" checked> 显示集合通信流</label>
   <button id="apply">重新生成</button>
 </div>
 
@@ -116,6 +131,13 @@ svg text{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
   </div>
 </div>
 
+<div class="card" id="collLaneCard">
+  <h3>集合流 Metro 泳道（当前 pattern）</h3>
+  <p class="small">列 = 绝对时隙（可超出单帧 <code>P</code>）；每行一个包/flit；<code>φ</code> 为注入时隙；高亮列为当前 slot。</p>
+  <div class="lane"><div class="lane-grid" id="collLane"></div></div>
+  <p class="small" id="collLaneNote"></p>
+</div>
+
 <h2>源 → 各 PE 可达性（注入时隙计数）</h2>
 <p class="small">单元格 = 从所选源出发、在一个周期内能到达该 PE 的<strong>不同注入时隙 φ</strong> 个数（0…P）。距离源越近往往越大。</p>
 <div class="lane"><div class="lane-grid" id="reachGrid"></div></div>
@@ -128,7 +150,23 @@ svg text{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
 <p class="small">固定源 <code>(0,0)</code>、<code>φ=0</code>，一帧内经过的 PE（应覆盖整条外圈）。</p>
 <div class="table-wrap"><table id="ringTable"></table></div>
 
+<h2>集合通信（Metro 注入调度）</h2>
+<p class="small">每条流在源选取 <code>φ</code>（broadcast 用分阶段 <code>release</code>）。<strong>Flits</strong> 控制每条流连续占用时隙数；<strong>Makespan</strong> = 最晚完成 slot + 1。泳道见上方 Mesh 图下。</p>
+<div class="metrics" id="collMetrics" style="margin-bottom:10px"></div>
+<div class="table-wrap"><table id="collSummary"></table></div>
+
+<h3>全部包清单（每个包一行）</h3>
+<p class="small">共 <span id="collPktCount">0</span> 个包；下表列出<strong>每一个</strong>包的源、目的、注入 φ 与当前 slot 位置。</p>
+<div class="table-wrap" style="max-height:min(50vh,480px);overflow:auto"><table id="collAll"></table></div>
+
+<h3>当前时隙在飞包</h3>
+<div class="table-wrap"><table id="collActive"></table></div>
+
 <script>
+const MAX_COLORS = 256;
+const COLOR_PALETTE = Array.from({length: MAX_COLORS}, (_, i) =>
+  `hsl(${Math.round((i * 137.508) % 360)}, ${58 + (i % 3) * 8}%, ${42 + (i % 2) * 8}%)`);
+
 const DIRS = ["E", "S", "W", "N"];
 const DELTA = {E: [1, 0], S: [0, 1], W: [-1, 0], N: [0, -1]};
 const DIR_COLOR = {E: "#2563eb", S: "#16a34a", W: "#ca8a04", N: "#9333ea"};
@@ -208,6 +246,383 @@ function posAtSlot(trace, slot) {
   return t ? {x: t.x, y: t.y} : null;
 }
 
+/** slot -> {x,y} for a scheduled flow (position at start of each slot in trace). */
+function slotPositionMap(trace) {
+  const m = new Map();
+  trace.forEach(t => m.set(t.slot, {x: t.x, y: t.y}));
+  return m;
+}
+
+// --- Collective flow generators (aligned with color_mesh_viz) ---
+function nd(x, y) { return {x, y}; }
+function eid(a, b) { return `${a.x},${a.y}->${b.x},${b.y}`; }
+
+function path(a, b) {
+  const p = [];
+  let c = {x: a.x, y: a.y};
+  while (c.x !== b.x) {
+    const n = {x: c.x + Math.sign(b.x - c.x), y: c.y};
+    p.push({id: eid(c, n), from: {...c}, to: {...n}});
+    c = n;
+  }
+  while (c.y !== b.y) {
+    const n = {x: c.x, y: c.y + Math.sign(b.y - c.y)};
+    p.push({id: eid(c, n), from: {...c}, to: {...n}});
+    c = n;
+  }
+  return p;
+}
+
+function makeFlow(id, colorId, label, from, to, pathEdges, payload) {
+  return {
+    id, label, from, to, colorId,
+    color: COLOR_PALETTE[colorId % MAX_COLORS],
+    path: pathEdges, payload,
+  };
+}
+
+/**
+ * 行总线 + 列总线多播（与 color_mesh_viz 一致）：行 release=0，列 release=N−1。
+ * 每个 hop 一包，便于泳道逐 hop 可视化；根节点保留副本，数据沿树复制而非单 flit 离开 root。
+ */
+function buildMulticastBroadcastHopFlows(N, root, flits) {
+  const F = Math.max(1, flits || 1);
+  const rr = Math.floor(root / N), rc = root % N;
+  const colRelease = (N - 1) * F;
+  const flows = [];
+  let cid = 0;
+  if (rc < N - 1) {
+    for (let c = rc; c < N - 1; c++) {
+      flows.push({
+        ...makeHopFlow(`row_e_${c}`, cid++,
+          `row (${c},${rr})→(${c + 1},${rr})`, nd(c, rr), nd(c + 1, rr), "broadcast"),
+        release: (c - rc) * F,
+        flits: F,
+      });
+    }
+  }
+  for (let c = 0; c < N; c++) {
+    for (let r = rr; r < N - 1; r++) {
+      flows.push({
+        ...makeHopFlow(`col${c}_s_${r}`, cid++,
+          `col${c} (${c},${r})→(${c},${r + 1})`, nd(c, r), nd(c, r + 1), "broadcast"),
+        release: colRelease + (r - rr) * F,
+        flits: F,
+      });
+    }
+  }
+  return flows;
+}
+
+/** 在绝对 slot t，哪些 PE 已收到 broadcast 副本（含 root，多播语义）。 */
+function broadcastCoverageAt(N, root, slot, flits) {
+  const F = Math.max(1, flits || 1);
+  const rr = Math.floor(root / N), rc = root % N;
+  const covered = new Set([`${rc},${rr}`]);
+  for (let c = rc + 1; c < N; c++) {
+    if (slot >= (c - rc) * F) covered.add(`${c},${rr}`);
+  }
+  const colRelease = (N - 1) * F;
+  for (let c = 0; c < N; c++) {
+    for (let r = rr + 1; r < N; r++) {
+      if (slot >= colRelease + (r - rr + 1) * F - 1) covered.add(`${c},${r}`);
+    }
+  }
+  return covered;
+}
+
+function scheduleBroadcastMulticast(flows, flits) {
+  const F = Math.max(1, flits || 1);
+  return flows.map((f, packetIdx) => {
+    const release = f.release || 0;
+    const hop = f.path[0];
+    const posBySlot = new Map();
+    for (let k = 0; k < F; k++) posBySlot.set(release + k, {x: hop.from.x, y: hop.from.y});
+    posBySlot.set(release + F, {x: hop.to.x, y: hop.to.y});
+    return {
+      ...f,
+      phi: release,
+      ok: true,
+      posBySlot,
+      trace: [],
+      finishSlot: release + F,
+      stepsToDst: F,
+      broadcastHop: true,
+      flits: F,
+      packetIdx,
+    };
+  });
+}
+
+/** 将 Metro 调度结果按 flit 数展开：每个 flit 注入时隙 +k，占用顺延 k 拍。 */
+function expandScheduledForFlits(scheduled, flits) {
+  const F = Math.max(1, flits || 1);
+  if (F <= 1) return scheduled;
+  const out = [];
+  let idx = 0;
+  for (const f of scheduled) {
+    for (let k = 0; k < F; k++) {
+      const posBySlot = new Map();
+      for (const [s, p] of f.posBySlot.entries()) posBySlot.set(s + k, p);
+      out.push({
+        ...f,
+        id: `${f.id}·f${k}`,
+        label: `${f.label || f.id} flit${k}`,
+        phi: (f.phi || 0) + k,
+        posBySlot,
+        finishSlot: f.finishSlot !== null && f.finishSlot !== undefined ? f.finishSlot + k : null,
+        flitIdx: k,
+        packetIdx: idx++,
+      });
+    }
+  }
+  return out;
+}
+
+function collectiveTimelineLen(scheduled, metro) {
+  let len = metro.P;
+  for (const f of scheduled) {
+    if (f.finishSlot != null) len = Math.max(len, f.finishSlot + 1);
+    for (const s of f.posBySlot.keys()) len = Math.max(len, s + 1);
+  }
+  return len;
+}
+
+function buildGatherToRootFlows(N, root, payload) {
+  const rr = Math.floor(root / N), rc = root % N;
+  const rootNode = nd(rc, rr);
+  const flows = [];
+  let cid = 0;
+  for (let r = 0; r < N; r++) for (let c = 0; c < N; c++) {
+    if (r === rr && c === rc) continue;
+    const from = nd(c, r);
+    const p = path(from, rootNode);
+    if (!p.length) continue;
+    flows.push(makeFlow(`g${r * N + c}`, cid++, `(${c},${r})→root`, from, rootNode, p, payload));
+  }
+  return flows;
+}
+
+function makeHopFlow(id, cid, label, from, to, payload) {
+  const edge = {id: eid(from, to), from, to};
+  return makeFlow(id, cid, label, from, to, [edge], payload);
+}
+
+function buildTreeReduceFlows(N, root, payload) {
+  const rr = Math.floor(root / N), rc = root % N;
+  const flows = [];
+  let cid = 0;
+  if (rr < N - 1) {
+    for (let c = 0; c < N; c++) for (let y = N - 1; y > rr; y--) {
+      flows.push(makeHopFlow(`rc${c}y${y}n`, cid++,
+        `col${c} (${c},${y})→(${c},${y - 1})`, nd(c, y), nd(c, y - 1), payload));
+    }
+  }
+  if (rr > 0) {
+    for (let c = 0; c < N; c++) for (let y = 0; y < rr; y++) {
+      flows.push(makeHopFlow(`rc${c}y${y}s`, cid++,
+        `col${c} (${c},${y})→(${c},${y + 1})`, nd(c, y), nd(c, y + 1), payload));
+    }
+  }
+  const rowStart = Math.max(rr, N - 1 - rr);
+  if (rc < N - 1) {
+    for (let x = N - 1; x > rc; x--) {
+      flows.push(makeHopFlow(`rr${x}w`, cid++,
+        `row (${x},${rr})→(${x - 1},${rr})`, nd(x, rr), nd(x - 1, rr), payload));
+    }
+  }
+  if (rc > 0) {
+    for (let x = 0; x < rc; x++) {
+      flows.push(makeHopFlow(`rr${x}e`, cid++,
+        `row (${x},${rr})→(${x + 1},${rr})`, nd(x, rr), nd(x + 1, rr), payload));
+    }
+  }
+  return flows;
+}
+
+function pow2Strides(n) {
+  const out = [];
+  for (let s = 1; s < n; s <<= 1) out.push(s);
+  return out;
+}
+
+function addDimExchangePair(flows, cidRef, axis, x, y, stride, payload, idPrefix, tag) {
+  const from = nd(x, y);
+  const to = axis === "x" ? nd(x + stride, y) : nd(x, y + stride);
+  const cid = cidRef.v;
+  flows.push(makeFlow(`${idPrefix}_${axis}${stride}_ab_${x}_${y}`, cid,
+    `${tag} (${from.x},${from.y})→(${to.x},${to.y})`, from, to, path(from, to), payload));
+  flows.push(makeFlow(`${idPrefix}_${axis}${stride}_ba_${x}_${y}`, cid + 1,
+    `${tag} (${to.x},${to.y})→(${from.x},${from.y})`, to, from, path(to, from), payload));
+  cidRef.v += 2;
+}
+
+function buildDimwiseAllreduceFlows(N) {
+  const flows = [];
+  const cidRef = {v: 0};
+  const payload = "allreduce";
+  pow2Strides(N).forEach(s => {
+    for (let y = 0; y < N; y++) for (let x = 0; x < N; x += 2 * s) for (let d = 0; d < s; d++) {
+      if (x + d + s < N) addDimExchangePair(flows, cidRef, "x", x + d, y, s, payload, "ar", `X s=${s}`);
+    }
+  });
+  pow2Strides(N).forEach(s => {
+    for (let x = 0; x < N; x++) for (let y = 0; y < N; y += 2 * s) for (let d = 0; d < s; d++) {
+      if (y + d + s < N) addDimExchangePair(flows, cidRef, "y", x, y + d, s, payload, "ar", `Y s=${s}`);
+    }
+  });
+  return flows;
+}
+
+function buildDimwiseAllgatherFlows(N) {
+  const flows = [];
+  const cidRef = {v: 0};
+  const payload = "allgather";
+  [...pow2Strides(N)].reverse().forEach(s => {
+    for (let y = 0; y < N; y++) for (let x = 0; x < N; x += 2 * s) for (let d = 0; d < s; d++) {
+      if (x + d + s < N) addDimExchangePair(flows, cidRef, "x", x + d, y, s, payload, "ag", `X AG s=${s}`);
+    }
+  });
+  [...pow2Strides(N)].reverse().forEach(s => {
+    for (let x = 0; x < N; x++) for (let y = 0; y < N; y += 2 * s) for (let d = 0; d < s; d++) {
+      if (y + d + s < N) addDimExchangePair(flows, cidRef, "y", x, y + d, s, payload, "ag", `Y AG s=${s}`);
+    }
+  });
+  return flows;
+}
+
+function generateCollectiveFlows(pattern, N, root, flits) {
+  pattern = (pattern || "none").toLowerCase();
+  if (pattern === "none") return [];
+  if (pattern === "broadcast") return buildMulticastBroadcastHopFlows(N, root, flits);
+  if (pattern === "gather") return buildGatherToRootFlows(N, root, "gather");
+  if (pattern === "reduce") return buildTreeReduceFlows(N, root, "reduce");
+  if (pattern === "allgather") return buildDimwiseAllgatherFlows(N);
+  if (pattern === "allreduce") return buildDimwiseAllreduceFlows(N);
+  return [];
+}
+
+/** First φ in [0,P) such that inject at (sx,sy) visits (dx,dy) within one Metro frame. */
+function buildPhiLookup(N, metro) {
+  const lut = Array.from({length: N}, () =>
+    Array.from({length: N}, () =>
+      Array.from({length: N}, () => Array.from({length: N}, () => null))));
+  for (let sy = 0; sy < N; sy++) for (let sx = 0; sx < N; sx++) {
+    for (let phi = 0; phi < metro.P; phi++) {
+      const trace = simulateMetro(N, sx, sy, phi, metro);
+      const vis = visitedSet(trace);
+      for (let dy = 0; dy < N; dy++) for (let dx = 0; dx < N; dx++) {
+        if (lut[sy][sx][dy][dx] === null && vis.has(`${dx},${dy}`)) {
+          lut[sy][sx][dy][dx] = {phi, trace, ok: true};
+        }
+      }
+    }
+  }
+  return lut;
+}
+
+function scheduleFlowOnMetro(flow, N, metro, phiLut) {
+  const {x: sx, y: sy} = flow.from;
+  const {x: dx, y: dy} = flow.to;
+  const hit = phiLut[sy][sx][dy][dx];
+  if (hit) return {...flow, phi: hit.phi, trace: hit.trace, posBySlot: slotPositionMap(hit.trace), ok: true};
+  const trace = simulateMetro(N, sx, sy, 0, metro);
+  return {...flow, phi: 0, trace, posBySlot: slotPositionMap(trace), ok: false};
+}
+
+function scheduleCollective(pattern, flows, N, metro, flits) {
+  if (pattern === "broadcast") return scheduleBroadcastMulticast(flows, flits);
+  const phiLut = buildPhiLookup(N, metro);
+  const base = flows.map((f, packetIdx) => ({
+    ...scheduleFlowOnMetro(f, N, metro, phiLut),
+    packetIdx,
+  }));
+  return expandScheduledForFlits(base, flits);
+}
+
+function flowsAtSlot(scheduled, slot) {
+  return scheduled.filter(f => f.posBySlot.get(slot));
+}
+
+function activeAtSlot(scheduled, slot) {
+  const out = [];
+  for (const f of scheduled) {
+    const p = f.posBySlot.get(slot);
+    if (p) out.push({flow: f, x: p.x, y: p.y});
+  }
+  return out;
+}
+
+/**
+ * Steps from inject (step 0 @ φ) until the packet first sits on its destination PE.
+ * Returns null if the destination is never visited within one Metro frame.
+ */
+function stepsToDestination(flow) {
+  if (!flow.trace) return null;
+  for (let i = 0; i < flow.trace.length; i++) {
+    const t = flow.trace[i];
+    if (t.x === flow.to.x && t.y === flow.to.y) return i;
+    if (t.moved && t.nx === flow.to.x && t.ny === flow.to.y) return i;
+  }
+  return null;
+}
+
+/** Absolute slot (from collective start at slot 0) when the packet reaches its destination. */
+function packetFinishSlot(flow) {
+  const steps = stepsToDestination(flow);
+  if (steps === null || !flow.ok) return null;
+  return flow.phi + steps;
+}
+
+/** Makespan = max finish slot + 1 (last packet delivery completes at end of that slot). */
+function collectiveMakespan(scheduled, pattern, N, metro, flits) {
+  if (pattern === "broadcast") {
+    const F = Math.max(1, flits || 1);
+    const ms = 2 * (N - 1) * F;
+    return {
+      makespan: ms,
+      maxFinishSlot: ms - 1,
+      witness: scheduled[scheduled.length - 1] || null,
+      allOk: true,
+      withinPeriod: ms <= metro.P,
+    };
+  }
+  let maxFinish = -1;
+  let witness = null;
+  let allOk = scheduled.length > 0 && scheduled.every(f => f.ok);
+  for (const f of scheduled) {
+    const fin = packetFinishSlot(f);
+    if (fin !== null && fin > maxFinish) {
+      maxFinish = fin;
+      witness = f;
+    }
+  }
+  if (maxFinish < 0) {
+    return {makespan: null, maxFinishSlot: null, witness: null, allOk: false, withinPeriod: false};
+  }
+  const P = metro.P;
+  return {
+    makespan: maxFinish + 1,
+    maxFinishSlot: maxFinish,
+    witness,
+    allOk,
+    withinPeriod: maxFinish < P,
+  };
+}
+
+function enrichScheduled(scheduled) {
+  return scheduled.map(f => {
+    if (f.broadcastHop) {
+      return {...f, stepsToDst: f.stepsToDst ?? f.flits ?? 1, finishSlot: f.finishSlot};
+    }
+    const steps = stepsToDestination(f);
+    const finishSlot = f.finishSlot != null
+      ? f.finishSlot
+      : (f.ok && steps !== null ? f.phi + steps : null);
+    return {...f, stepsToDst: steps, finishSlot};
+  });
+}
+
 // --- Rendering helpers ---
 function renderTable(el, headers, rows) {
   el.innerHTML = `<thead><tr>${headers.map(h => `<th>${h}</th>`).join("")}</tr></thead><tbody>${
@@ -259,10 +674,18 @@ function trimSeg(p0, p1, t) {
   return {x1: p0.x + dx / len * t, y1: p0.y + dy / len * t, x2: p1.x - dx / len * t, y2: p1.y - dy / len * t};
 }
 
-function renderMesh(N, metro, slot, trace, reach, opts) {
+function renderMesh(N, metro, slot, trace, reach, opts, collActive, broadcastCovered) {
   const layout = meshLayout(N);
   const dir = metro.slots[slot];
-  const pkt = posAtSlot(trace, slot);
+  const pkt = trace.length ? posAtSlot(trace, slot) : null;
+  const byPe = new Map();
+  if (opts.showCollective && collActive && collActive.length) {
+    collActive.forEach(a => {
+      const k = `${a.x},${a.y}`;
+      if (!byPe.has(k)) byPe.set(k, []);
+      byPe.get(k).push(a);
+    });
+  }
   const lines = [];
   for (let y = 0; y < N; y++) for (let x = 0; x < N - 1; x++) {
     lines.push({from: [x, y], to: [x + 1, y], id: "E", fwd: "E"});
@@ -293,21 +716,47 @@ function renderMesh(N, metro, slot, trace, reach, opts) {
     const isSrc = x === opts.sx && y === opts.sy;
     const onRing = opts.showRing && isOuterRing(x, y, N);
     const hasPkt = pkt && pkt.x === x && pkt.y === y;
+    const collHere = byPe.get(`${x},${y}`) || [];
+    const hasBc = broadcastCovered && broadcastCovered.has(`${x},${y}`);
     const rc = reach[y][x];
-    const fill = hasPkt ? "#bbf7d0" : (onRing ? "#fffbeb" : "white");
-    const stroke = isSrc ? "#9a5b00" : (hasPkt ? "#166534" : "#222");
-    const sw = isSrc || hasPkt ? 2 : 1;
+    let fill = onRing ? "#fffbeb" : "white";
+    if (hasPkt) fill = "#bbf7d0";
+    else if (collHere.length) fill = "#f0fdf4";
+    else if (hasBc) fill = "#dcfce7";
+    let stroke = isSrc ? "#9a5b00" : "#222";
+    if (hasPkt) stroke = "#166534";
+    else if (collHere.length || hasBc) stroke = "#166534";
+    const sw = isSrc || hasPkt || collHere.length || hasBc ? 2 : 1;
     const conn = routerConnAt(N, x, y, slot, metro);
+    const collTip = collHere.length
+      ? ` · 包: ${collHere.map(a => `#${a.flow.packetIdx} ${a.flow.id}`).join("; ")}`
+      : "";
     nodes.push(`<g><circle cx="${p.x}" cy="${p.y}" r="${layout.nodeR}" fill="${fill}" stroke="${stroke}" stroke-width="${sw}"/>
-      <title>(${x},${y}) reach=${rc} @slot${slot} ${dir} ${conn}</title>
+      <title>(${x},${y}) reach=${rc} @slot${slot} ${dir} ${conn}${collTip}</title>
       <text x="${p.x}" y="${p.y + layout.nodeFont / 2 - 1}" font-size="${layout.nodeFont}" text-anchor="middle">${x},${y}</text>
-      ${rc > 0 && !layout.dense ? `<text x="${p.x}" y="${p.y + layout.nodeR + 8}" font-size="6" text-anchor="middle" fill="#666">${rc}</text>` : ""}
+      ${rc > 0 && !layout.dense && !collHere.length ? `<text x="${p.x}" y="${p.y + layout.nodeR + 8}" font-size="6" text-anchor="middle" fill="#666">${rc}</text>` : ""}
+      ${collHere.length ? `<text x="${p.x}" y="${p.y - layout.nodeR - 4}" font-size="7" text-anchor="middle" fill="#166534">${collHere.length}pkt</text>` : ""}
     </g>`);
   }
+
+  const pktR = Math.max(3, layout.nodeR * 0.55);
+  const collPktSvg = (opts.showCollective && collActive) ? collActive.map(a => {
+    const base = pos(a.x, a.y, layout);
+    const group = byPe.get(`${a.x},${a.y}`) || [a];
+    const localIdx = group.findIndex(g => g.flow.packetIdx === a.flow.packetIdx);
+    const n = group.length;
+    const angle = n <= 1 ? 0 : (2 * Math.PI * localIdx) / n - Math.PI / 2;
+    const orbit = layout.nodeR + 6;
+    const cx = base.x + (n <= 1 ? 0 : orbit * Math.cos(angle));
+    const cy = base.y + (n <= 1 ? 0 : orbit * Math.sin(angle));
+    return `<circle cx="${cx}" cy="${cy}" r="${pktR}" fill="${a.flow.color}" stroke="#fff" stroke-width="1">
+      <title>#${a.flow.packetIdx} ${a.flow.id} (${a.x},${a.y})</title></circle>`;
+  }).join("") : "";
 
   return `<svg width="${layout.width}" height="${layout.height}" xmlns="http://www.w3.org/2000/svg">
     <defs><marker id="arr" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 z" fill="${DIR_COLOR[dir]}"/></marker></defs>
     ${lineSvg}${nodes.join("")}
+    ${collPktSvg}
     <text x="8" y="16" font-size="11" fill="#333">slot ${slot}/${metro.P - 1} · 全网 ${dir}</text>
   </svg>`;
 }
@@ -351,6 +800,71 @@ function renderRouterCal(N, metro, sx, sy, injSlot) {
       };
     },
     {colLabels: cols.map(i => String(i))},
+  );
+}
+
+function renderCollectiveLane(scheduled, metro, slot, timelineLen) {
+  const el = document.getElementById("collLane");
+  const card = document.getElementById("collLaneCard");
+  const cols = Array.from({length: timelineLen}, (_, i) => i);
+  el.classList.toggle("dense-pkts", scheduled.length > 48);
+  if (card) card.style.display = scheduled.length ? "" : "none";
+  renderLaneGrid(el,
+    scheduled.map(f => {
+      const fl = f.flitIdx != null ? ` f${f.flitIdx}` : "";
+      return `#${f.packetIdx} ${f.id}${fl}`;
+    }),
+    cols,
+    (rl, c, ri, ci) => {
+      const f = scheduled[ri];
+      const p = f.posBySlot.get(ci);
+      const atDst = p && p.x === f.to.x && p.y === f.to.y;
+      const highlight = ci === slot;
+      const dir = ci < metro.P ? metro.slots[ci] : "";
+      return {
+        text: p ? `${p.x},${p.y}` : "",
+        cls: [
+          p ? (f.ok && dir ? `dir-${dir}` : (p ? "hit" : "")) : "",
+          atDst ? "hit" : "",
+          highlight ? "inj-slot" : "",
+        ].filter(Boolean).join(" ") || undefined,
+        inj: ci === f.phi,
+        title: `#${f.packetIdx} ${f.label || f.id} φ=${f.phi} ${f.ok ? "OK" : "未达"} @slot${ci}${highlight ? " [当前]" : ""}`,
+      };
+    },
+    {colLabels: cols.map(i => i === slot ? `${i}*` : String(i))},
+  );
+  const note = document.getElementById("collLaneNote");
+  if (note) {
+    note.textContent = scheduled.length
+      ? `泳道共 ${scheduled.length} 行；时间轴 0…${timelineLen - 1}（P=${metro.P}）；列 ${slot} 为当前时隙。`
+      : "";
+  }
+}
+
+function renderAllPacketsTable(scheduled, slot, ms) {
+  const el = document.getElementById("collPktCount");
+  if (el) el.textContent = String(scheduled.length);
+  const headers = ["#", "包 ID", "flit", "源", "目的", "φ", "完成 slot", "XY hops", "状态", `@slot${slot}`];
+  renderTable(document.getElementById("collAll"),
+    headers,
+    scheduled.map(f => {
+      const p = f.posBySlot.get(slot);
+      const fin = f.finishSlot;
+      const isWitness = ms.witness && ms.witness.packetIdx === f.packetIdx;
+      return [
+        f.packetIdx,
+        f.id,
+        f.flitIdx != null ? f.flitIdx : "—",
+        `(${f.from.x},${f.from.y})`,
+        `(${f.to.x},${f.to.y})`,
+        f.phi,
+        fin !== null ? `${fin}${isWitness ? " ★" : ""}` : "—",
+        f.path.length,
+        f.ok ? "单帧可达" : "单帧不可达",
+        p ? `(${p.x},${p.y})` : "—",
+      ];
+    }),
   );
 }
 
@@ -401,6 +915,14 @@ function render() {
 
   const showPath = document.getElementById("showPath").checked;
   const showRing = document.getElementById("showRing").checked;
+  const showCollective = document.getElementById("showCollective").checked;
+  const collective = document.getElementById("collective").value;
+  let root = Math.max(0, Math.min(N * N - 1, +document.getElementById("root").value || 0));
+  document.getElementById("root").max = N * N - 1;
+  document.getElementById("root").value = root;
+
+  const flits = Math.max(1, Math.min(24, +document.getElementById("flits").value || 1));
+  document.getElementById("flits").value = flits;
 
   const trace = simulateMetro(N, sx, sy, inj, metro);
   const reach = reachabilityMatrix(N, sx, sy, metro);
@@ -432,12 +954,27 @@ function render() {
     ["可达 φ 均值", `近(≤2)=${nearAvg}`, `远(≥${N - 1})=${farAvg} · 越大=可选注入时隙越多`, +nearAvg > +farAvg],
   ].map(m => `<div class="metric"><div class="name">${m[0]}</div><div class="value${m[3] ? " good" : ""}">${m[1]}</div><div class="sub">${m[2]}</div></div>`).join("");
 
+  const collFlows = generateCollectiveFlows(collective, N, root, flits);
+  const scheduled = collective !== "none"
+    ? enrichScheduled(scheduleCollective(collective, collFlows, N, metro, flits))
+    : [];
+  const collTimeline = collective !== "none" ? collectiveTimelineLen(scheduled, metro) : metro.P;
+  const collOk = scheduled.filter(f => f.ok).length;
+  const collMs = collective !== "none"
+    ? collectiveMakespan(scheduled, collective, N, metro, flits)
+    : null;
+  const collActive = activeAtSlot(scheduled, slot);
+  const bcCovered = collective === "broadcast"
+    ? broadcastCoverageAt(N, root, slot, flits)
+    : null;
+
   renderGlobalCal(metro, inj);
 
   document.getElementById("mesh").innerHTML = renderMesh(N, metro, slot, showPath ? trace : [], reach, {
-    sx, sy, showRing,
-  });
-  document.getElementById("slotTag").textContent = `slot ${slot} · ${metro.slots[slot]} · φ=${inj}`;
+    sx, sy, showRing, showCollective,
+  }, collActive, bcCovered);
+  const collTag = collective !== "none" ? ` · ${collective} ${collActive.length}/${scheduled.length} 包在飞` : "";
+  document.getElementById("slotTag").textContent = `slot ${slot} · ${metro.slots[slot]} · φ=${inj}${collTag}`;
 
   renderTable(document.getElementById("pathTable"),
     ["slot", "方向", "位置", "移动"],
@@ -448,6 +985,12 @@ function render() {
       t.moved ? `→ (${t.nx},${t.ny})` : "—",
     ]),
   );
+
+  if (collective !== "none") {
+    renderCollectiveLane(scheduled, metro, slot, collTimeline);
+  } else {
+    renderCollectiveLane([], metro, slot, metro.P);
+  }
 
   renderReachGrid(N, reach, sx, sy);
   renderRouterCal(N, metro, sx, sy, inj);
@@ -461,7 +1004,83 @@ function render() {
     ]),
   );
 
-  current = {N, metro, sx, sy, inj, slot, trace, reach};
+  if (collective !== "none") {
+    const msTxt = collMs.makespan !== null ? `${collMs.makespan} slots` : "—";
+    const msSub = collMs.makespan !== null
+      ? `最晚完成 slot ${collMs.maxFinishSlot} · #${collMs.witness?.packetIdx} ${collMs.witness?.id}${collMs.withinPeriod ? "" : " · 超出单帧 P"}`
+      : "无包可达目的";
+    document.getElementById("collMetrics").innerHTML = [
+      ["Makespan", msTxt, msSub, collMs.makespan !== null && collMs.withinPeriod],
+      ["Pattern", collective, `${collFlows.length} 条流 · ${scheduled.length} 行（含 flit）`],
+      ["Flits", String(flits), collective === "broadcast" ? "每 hop 连续 F 拍" : "每流展开 F 个 flit", true],
+      ["Metro 调度", `${collOk}/${scheduled.length} 单帧可达`, collOk === scheduled.length ? "全部目的可达" : "部分需多帧或调 φ/P", collOk === scheduled.length],
+      ["Root", `${root} (${root % N},${Math.floor(root / N)})`, `P=${metro.P} · 当前在飞 ${collActive.length}`],
+    ].map(m => `<div class="metric"><div class="name">${m[0]}</div><div class="value${m[3] ? " good" : ""}">${m[1]}</div><div class="sub">${m[2]}</div></div>`).join("");
+
+    const collDesc = {
+      broadcast: `行/列多播树逐 hop（makespan=2(N−1)×F）`,
+      gather: "各 PE → root",
+      reduce: "2D 树归约 hop",
+      allgather: "维度序 RHD 交换",
+      allreduce: "维度序 RHD 交换",
+    };
+    renderTable(document.getElementById("collSummary"),
+      ["集合通信", "包数", "Makespan", "单帧可达", "说明"],
+      ["broadcast", "gather", "reduce", "allgather", "allreduce"].map(p => {
+        const flows = generateCollectiveFlows(p, N, root, flits);
+        const sch = enrichScheduled(scheduleCollective(p, flows, N, metro, flits));
+        const ok = sch.filter(f => f.ok).length;
+        const ms = collectiveMakespan(sch, p, N, metro, flits);
+        const msCell = ms.makespan !== null
+          ? `${ms.makespan}${ms.withinPeriod ? "" : " (>P)"}`
+          : "—";
+        return [p, sch.length, msCell, `${ok}/${sch.length}`, collDesc[p]];
+      }),
+    );
+
+    renderAllPacketsTable(scheduled, slot, collMs);
+
+    renderTable(document.getElementById("collActive"),
+      ["#", "包 ID", "φ", "位置", "目的", "状态"],
+      collActive.length ? collActive.map(a => [
+        a.flow.packetIdx,
+        a.flow.id,
+        a.flow.phi,
+        `(${a.x},${a.y})`,
+        `(${a.flow.to.x},${a.flow.to.y})`,
+        a.flow.ok ? "OK" : "未达",
+      ]) : [["—", "当前时隙无在飞包", "", "", "", ""]],
+    );
+  } else {
+    document.getElementById("collMetrics").innerHTML = "";
+    const collDesc = {
+      broadcast: "行/列多播树逐 hop（makespan=2(N−1)）",
+      gather: "各 PE → root",
+      reduce: "2D 树归约 hop",
+      allgather: "维度序 RHD 交换",
+      allreduce: "维度序 RHD 交换",
+    };
+    renderTable(document.getElementById("collSummary"),
+      ["集合通信", "包数", "Makespan", "单帧可达", "说明"],
+      ["broadcast", "gather", "reduce", "allgather", "allreduce"].map(p => {
+        const flows = generateCollectiveFlows(p, N, root, flits);
+        const sch = enrichScheduled(scheduleCollective(p, flows, N, metro, flits));
+        const ok = sch.filter(f => f.ok).length;
+        const ms = collectiveMakespan(sch, p, N, metro, flits);
+        const msCell = ms.makespan !== null
+          ? `${ms.makespan}${ms.withinPeriod ? "" : " (>P)"}`
+          : "—";
+        return [p, sch.length, msCell, `${ok}/${sch.length}`, collDesc[p]];
+      }),
+    );
+    renderCollectiveLane([], metro, slot, metro.P);
+    renderTable(document.getElementById("collAll"), ["—"], [["无"]]);
+    renderTable(document.getElementById("collActive"), ["—"], [["无"]]);
+    const cnt = document.getElementById("collPktCount");
+    if (cnt) cnt.textContent = "0";
+  }
+
+  current = {N, metro, sx, sy, inj, slot, trace, reach, collective, scheduled, collMs};
 }
 
 document.getElementById("apply").onclick = render;
@@ -481,6 +1100,10 @@ document.getElementById("slot").onchange = render;
 document.getElementById("injSlot").onchange = render;
 document.getElementById("showPath").onchange = render;
 document.getElementById("showRing").onchange = render;
+document.getElementById("showCollective").onchange = render;
+document.getElementById("collective").onchange = render;
+document.getElementById("root").onchange = render;
+document.getElementById("flits").onchange = render;
 render();
 </script>
 </body>
