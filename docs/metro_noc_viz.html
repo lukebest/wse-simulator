@@ -69,7 +69,8 @@ svg text{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
   <strong>Metro NoC</strong> 全网同步周期日历：<code>P = 4(N−1)</code>，依次为 <code>(N−1)×E,S,W,N</code>。
   本页仅仿真<strong>集合通信</strong>：每个包/flit 在泳道占一行；上方 Mesh 按<strong>当前 cycle</strong>画出全部在飞包（圆点标 <code>#idx</code>）。Cycle 范围 = makespan，与 Metro 单帧 <code>P</code> 无关。
   <strong>Broadcast</strong> 为行/列多播树，单 flit 沿 E…S 块占周期内前 <code>2(N−1)</code> slot；flit k 在第 k 个 Metro 周期重复该路径，makespan=<code>(F−1)P+2(N−1)</code>。
-  <strong>Gather / All-gather</strong>：全网每时隙最多注入一包（按 <code>φ</code> 对齐 Metro 方向），多源流与多 flit 串行占满多个周期。
+  <strong>Reduce</strong> 为 2D 树归约，逐 hop <code>release</code> 错开，flit 隔 <code>P</code> 拍（同 broadcast 泳道模型）。
+  <strong>Gather / All-gather / All-reduce</strong>：全网每时隙最多注入一包（按 <code>φ</code> 对齐），多流与多 flit 跨多个 Metro 周期串行完成。
 </div>
 
 <div class="controls">
@@ -340,38 +341,49 @@ function buildGatherToRootFlows(N, root, payload) {
   return flows;
 }
 
-function makeHopFlow(id, cid, label, from, to, payload) {
+function makeHopFlow(id, cid, label, from, to, flits, release, payload) {
   const edge = {id: eid(from, to), from, to};
-  return makeFlow(id, cid, label, from, to, [edge], payload);
+  const F = Math.max(1, flits || 1);
+  return {
+    ...makeFlow(id, cid, label, from, to, [edge], payload),
+    release: release || 0,
+    flits: F,
+  };
 }
 
-function buildTreeReduceFlows(N, root, payload) {
+function reduceRowPhaseStart(N, rr) {
+  return Math.max(rr, N - 1 - rr);
+}
+
+/** 2D 树归约：列相→行相，逐 hop release 错开（与 color_mesh_viz 一致）。 */
+function buildTreeReduceFlows(N, root, flits, payload) {
+  const F = Math.max(1, flits || 1);
   const rr = Math.floor(root / N), rc = root % N;
   const flows = [];
   let cid = 0;
   if (rr < N - 1) {
     for (let c = 0; c < N; c++) for (let y = N - 1; y > rr; y--) {
       flows.push(makeHopFlow(`rc${c}y${y}n`, cid++,
-        `col${c} (${c},${y})→(${c},${y - 1})`, nd(c, y), nd(c, y - 1), payload));
+        `col${c} (${c},${y})→(${c},${y - 1})`, nd(c, y), nd(c, y - 1), F, N - 1 - y, payload));
     }
   }
   if (rr > 0) {
     for (let c = 0; c < N; c++) for (let y = 0; y < rr; y++) {
       flows.push(makeHopFlow(`rc${c}y${y}s`, cid++,
-        `col${c} (${c},${y})→(${c},${y + 1})`, nd(c, y), nd(c, y + 1), payload));
+        `col${c} (${c},${y})→(${c},${y + 1})`, nd(c, y), nd(c, y + 1), F, y, payload));
     }
   }
-  const rowStart = Math.max(rr, N - 1 - rr);
+  const rowStart = reduceRowPhaseStart(N, rr);
   if (rc < N - 1) {
     for (let x = N - 1; x > rc; x--) {
       flows.push(makeHopFlow(`rr${x}w`, cid++,
-        `row (${x},${rr})→(${x - 1},${rr})`, nd(x, rr), nd(x - 1, rr), payload));
+        `row (${x},${rr})→(${x - 1},${rr})`, nd(x, rr), nd(x - 1, rr), F, rowStart + (N - 1 - x), payload));
     }
   }
   if (rc > 0) {
     for (let x = 0; x < rc; x++) {
       flows.push(makeHopFlow(`rr${x}e`, cid++,
-        `row (${x},${rr})→(${x + 1},${rr})`, nd(x, rr), nd(x + 1, rr), payload));
+        `row (${x},${rr})→(${x + 1},${rr})`, nd(x, rr), nd(x + 1, rr), F, rowStart + x, payload));
     }
   }
   return flows;
@@ -407,15 +419,18 @@ function buildDimwiseAllreduceFlows(N, baseFlits) {
   const flows = [];
   const cidRef = {v: 0};
   const payload = "allreduce";
+  let release = 0;
   pow2Strides(N).forEach(s => {
     for (let y = 0; y < N; y++) for (let x = 0; x < N; x += 2 * s) for (let d = 0; d < s; d++) {
-      if (x + d + s < N) addDimExchangePair(flows, cidRef, "x", x + d, y, s, F, 0, payload, "ar", `X s=${s}`);
+      if (x + d + s < N) addDimExchangePair(flows, cidRef, "x", x + d, y, s, F, release, payload, "ar", `X RHD s=${s}`);
     }
+    release += dimExchangeStageCycles(s, F);
   });
   pow2Strides(N).forEach(s => {
     for (let x = 0; x < N; x++) for (let y = 0; y < N; y += 2 * s) for (let d = 0; d < s; d++) {
-      if (y + d + s < N) addDimExchangePair(flows, cidRef, "y", x, y + d, s, F, 0, payload, "ar", `Y s=${s}`);
+      if (y + d + s < N) addDimExchangePair(flows, cidRef, "y", x, y + d, s, F, release, payload, "ar", `Y RHD s=${s}`);
     }
+    release += dimExchangeStageCycles(s, F);
   });
   return flows;
 }
@@ -454,7 +469,7 @@ function generateCollectiveFlows(pattern, N, root, flits) {
   if (pattern === "none") return [];
   if (pattern === "broadcast") return buildMulticastBroadcastHopFlows(N, root, flits);
   if (pattern === "gather") return buildGatherToRootFlows(N, root, "gather");
-  if (pattern === "reduce") return buildTreeReduceFlows(N, root, "reduce");
+  if (pattern === "reduce") return buildTreeReduceFlows(N, root, flits, "reduce");
   if (pattern === "allgather") return buildDimwiseAllgatherFlows(N, flits);
   if (pattern === "allreduce") return buildDimwiseAllreduceFlows(N, flits);
   return [];
@@ -558,8 +573,10 @@ function scheduleMetroSerialized(flows, N, metro, flits) {
 }
 
 function scheduleCollective(pattern, flows, N, metro, flits) {
-  if (pattern === "broadcast") return scheduleBroadcastMulticast(flows, flits, metro);
-  if (pattern === "gather" || pattern === "allgather") {
+  if (pattern === "broadcast" || pattern === "reduce") {
+    return scheduleBroadcastMulticast(flows, flits, metro);
+  }
+  if (pattern === "gather" || pattern === "allgather" || pattern === "allreduce") {
     return scheduleMetroSerialized(flows, N, metro, flits);
   }
   const phiLut = buildPhiLookup(N, metro);
@@ -599,6 +616,7 @@ function stepsToDestination(flow) {
 
 /** Absolute slot (from collective start at slot 0) when the packet reaches its destination. */
 function packetFinishSlot(flow) {
+  if (flow.finishSlot != null && flow.finishSlot !== undefined) return flow.finishSlot;
   const steps = stepsToDestination(flow);
   if (steps === null || !flow.ok) return null;
   return flow.phi + steps;
@@ -606,10 +624,7 @@ function packetFinishSlot(flow) {
 
 /** Makespan = max finish slot + 1 (last packet delivery completes at end of that slot). */
 function collectiveMakespan(scheduled, pattern, N, metro, flits) {
-  if (pattern === "broadcast") {
-    const F = Math.max(1, flits || 1);
-    const H = 2 * (N - 1);
-    const ms = (F - 1) * metro.P + H; // 末 flit 在周期 F−1 的前 H 个 slot 内完成
+  if (pattern === "broadcast" || pattern === "reduce") {
     let maxFinish = -1;
     let witness = null;
     for (const f of scheduled) {
@@ -618,12 +633,13 @@ function collectiveMakespan(scheduled, pattern, N, metro, flits) {
         witness = f;
       }
     }
+    const ms = maxFinish >= 0 ? maxFinish + 1 : null;
     return {
       makespan: ms,
-      maxFinishSlot: maxFinish >= 0 ? maxFinish : ms - 1,
+      maxFinishSlot: maxFinish >= 0 ? maxFinish : null,
       witness: witness || scheduled[scheduled.length - 1] || null,
-      allOk: true,
-      withinPeriod: ms <= metro.P,
+      allOk: scheduled.length > 0 && scheduled.every(f => f.ok !== false),
+      withinPeriod: ms != null && ms <= metro.P,
     };
   }
   let maxFinish = -1;
@@ -962,7 +978,8 @@ function render() {
       ["Pattern", collective, `${collFlows.length} 条流 · ${scheduled.length} 行（含 flit）`],
       ["Flits", String(flits),
         collective === "broadcast" ? `每 flit 占周期前 2(N−1) slot · 间隔 P=${metro.P}`
-        : (collective === "gather" || collective === "allgather") ? `每时隙 1 包 · flit 隔 P=${metro.P} · 多周期串行`
+        : (collective === "gather" || collective === "allgather" || collective === "allreduce") ? `每时隙 1 包 · flit 隔 P=${metro.P} · 多周期串行`
+        : collective === "reduce" ? `逐 hop release · flit 隔 P=${metro.P}`
         : "每流展开 F 个 flit", true],
       ["Metro 调度", `${collOk}/${scheduled.length} 单帧可达`, collOk === scheduled.length ? "全部目的可达" : "部分需多帧或调 φ/P", collOk === scheduled.length],
       ["Root", `${root} (${root % N},${Math.floor(root / N)})`, `P=${metro.P} · 当前在飞 ${collActive.length}`],
@@ -971,9 +988,9 @@ function render() {
     const collDesc = {
       broadcast: `行/列多播树 · flit k @ 周期 k 前 2(N−1) slot（makespan=(F−1)P+2(N−1)）`,
       gather: "各 PE→root · 每时隙 1 注入 · 跨多 Metro 周期",
-      reduce: "2D 树归约 hop",
+      reduce: "2D 树归约 · hop release 错开 · flit 隔 P",
       allgather: "RHD 分阶段 · 每时隙 1 注入 · 块数倍增 flit",
-      allreduce: "维度序 RHD 交换",
+      allreduce: "RHD 分阶段 · 每时隙 1 注入 · flit 隔 P",
     };
     renderTable(document.getElementById("collSummary"),
       ["集合通信", "包数", "Makespan", "单帧可达", "说明"],
