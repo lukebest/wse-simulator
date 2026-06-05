@@ -68,7 +68,7 @@ svg text{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
 <div class="intro">
   <strong>Metro NoC</strong> 全网同步周期日历：<code>P = 4(N−1)</code>，依次为 <code>(N−1)×E,S,W,N</code>。
   本页仅仿真<strong>集合通信</strong>：每个包/flit 在泳道占一行；上方 Mesh 按<strong>当前 cycle</strong>画出全部在飞包（圆点标 <code>#idx</code>）。Cycle 范围 = makespan，与 Metro 单帧 <code>P</code> 无关。
-  <strong>Broadcast</strong> 为行/列多播树；其余 collective 在源 PE 选 Metro 注入 <code>φ</code>。<strong>Flits</strong>：broadcast 每 hop 连续 F 拍；其它流展开为 F 个 flit（<code>φ+k</code>）。
+  <strong>Broadcast</strong> 为行/列多播树，单 flit 沿 E…S 块占周期内前 <code>2(N−1)</code> slot；<strong>Flits</strong>：flit k 在第 k 个 Metro 周期重复该路径（flit1 @ cycle 0…5，flit2 @ P…P+5），makespan=<code>(F−1)P+2(N−1)</code>。
 </div>
 
 <div class="controls">
@@ -214,13 +214,12 @@ function makeFlow(id, colorId, label, from, to, pathEdges, payload) {
 }
 
 /**
- * 行总线 + 列总线多播（与 color_mesh_viz 一致）：行 release=0，列 release=N−1。
- * 每个 hop 一包，便于泳道逐 hop 可视化；根节点保留副本，数据沿树复制而非单 flit 离开 root。
+ * 行总线 + 列总线多播（与 color_mesh_viz 一致）。
+ * 单 flit 占周期内前 2(N−1) slot（E 块行跳 + S 块列跳）；flit k 整体偏移 k·P。
  */
 function buildMulticastBroadcastHopFlows(N, root, flits) {
-  const F = Math.max(1, flits || 1);
+  const rowHops = N - 1;
   const rr = Math.floor(root / N), rc = root % N;
-  const colRelease = (N - 1) * F;
   const flows = [];
   let cid = 0;
   if (rc < N - 1) {
@@ -228,8 +227,8 @@ function buildMulticastBroadcastHopFlows(N, root, flits) {
       flows.push({
         ...makeHopFlow(`row_e_${c}`, cid++,
           `row (${c},${rr})→(${c + 1},${rr})`, nd(c, rr), nd(c + 1, rr), "broadcast"),
-        release: (c - rc) * F,
-        flits: F,
+        release: c - rc,
+        flits: Math.max(1, flits || 1),
       });
     }
   }
@@ -238,47 +237,52 @@ function buildMulticastBroadcastHopFlows(N, root, flits) {
       flows.push({
         ...makeHopFlow(`col${c}_s_${r}`, cid++,
           `col${c} (${c},${r})→(${c},${r + 1})`, nd(c, r), nd(c, r + 1), "broadcast"),
-        release: colRelease + (r - rr) * F,
-        flits: F,
+        release: rowHops + (r - rr),
+        flits: Math.max(1, flits || 1),
       });
     }
   }
   return flows;
 }
 
-/** 在绝对 slot t，哪些 PE 已收到 broadcast 副本（含 root，多播语义）。 */
-function broadcastCoverageAt(N, root, slot, flits) {
+/** 在绝对 cycle t，哪些 PE 已收到全部 F 个 flit（含 root，多播语义）。 */
+function broadcastCoverageAt(N, root, slot, flits, metro) {
   const F = Math.max(1, flits || 1);
+  const P = metro.P;
+  const rowHops = N - 1;
+  const lastBase = (F - 1) * P;
   const rr = Math.floor(root / N), rc = root % N;
   const covered = new Set([`${rc},${rr}`]);
   for (let c = rc + 1; c < N; c++) {
-    if (slot >= (c - rc) * F) covered.add(`${c},${rr}`);
+    if (slot >= lastBase + (c - rc)) covered.add(`${c},${rr}`);
   }
-  const colRelease = (N - 1) * F;
   for (let c = 0; c < N; c++) {
     for (let r = rr + 1; r < N; r++) {
-      if (slot >= colRelease + (r - rr + 1) * F - 1) covered.add(`${c},${r}`);
+      if (slot >= lastBase + rowHops + (r - rr - 1)) covered.add(`${c},${r}`);
     }
   }
   return covered;
 }
 
-function scheduleBroadcastMulticast(flows, flits) {
+function scheduleBroadcastMulticast(flows, flits, metro) {
   const F = Math.max(1, flits || 1);
+  const P = metro.P;
   return flows.map((f, packetIdx) => {
-    const release = f.release || 0;
+    const hopSlot = f.release || 0;
     const hop = f.path[0];
     const posBySlot = new Map();
-    for (let k = 0; k < F; k++) posBySlot.set(release + k, {x: hop.from.x, y: hop.from.y});
-    posBySlot.set(release + F, {x: hop.to.x, y: hop.to.y});
+    for (let k = 0; k < F; k++) {
+      const cycle = k * P + hopSlot;
+      posBySlot.set(cycle, {x: hop.to.x, y: hop.to.y});
+    }
     return {
       ...f,
-      phi: release,
+      phi: hopSlot,
       ok: true,
       posBySlot,
       trace: [],
-      finishSlot: release + F,
-      stepsToDst: F,
+      finishSlot: (F - 1) * P + hopSlot,
+      stepsToDst: 1,
       broadcastHop: true,
       flits: F,
       packetIdx,
@@ -463,7 +467,7 @@ function scheduleFlowOnMetro(flow, N, metro, phiLut) {
 }
 
 function scheduleCollective(pattern, flows, N, metro, flits) {
-  if (pattern === "broadcast") return scheduleBroadcastMulticast(flows, flits);
+  if (pattern === "broadcast") return scheduleBroadcastMulticast(flows, flits, metro);
   const phiLut = buildPhiLookup(N, metro);
   const base = flows.map((f, packetIdx) => ({
     ...scheduleFlowOnMetro(f, N, metro, phiLut),
@@ -510,11 +514,20 @@ function packetFinishSlot(flow) {
 function collectiveMakespan(scheduled, pattern, N, metro, flits) {
   if (pattern === "broadcast") {
     const F = Math.max(1, flits || 1);
-    const ms = 2 * (N - 1) * F;
+    const H = 2 * (N - 1);
+    const ms = (F - 1) * metro.P + H; // 末 flit 在周期 F−1 的前 H 个 slot 内完成
+    let maxFinish = -1;
+    let witness = null;
+    for (const f of scheduled) {
+      if (f.finishSlot != null && f.finishSlot > maxFinish) {
+        maxFinish = f.finishSlot;
+        witness = f;
+      }
+    }
     return {
       makespan: ms,
-      maxFinishSlot: ms - 1,
-      witness: scheduled[scheduled.length - 1] || null,
+      maxFinishSlot: maxFinish >= 0 ? maxFinish : ms - 1,
+      witness: witness || scheduled[scheduled.length - 1] || null,
       allOk: true,
       withinPeriod: ms <= metro.P,
     };
@@ -827,7 +840,7 @@ function render() {
   const collActive = activeAtSlot(scheduled, slot);
   const slotDir = metroDirAtCycle(slot, metro);
   const bcCovered = collective === "broadcast"
-    ? broadcastCoverageAt(N, root, slot, flits)
+    ? broadcastCoverageAt(N, root, slot, flits, metro)
     : null;
 
   document.getElementById("metrics").innerHTML = [
@@ -853,13 +866,13 @@ function render() {
     document.getElementById("collMetrics").innerHTML = [
       ["Makespan", msTxt, msSub, collMs.makespan !== null && collMs.withinPeriod],
       ["Pattern", collective, `${collFlows.length} 条流 · ${scheduled.length} 行（含 flit）`],
-      ["Flits", String(flits), collective === "broadcast" ? "每 hop 连续 F 拍" : "每流展开 F 个 flit", true],
+      ["Flits", String(flits), collective === "broadcast" ? `每 flit 占周期前 2(N−1) slot · 间隔 P=${metro.P}` : "每流展开 F 个 flit", true],
       ["Metro 调度", `${collOk}/${scheduled.length} 单帧可达`, collOk === scheduled.length ? "全部目的可达" : "部分需多帧或调 φ/P", collOk === scheduled.length],
       ["Root", `${root} (${root % N},${Math.floor(root / N)})`, `P=${metro.P} · 当前在飞 ${collActive.length}`],
     ].map(m => `<div class="metric"><div class="name">${m[0]}</div><div class="value${m[3] ? " good" : ""}">${m[1]}</div><div class="sub">${m[2]}</div></div>`).join("");
 
     const collDesc = {
-      broadcast: `行/列多播树逐 hop（makespan=2(N−1)×F）`,
+      broadcast: `行/列多播树 · flit k @ 周期 k 前 2(N−1) slot（makespan=(F−1)P+2(N−1)）`,
       gather: "各 PE → root",
       reduce: "2D 树归约 hop",
       allgather: "维度序 RHD 交换",
