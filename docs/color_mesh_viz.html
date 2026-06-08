@@ -53,6 +53,13 @@ tr:last-child td{border-bottom:none}
 .tag{display:inline-block;border:1px solid var(--border);border-radius:999px;padding:2px 8px;font-size:12px;background:#fff;margin-right:6px}
 .small{font-size:12px;color:var(--muted)}
 .warn{color:var(--warn)}
+.algo{margin:14px 0;border:1px solid var(--border);border-radius:8px;background:#fafafa}
+.algo>summary{cursor:pointer;padding:10px 14px;font-size:14px;user-select:none}
+.algo .algo-body{padding:4px 18px 14px;font-size:13px;line-height:1.6}
+.algo h3{font-size:14px;margin:14px 0 4px}
+.algo ul,.algo ol{margin:4px 0;padding-left:22px}
+.algo li{margin:3px 0}
+.algo code{background:#eef;padding:0 3px;border-radius:3px}
 svg text{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
 .check-row{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--muted);margin-top:4px}
 .check-row input{width:auto;margin:0}
@@ -72,7 +79,8 @@ svg text{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
   <strong>Broadcast</strong> 用行/列多播树（共享 color bus）；<strong>Gather</strong> 为每 PE 向 root 的 XY 流；<strong>Reduce</strong> 为 2D 树：先列内逐级归约到 root 行，再行内到 root（每跳单周期，中间节点本地 reduce，非全量汇聚到 root）；  <strong>All-reduce</strong> 为维度序 RHD：先横向（X）再纵向（Y）递归减半/加倍交换（与 <code>collective-mesh-viz</code> dim-wise exchange 一致），非树归约+多播。
   <strong>All-gather</strong> 为维度序 RHD（X/Y stride 从大到小），每阶段 flit 数随已收集块数倍增，使每 PE 最终持有全体 <code>rows×cols</code> 份数据块。
   <strong>All-to-all</strong> 为全置换：每个 PE 向其余每个 PE 各发一条独立消息（共 <code>N×(N-1)</code> 条 VN 流，XY 路由），是对分对剖带宽压力最大的模式。
-  调度策略固定为 <strong>T=1（无 router 缓冲）</strong>：任意 router 在 cycle t 入口的数据必须在 t+1 从出口发出；冲突时仅在<strong>源端 PE 等待注入</strong>（<code>PE:wait</code>），中间 router 不缓冲。
+  调度基线为 <strong>T=1（无 router 缓冲）</strong>：任意 router 在 cycle t 入口的数据必须在 t+1 从出口发出，中间 router 不缓冲。
+  新增约束：<strong>数据进出 PE 需 10 cycle</strong>。两种 <strong>Relay 策略</strong>：<code>noc</code>（数据只在 NoC 上流转，阻塞时仅在<strong>源端 home PE 等待注入</strong> <code>PE:wait</code>，永不付进出惩罚）；<code>pe</code>（阻塞时<strong>落入当前 PE 暂存</strong> <code>→PE</code>/<code>PE:buf</code>，付 +10 cycle 进出代价后再注入，缓解 NoC 冲突）。
   节点 index：<code>node = row×cols + col</code>，显示 <code>(x,y)</code> 为列、行。
 </div>
 
@@ -92,6 +100,12 @@ svg text{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
   <label>Hop advance (T=1 固定)
     <input id="tolerance" type="number" min="1" max="1" value="1" readonly title="每跳恰好 +1；router 不缓冲，冲突在源端 PE:wait">
   </label>
+  <label>Relay 策略
+    <select id="relayPolicy" title="noc：仅源端等待，永不进 PE（无 10-cycle 惩罚）；pe：阻塞时落 PE 暂存，付 10-cycle 进出代价">
+      <option value="noc">NoC 无缓冲（源端等待）</option>
+      <option value="pe">PE 暂存（进出 +10 cycle）</option>
+    </select>
+  </label>
   <label>Period P (周期模式)
     <input id="periodP" type="number" min="0" max="512" value="0" title="0 = 用 L*（最大有向边负载）作为帧长">
   </label>
@@ -110,10 +124,50 @@ svg text{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
 </div>
 
 <div class="metrics" id="metrics"></div>
-<p class="small">指标说明：Makespan 为最后 flit 占用最后一条 edge 的 cycle+1；Colors 为 VN 流条数；Peak edge sharing 恒为 1（calendar 调度无冲突）；Router buffering 恒为 0（无中间缓冲）；Source stall 为源端等待注入总拍数。</p>
+<p class="small">指标说明：Makespan 为最后 flit 占用最后一条 edge 的 cycle+1；Peak edge sharing 恒为 1（calendar 调度无冲突）；源端等待为数据滞留 home PE 的总拍数（不计进出惩罚）；PE 暂存次数/惩罚为中间落 PE 的次数与累计 10-cycle 进出代价（仅 <code>pe</code> 策略 &gt; 0）。下表对比两种 relay 策略，<code>▶</code> 为当前所选。</p>
 
-<h2>time_slot_tolerance 对比 / 周期可行性</h2>
-<p class="small">勾选 <strong>周期稳态日历</strong> 后，本表展示 <code>T=1</code>（无 router 缓冲）周期相位求解结果：<code>L*</code>（最大有向边负载 = 周期下界 P）、<code>P=L*</code> 下是否可行、以及最小周期 <code>min P</code>。详见 <code>docs/perfect_slot_calendar.md</code>。</p>
+<details class="algo">
+<summary><strong>算法思路与流程</strong>（约束模型 · 两种 relay 策略 · 各集合通信，含 all-to-all）</summary>
+<div class="algo-body">
+  <h3>1. 网络与约束模型</h3>
+  <ul>
+    <li><strong>拓扑</strong>：<code>rows×cols</code> 2D Mesh，每个节点含一个 router + 一个本地 PE（core）。路由固定为 <strong>XY 维序</strong>（先沿 X 后沿 Y），每跳占 1 cycle。</li>
+    <li><strong>无 router 缓冲（T=1 刚性中继）</strong>：cycle <code>t</code> 进入某 router 的 flit 必须在 <code>t+1</code> 从出口发出，router 内不排队。冲突资源是 <strong>(有向边, cycle)</strong>：同一物理有向边在同一 cycle 至多 1 个 flit。</li>
+    <li><strong>新增 PE 进出惩罚</strong>：数据“进入 PE 再出 PE”需 <code>PE_INOUT_LATENCY = 10</code> cycle。因此一旦把流经的数据<strong>暂存到中间 PE</strong>，就要付 10-cycle 进出代价；若不进 PE，则数据必须持续在 NoC 上流转，可能与其他流争用边而产生冲突。</li>
+    <li><strong>源端 / 终点</strong>：源数据本就驻留在 home PE，注入（出 PE）前的等待只是“延迟出口”，不重复计 10-cycle 惩罚；终点入 PE 是消费端，不另计。10-cycle 惩罚专门刻画<strong>中间节点的暂存（enter+exit）</strong>。</li>
+  </ul>
+
+  <h3>2. 两种 relay 策略（权衡）</h3>
+  <ul>
+    <li><strong>noc（NoC 无缓冲，仅源端等待）</strong>：为每条流寻找一个注入时刻，使整条 XY 路径在 <code>+1/跳</code> 下逐边无冲突；做不到就让数据继续在 home PE 等待（<code>PE:wait</code>）后重试。<em>优点</em>：永不付 10-cycle 进出惩罚、端到端=跳数；<em>代价</em>：拥塞模式（如 all-to-all）源端等待累积、makespan 拉长。</li>
+    <li><strong>pe（PE 暂存）</strong>：贪心地优先走 <code>+1</code> 刚性中继；当下一跳边在 <code>t+1</code> 被占用时，把 flit <strong>落入当前节点 PE</strong>（<code>→PE</code>），保持 <code>PE:buf</code> 至少 10 cycle，再在 <code>≥ 到达+10</code> 的最早空闲 slot 重新注入下一跳。<em>优点</em>：化解 NoC 边冲突、降低源端反压；<em>代价</em>：每次暂存 +10 cycle 端到端延迟。</li>
+  </ul>
+
+  <h3>3. 调度流程（一次性日历）</h3>
+  <ol>
+    <li>按 (release, 路径长度, colorId) 排序所有流，逐流贪心放置，维护全局 <code>reserved=(edgeId,cycle)</code> 占用集合。</li>
+    <li>对每条流的每个 flit：<br>
+      <code>noc</code>：从 <code>max(release+stall, 上个flit首边+1)</code> 找首边最早空闲 slot 注入，再验证后续每跳 <code>+1</code> 是否空闲；若任一跳冲突则 <code>stall++</code> 重试。<br>
+      <code>pe</code>：注入后逐跳判断——空闲则 <code>+1</code> 刚性中继；被占用则落 PE 暂存（<code>到达+10</code> 起找最早空闲 slot）。</li>
+    <li>把选定的 (边, cycle) 写入 <code>reserved</code> 并记录 calendar：源端 <code>PE:wait→PE→dir</code>；中间刚性 <code>src→dst</code>；中间暂存 <code>src→PE … PE:buf … PE→dst</code>。</li>
+    <li>统计 makespan、源端等待、PE 暂存次数与进出惩罚，并与另一策略并排对比。</li>
+  </ol>
+
+  <h3>4. 各集合通信的生成思路</h3>
+  <ul>
+    <li><strong>Broadcast</strong>：root 经行/列<strong>多播树</strong>（共享 color bus，一次 <code>src→E+S</code> 分叉）覆盖全网，最小化边占用。</li>
+    <li><strong>Gather</strong>：每个 PE 沿 XY 把数据汇聚到 root（incast），root 邻边为瓶颈（L* 偏大）。</li>
+    <li><strong>Reduce</strong>：2D 归约树——先列内逐级归约到 root 所在行，再行内归约到 root；中间节点本地做 reduce，非全量汇聚。</li>
+    <li><strong>All-reduce</strong>：维度序递归减半/加倍（RHD），先 X 后 Y 逐维交换，等价 reduce-scatter + all-gather，无单点 incast。</li>
+    <li><strong>All-gather</strong>：维度序 RHD（stride 由大到小），每阶段 flit 数随已收集块数倍增，最终每 PE 持有全部 <code>rows×cols</code> 块。</li>
+    <li><strong>All-to-all</strong>：全置换，<code>N×(N-1)</code> 条独立 VN 流（每个有序 (src,dst) 一条），XY 路由。这是<strong>对分带宽压力最大</strong>的模式：中央列/行边被大量流穿越，L* 最高。<br>
+      在 <code>noc</code> 下表现为大量源端等待错峰注入；在 <code>pe</code> 下则用中间 PE 暂存吸收边冲突、缩短源端反压，但累计 10-cycle 进出惩罚——两种策略的 makespan/延迟权衡在对比表中一目了然。周期模式对 all-to-all 无刚性 T=1 解，故流数超阈值时跳过相位回溯。</li>
+  </ul>
+</div>
+</details>
+
+<h2>Relay 策略对比 / 周期可行性</h2>
+<p class="small">一次性日历模式下，本表并排对比 <strong>NoC 无缓冲</strong> 与 <strong>PE 暂存</strong> 两种策略的 Makespan、源端等待、PE 暂存次数与进出惩罚，<code>▶</code> 标记当前所选策略，直观展示 10-cycle 进出代价与 NoC 冲突之间的权衡。勾选 <strong>周期稳态日历</strong> 后，本表改为展示 <code>T=1</code> 周期相位求解结果（<code>L*</code> = 最大有向边负载 = 周期下界 P、<code>P=L*</code> 可行性、最小周期 <code>min P</code>）。详见 <code>docs/perfect_slot_calendar.md</code>。</p>
 <div class="table-wrap"><table id="compare"></table></div>
 
 <div class="grid2">
@@ -134,7 +188,7 @@ svg text{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
 </div>
 
 <h2>Router Color Calendar（E/W/S/N 连接）</h2>
-<p class="small">列=<strong>cycle</strong>（每 hop 一列）；行=<strong>router（PE）</strong>。格子为该 PE 在该 cycle 的 <strong>源端口→目的端口</strong> 合并连接（如 <code>W→E</code> 西入东出、<code>PE→E</code> 注入东口、<code>PE:wait</code> 源端等待、<code>W→E+S</code> 西入东/南出，空闲为 <code>·</code>）。<strong>Calendar router</strong> 下拉用于高亮对应行；窗口随当前 cycle 滑动。</p>
+<p class="small">列=<strong>cycle</strong>（每 hop 一列）；行=<strong>router（PE）</strong>。格子为该 PE 在该 cycle 的 <strong>源端口→目的端口</strong> 合并连接（如 <code>W→E</code> 西入东出、<code>PE→E</code> 注入东口、<code>PE:wait</code> 源端等待、<code>W→E+S</code> 西入东/南出，空闲为 <code>·</code>）。PE 暂存策略下另有 <code>W→PE</code>（落 PE 暂存）与 <code>PE:buf</code>（PE 内保持，约 10 cycle）。<strong>Calendar router</strong> 下拉用于高亮对应行；窗口随当前 cycle 滑动。</p>
 <div class="lane"><div class="lane-grid" id="routerCal"></div></div>
 
 <h3>全网格连接状态（当前 cycle）</h3>
@@ -555,18 +609,22 @@ function travelToDstPort(travelDir) {
 function formatConnEWNS(inDir, outDirs, isBuf) {
   if (isBuf) {
     if (inDir === "wait") return "PE:wait";
+    if (inDir === "pebuf") return "PE:buf";
     if (inDir && COMPASS_DIRS.includes(inDir)) return `${travelToSrcPort(inDir)}:■`;
     return "■";
   }
+  const wantsEject = (outDirs || []).includes("ej");
   const outs = [...new Set(outDirs)].filter(d => COMPASS_DIRS.includes(d)).sort()
     .map(travelToDstPort);
+  const dsts = [...outs];
+  if (wantsEject) dsts.push("PE");
   if (inDir === "inj") {
     if (!outs.length) return "PE:·";
     return `PE→${outs.join("+")}`;
   }
   const src = travelToSrcPort(inDir);
-  if (!outs.length) return `${src}:·`;
-  return `${src}→${outs.join("+")}`;
+  if (!dsts.length) return `${src}:·`;
+  return `${src}→${dsts.join("+")}`;
 }
 
 function recordRouterSwitch(calendar, nodeIdx, colorId, cycle, inDir, outDir, flowColor, isBuf) {
@@ -576,26 +634,28 @@ function recordRouterSwitch(calendar, nodeIdx, colorId, cycle, inDir, outDir, fl
   const slots = byColor.get(colorId);
   const prev = slots.get(cycle);
 
-  if (isBuf && inDir === "wait") {
-    // Source PE:wait — skip if this cycle already relays (later flit wait vs earlier flit inj).
+  if (isBuf && (inDir === "wait" || inDir === "pebuf")) {
+    // PE-internal hold (source PE:wait or mid-path PE:buf) — yield to an active relay.
     if (prev && !prev.isBuf) return;
-    if (prev && prev.inDir === "wait") return;
-    const conn = formatConnEWNS("wait", [], true);
+    if (prev && prev.inDir === inDir) return;
+    const conn = formatConnEWNS(inDir, [], true);
     slots.set(cycle, {
-      text: conn, conn, inDir: "wait", outDirs: [], color: flowColor,
+      text: conn, conn, inDir, outDirs: [], color: flowColor,
       isBuf: true, multicast: false,
     });
     return;
   }
 
-  const outs = outDir && COMPASS_DIRS.includes(outDir) ? [outDir] : [];
+  const keep = (d) => d && (COMPASS_DIRS.includes(d) || d === "ej");
+  const outs = keep(outDir) ? [outDir] : [];
   if (prev && !prev.isBuf) {
     const mergedOuts = [...(prev.outDirs || [])];
-    if (outDir && COMPASS_DIRS.includes(outDir) && !mergedOuts.includes(outDir)) mergedOuts.push(outDir);
+    if (keep(outDir) && !mergedOuts.includes(outDir)) mergedOuts.push(outDir);
     const conn = formatConnEWNS(prev.inDir, mergedOuts, false);
+    const compassOuts = mergedOuts.filter(d => COMPASS_DIRS.includes(d));
     slots.set(cycle, {
       text: conn, conn, inDir: prev.inDir, outDirs: mergedOuts, color: flowColor,
-      isBuf: false, multicast: mergedOuts.length > 1,
+      isBuf: false, multicast: compassOuts.length > 1,
     });
     return;
   }
@@ -603,7 +663,7 @@ function recordRouterSwitch(calendar, nodeIdx, colorId, cycle, inDir, outDir, fl
   const conn = formatConnEWNS(inDir, outs, false);
   slots.set(cycle, {
     text: conn, conn, inDir, outDirs: outs, color: flowColor,
-    isBuf: false, multicast: outs.length > 1,
+    isBuf: false, multicast: outs.filter(d => COMPASS_DIRS.includes(d)).length > 1,
   });
 }
 
@@ -618,7 +678,7 @@ function portsFromSlot(slot) {
   if (slot.inDir === "inj") {
     for (const o of outs) if (COMPASS_DIRS.includes(o)) p[travelToDstPort(o)] = "PE→";
   } else if (slot.inDir && COMPASS_DIRS.includes(slot.inDir)) {
-    p[travelToSrcPort(slot.inDir)] = "↓";
+    p[travelToSrcPort(slot.inDir)] = outs.includes("ej") ? "→PE" : "↓";
     for (const o of outs) if (COMPASS_DIRS.includes(o)) p[travelToDstPort(o)] = "→";
   }
   return p;
@@ -657,13 +717,32 @@ function buildNodeConnTimeline(calendar, nodeCount, duration) {
   return timeline;
 }
 
-/** Rigid relay: every hop at t+1, no in-router buffer; backpressure only via source PE:wait. */
-function buildCalendarSchedule(flows, cols, nodeCount) {
+/** Cycles a flit spends to enter a PE and leave it again (store-and-forward penalty). */
+const PE_INOUT_LATENCY = 10;
+
+/**
+ * One-shot calendar (T=1 rigid relay, no in-router buffer). Two relay policies:
+ *  - "noc": bufferless deflection-free. A flit keeps flowing on the NoC at +1 per
+ *    hop; any conflict is resolved purely by holding the flit in its HOME PE longer
+ *    before injection (source PE:wait). Never pays the PE in/out penalty, but
+ *    congested patterns (all-to-all) build up large source stalls.
+ *  - "pe": store-and-forward. When the next hop is blocked at t+1, the flit drops
+ *    into the current node's PE (enter+exit costs PE_INOUT_LATENCY cycles) and
+ *    re-injects at the earliest free slot >= arrival + PE_INOUT_LATENCY. Trades
+ *    end-to-end latency for relief of NoC contention / source backpressure.
+ * Source-side waiting (data resident in its home PE, not yet injected) is NOT
+ * charged the in/out penalty — it is just delayed egress.
+ */
+function buildCalendarSchedule(flows, cols, nodeCount, opts = {}) {
+  const policy = opts.policy === "pe" ? "pe" : "noc";
+  const peLatency = opts.peLatency != null ? opts.peLatency : PE_INOUT_LATENCY;
   const reserved = new Set();
   const events = [];
   const calendar = new Map();
   let maxCycle = 0;
-  let totalStall = 0;
+  let totalStall = 0;     // source-side wait cycles (held in home PE before injection)
+  let peBufCount = 0;     // # of intermediate PE store-and-forward events
+  let pePenalty = 0;      // total cycles spent buffered inside intermediate PEs
 
   const ordered = [...flows].sort((a, b) =>
     (a.release || 0) - (b.release || 0) || a.path.length - b.path.length || a.colorId - b.colorId);
@@ -675,66 +754,94 @@ function buildCalendarSchedule(flows, cols, nodeCount) {
     return limit;
   }
 
+  /** Plan rigid bufferless placement: inject late enough that the whole path is free at +1/hop. */
+  function planNoc(flow, releaseAt, prevFirstEdge) {
+    const maxAttempts = Math.max(8192, flows.length * flow.path.length * 128);
+    for (let stall = 0; stall < maxAttempts; stall++) {
+      const times = [];
+      let t0 = Math.max(releaseAt + stall, prevFirstEdge >= 0 ? prevFirstEdge + 1 : releaseAt + stall);
+      t0 = earliestEdge(t0, flow.path[0].id);
+      times.push(t0);
+      let ok = true;
+      for (let h = 1; h < flow.path.length && ok; h++) {
+        const t = times[h - 1] + 1;
+        if (reserved.has(edgeKey(t, flow.path[h].id))) ok = false;
+        else times.push(t);
+      }
+      if (ok) return {times, peDwell: times.map(() => 0)};
+    }
+    return null;
+  }
+
+  /** Plan store-and-forward placement: rigid +1 when free, else buffer in this node's PE. */
+  function planPe(flow, releaseAt, prevFirstEdge) {
+    const t0lb = Math.max(releaseAt, prevFirstEdge >= 0 ? prevFirstEdge + 1 : releaseAt);
+    const t0 = earliestEdge(t0lb, flow.path[0].id);
+    const times = [t0];
+    const peDwell = [0];
+    for (let h = 1; h < flow.path.length; h++) {
+      const prevT = times[h - 1];
+      const edge = flow.path[h];
+      if (!reserved.has(edgeKey(prevT + 1, edge.id))) {
+        times.push(prevT + 1);
+        peDwell.push(0);
+      } else {
+        const t = earliestEdge(prevT + 1 + peLatency, edge.id);
+        times.push(t);
+        peDwell.push(t - (prevT + 1)); // total cycles held in PE (>= peLatency)
+      }
+    }
+    return {times, peDwell};
+  }
+
   for (const flow of ordered) {
     let prevFirstEdge = -1;
     for (let flit = 0; flit < flow.flits; flit++) {
       const releaseAt = (flow.release || 0) + flit;
       if (!flow.path.length) continue;
 
-      const maxAttempts = Math.max(8192, flows.length * flow.path.length * flow.flits * 128);
-      let scheduled = false;
-      let stall = 0;
+      const plan = policy === "pe"
+        ? planPe(flow, releaseAt, prevFirstEdge)
+        : planNoc(flow, releaseAt, prevFirstEdge);
+      if (!plan) throw new Error(`Failed to schedule ${flow.id} flit ${flit}`);
+      const {times, peDwell} = plan;
 
-      for (let attempt = 0; attempt < maxAttempts && !scheduled; attempt++) {
-        const times = [];
-        let ok = true;
-        let t0 = Math.max(releaseAt + stall, prevFirstEdge >= 0 ? prevFirstEdge + 1 : releaseAt + stall);
-        t0 = earliestEdge(t0, flow.path[0].id);
-        times.push(t0);
+      prevFirstEdge = times[0];
+      totalStall += times[0] - releaseAt;
+      const srcIdx2 = nodeIdx(flow.from, cols);
 
-        for (let h = 1; h < flow.path.length && ok; h++) {
-          const prevT = times[h - 1];
-          const edge = flow.path[h];
-          const t = prevT + 1;
-          if (reserved.has(edgeKey(t, edge.id))) ok = false;
-          else times.push(t);
-        }
+      for (let h = 0; h < flow.path.length; h++) {
+        const t = times[h];
+        const edge = flow.path[h];
+        maxCycle = Math.max(maxCycle, t);
+        reserved.add(edgeKey(t, edge.id));
+        events.push({cycle: t, flow, flit, hop: h, edge, dwell: peDwell[h], label: `${flow.id}.f${flit}`});
 
-        if (!ok) { stall++; continue; }
-
-        totalStall += stall;
-        prevFirstEdge = times[0];
-        const injectAt = releaseAt + stall;
-
-        for (let h = 0; h < flow.path.length; h++) {
-          const t = times[h];
-          const edge = flow.path[h];
-          maxCycle = Math.max(maxCycle, t);
-          reserved.add(edgeKey(t, edge.id));
-
-          events.push({
-            cycle: t, flow, flit, hop: h, edge, dwell: 0,
-            label: `${flow.id}.f${flit}`,
-          });
-
-          const srcIdx2 = nodeIdx(flow.from, cols);
-          if (h === 0) {
-            for (let b = injectAt; b < t; b++) {
-              recordRouterSwitch(calendar, srcIdx2, flow.colorId, b, "wait", null, flow.color, true);
+        if (h === 0) {
+          for (let b = releaseAt; b < t; b++) {
+            recordRouterSwitch(calendar, srcIdx2, flow.colorId, b, "wait", null, flow.color, true);
+          }
+          recordRouterSwitch(calendar, srcIdx2, flow.colorId, t, "inj", portDir(edge.from, edge.to), flow.color, false);
+        } else {
+          const rNode = flow.path[h - 1].to;
+          const rIdx = nodeIdx(rNode, cols);
+          const inD = portDir(flow.path[h - 1].from, rNode);
+          const outD = portDir(edge.from, edge.to);
+          if (peDwell[h] > 0) {
+            // Drop into the PE: eject on arrival, hold, then re-inject onto the next edge.
+            const arr = times[h - 1] + 1;
+            recordRouterSwitch(calendar, rIdx, flow.colorId, arr, inD, "ej", flow.color, false);
+            for (let b = arr + 1; b < t; b++) {
+              recordRouterSwitch(calendar, rIdx, flow.colorId, b, "pebuf", null, flow.color, true);
             }
-            const outD = portDir(edge.from, edge.to);
-            recordRouterSwitch(calendar, srcIdx2, flow.colorId, t, "inj", outD, flow.color, false);
+            recordRouterSwitch(calendar, rIdx, flow.colorId, t, "inj", outD, flow.color, false);
+            peBufCount++;
+            pePenalty += peDwell[h];
           } else {
-            const rNode = flow.path[h - 1].to;
-            const rIdx = nodeIdx(rNode, cols);
-            const inD = portDir(flow.path[h - 1].from, rNode);
-            const outD = portDir(edge.from, edge.to);
             recordRouterSwitch(calendar, rIdx, flow.colorId, t, inD, outD, flow.color, false);
           }
         }
-        scheduled = true;
       }
-      if (!scheduled) throw new Error(`Failed to schedule ${flow.id} flit ${flit}`);
     }
   }
 
@@ -760,9 +867,13 @@ function buildCalendarSchedule(flows, cols, nodeCount) {
     peak: 1,
     maxDwell: 0,
     totalStall,
+    peBufCount,
+    pePenalty,
+    peLatency,
+    policy,
     colorsUsed: flows.length,
     T: 1,
-    label: "calendar",
+    label: `calendar/${policy}`,
   };
 }
 
@@ -1239,9 +1350,10 @@ function computeFlowStats(schedule) {
   const acc = new Map();
   for (const ev of schedule.events) {
     let s = acc.get(ev.flow);
-    if (!s) { s = {inject: Infinity, arrival: -1}; acc.set(ev.flow, s); }
+    if (!s) { s = {inject: Infinity, arrival: -1, peBuf: 0, peBufCount: 0}; acc.set(ev.flow, s); }
     if (ev.hop === 0 && ev.cycle < s.inject) s.inject = ev.cycle;
     if (ev.cycle + 1 > s.arrival) s.arrival = ev.cycle + 1;
+    if (ev.dwell > 0) { s.peBuf += ev.dwell; s.peBufCount++; }
   }
   const stats = [];
   for (const f of schedule.flows) {
@@ -1253,6 +1365,7 @@ function computeFlowStats(schedule) {
       flow: f, hops: f.path.length, flits: f.flits,
       inject, arrival: s.arrival,
       latency: s.arrival - release, stall: inject - release,
+      peBuf: s.peBuf, peBufCount: s.peBufCount,
     });
   }
   return stats;
@@ -1271,22 +1384,25 @@ function renderResultSummary(schedule, rows, cols, op) {
     broadcast: "Broadcast", gather: "Gather", reduce: "Reduce",
     allreduce: "All-reduce", allgather: "All-gather", alltoall: "All-to-all",
   }[op] || op;
+  const polName = schedule.policy === "pe" ? `PE 暂存（进出 +${schedule.peLatency} cycle）` : "NoC 无缓冲（仅源端等待）";
   renderTable(document.getElementById("resultSummary"),
     ["指标", "值", "说明"],
     [
       ["集合操作", opName, `${rows}×${cols} mesh · ${rows * cols} PE`],
+      ["Relay 策略", polName, "noc：永不进 PE；pe：阻塞落 PE 付进出代价"],
       ["VN 流数 / 总 flit", `${n} / ${totalFlits}`, "每条 (src,dst) 一条 color VN"],
       ["Makespan", `${schedule.duration} cycles`, "全部流完成所需周期"],
-      ["端到端延迟 avg / max", `${avgLat.toFixed(1)} / ${max("latency")}`, "到达 − release（cycle）"],
+      ["端到端延迟 avg / max", `${avgLat.toFixed(1)} / ${max("latency")}`, "到达 − release（含 PE 暂存）"],
       ["路径跳数 avg / max", `${avgHops.toFixed(1)} / ${max("hops")}`, "XY 维序 hop 数"],
-      ["源端等待总量", `${schedule.totalStall} cycles`, "router 无缓冲，冲突仅源端 PE:wait"],
+      ["源端等待总量", `${schedule.totalStall} cycles`, "数据滞留 home PE，不计进出惩罚"],
+      ["PE 暂存次数 / 惩罚", `${schedule.peBufCount} / ${schedule.pePenalty} cycles`, `中间落 PE，每次 +${schedule.peLatency} cycle`],
       ["最大有向边负载 L*", `${el.L}`, `瓶颈边 ${el.witness || "-"} · 周期下界`],
       ["峰值 edge 共享", `${schedule.peak}`, "calendar 无冲突恒为 1"],
     ]);
 }
 
 function renderActivityLane(schedule, cycles) {
-  const inflight = new Map(), inject = new Map(), waiting = new Map(), activeR = new Map();
+  const inflight = new Map(), inject = new Map(), waiting = new Map(), activeR = new Map(), peBuf = new Map();
   for (const ev of schedule.events) {
     inflight.set(ev.cycle, (inflight.get(ev.cycle) || 0) + 1);
     if (ev.hop === 0) inject.set(ev.cycle, (inject.get(ev.cycle) || 0) + 1);
@@ -1296,6 +1412,7 @@ function renderActivityLane(schedule, cycles) {
       const conn = tl[c].conn;
       if (conn === IDLE_CONN) continue;
       if (conn.includes("PE:wait")) waiting.set(c, (waiting.get(c) || 0) + 1);
+      if (conn.includes("PE:buf")) peBuf.set(c, (peBuf.get(c) || 0) + 1);
       if (conn.includes("→")) activeR.set(c, (activeR.get(c) || 0) + 1);
     }
   }
@@ -1304,6 +1421,7 @@ function renderActivityLane(schedule, cycles) {
     ["在飞 flit", inflight, peak(inflight), "26,68,128"],
     ["注入 PE", inject, peak(inject), "22,101,52"],
     ["源端等待", waiting, peak(waiting), "154,91,0"],
+    ["PE 暂存", peBuf, peak(peBuf), "150,40,40"],
     ["活跃 router", activeR, peak(activeR), "120,60,140"],
   ];
   renderLaneGrid(document.getElementById("activityLane"),
@@ -1328,16 +1446,17 @@ function renderStreamDetail(schedule) {
     rowsData = [...stats.slice(0, HALF), {divider: omitted}, ...stats.slice(stats.length - HALF)];
   }
   const body = rowsData.map(s => {
-    if (s.divider !== undefined) return [`… 省略 ${s.divider} 条（按到达 cycle 居中）…`, ...Array(cols - 1).fill("")];
+    if (s.divider !== undefined) return [`… 省略 ${s.divider} 条（按到达 cycle 居中）…`, ...Array(cols).fill("")];
     const f = s.flow;
     return [
       `(${f.from.x},${f.from.y})→(${f.to.x},${f.to.y})`,
       `c${f.colorId}`,
       s.hops, s.flits, s.inject, s.arrival, s.latency, s.stall,
+      s.peBufCount ? `${s.peBufCount}×/${s.peBuf}c` : "0",
     ];
   });
   renderTable(document.getElementById("streamDetail"),
-    ["源→目的", "color", "跳数", "flits", "注入c", "到达c", "延迟", "源端等待"],
+    ["源→目的", "color", "跳数", "flits", "注入c", "到达c", "延迟", "源端等待", "PE暂存"],
     body);
 }
 
@@ -1355,6 +1474,7 @@ function render() {
   const calRouter = Math.max(0, Math.min(rows * cols - 1, +document.getElementById("calRouter").value || root));
   const periodic = document.getElementById("periodicMode").checked;
   const periodPInput = Math.max(0, Math.min(512, +document.getElementById("periodP").value || 0));
+  const relayPolicy = document.getElementById("relayPolicy").value === "pe" ? "pe" : "noc";
 
   const flows = generateCollectiveFlows(op, rows, cols, base, root);
 
@@ -1380,9 +1500,9 @@ function render() {
       periodicInfo.empty = true;
     }
   } else {
-    schedule = buildCalendarSchedule(flows, cols, rows * cols);
+    schedule = buildCalendarSchedule(flows, cols, rows * cols, {policy: relayPolicy});
   }
-  current = {rows, cols, op, T, root, base, schedule, flows, periodic, periodicInfo};
+  current = {rows, cols, op, T, root, base, schedule, flows, periodic, periodicInfo, relayPolicy};
 
   updateColorFilterOptions(schedule.flows);
   updateCalRouterOptions(rows, cols, root);
@@ -1433,24 +1553,31 @@ function render() {
         ["min P @ T=1", comp.minP.P !== null ? `${comp.minP.P}` : "搜索超限", comp.minP.P === comp.L ? "= L*（最优）" : "> L*"],
       ]);
   } else {
+    const polName = relayPolicy === "pe" ? "PE 暂存 (+10/次)" : "NoC 无缓冲";
     document.getElementById("metrics").innerHTML = [
       ["Mesh", `${rows}×${cols}`, `${rows * cols} PEs · root ${root} (${root % cols},${Math.floor(root / cols)})`],
-      ["Makespan", `${schedule.duration} cycles`, `${schedule.flows.length} VN streams · T=1 无 router 缓冲`],
-      ["Colors (VN)", `${schedule.colorsUsed}`, `multicast tree buses · per-router calendar`],
+      ["Makespan", `${schedule.duration} cycles`, `${schedule.flows.length} VN streams · ${polName}`],
       ["Peak edge sharing", `${schedule.peak}`, `conflict-free`, true],
-      ["Router buffering", "0 beat", `source stall ${schedule.totalStall} cycles`, true],
+      ["源端等待", `${schedule.totalStall} cycles`, `数据滞留 home PE（不计进出惩罚）`],
+      ["PE 暂存次数", `${schedule.peBufCount}`, `落 PE 次数 · 每次 +${schedule.peLatency} cycle`, schedule.peBufCount === 0],
+      ["PE 进出惩罚", `${schedule.pePenalty} cycles`, `中间 PE 暂存累计代价`, schedule.pePenalty === 0],
     ].map(m => `<div class="metric"><div class="name">${m[0]}</div><div class="value${m[3] ? " good" : ""}">${m[1]}</div><div class="sub">${m[2]}</div></div>`).join("");
 
+    // Compare both relay policies side-by-side so the PE-latency trade-off is explicit.
+    const alt = relayPolicy === "pe"
+      ? buildCalendarSchedule(flows, cols, rows * cols, {policy: "noc"})
+      : buildCalendarSchedule(flows, cols, rows * cols, {policy: "pe"});
+    const rowFor = (label, s, sel) => [
+      sel ? `▶ ${label}` : label, s.duration, s.totalStall, s.peBufCount, s.pePenalty, s.peak, s.flows.length,
+    ];
+    const noc = relayPolicy === "noc" ? schedule : alt;
+    const pe = relayPolicy === "pe" ? schedule : alt;
     renderTable(document.getElementById("compare"),
-      ["策略", "Makespan", "Router buffering", "Source stall", "Peak edge", "VN streams"],
-      [[
-        "T=1（源端等待）",
-        schedule.duration,
-        schedule.maxDwell,
-        schedule.totalStall,
-        schedule.peak,
-        schedule.flows.length,
-      ]]);
+      ["Relay 策略", "Makespan", "源端等待", "PE 暂存次数", "PE 进出惩罚", "Peak edge", "VN 流"],
+      [
+        rowFor("NoC 无缓冲（仅源端等待）", noc, relayPolicy === "noc"),
+        rowFor(`PE 暂存（进出 +${pe.peLatency}）`, pe, relayPolicy === "pe"),
+      ]);
   }
 
   document.getElementById("mesh").innerHTML = renderMesh(schedule, rows, cols, cycle, colorFilter, showOverlay, root);
@@ -1504,6 +1631,7 @@ document.getElementById("routeOverlay").onchange = render;
 document.getElementById("calRouter").onchange = render;
 document.getElementById("periodicMode").onchange = render;
 document.getElementById("periodP").onchange = render;
+document.getElementById("relayPolicy").onchange = render;
 render();
 </script>
 </body>
