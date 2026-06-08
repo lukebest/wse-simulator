@@ -67,7 +67,7 @@ svg text{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
   本页展示 <strong>Color 虚拟网络（VN）</strong> 机制下的 2D Mesh 集合通信调度，与
   <code>collective-mesh-viz.html</code> 的逻辑 butterfly / tree / ring 算法视图互补。
   每条端到端流分配独立 color（时分虚拟网，数量不限）；路径为固定 XY 维序路由。
-  每个 router 具备 <strong>多播</strong>：calendar 用 <strong>E/W/S/N 连接关系</strong> 表示（如 <code>W→E+S</code>、<code>PE→E</code>、端口缓冲 <code>E:■</code>）；每 hop 占 1 cycle，<strong>每个节点每个 cycle</strong> 更新四向端口状态。
+  每个 router 具备 <strong>多播</strong>：calendar 用 <strong>源端口→目的端口</strong>（E/W/S/N 为 router 四向端口，非行进方向）表示连接（如 <code>W→E</code> 西口入东口出、<code>W→E+S</code> 西口入东/南口出、<code>PE→E</code> 本地注入东口、端口缓冲 <code>W:■</code>）；每 hop 占 1 cycle，<strong>每个节点每个 cycle</strong> 更新四向端口状态。
   集合通信前为各 router 预配置 <strong>color calendar</strong>；全局调度保证同一 cycle 同一物理 edge 至多一个 flit。
   <strong>Broadcast</strong> 用行/列多播树（共享 color bus）；<strong>Gather</strong> 为每 PE 向 root 的 XY 流；<strong>Reduce</strong> 为 2D 树：先列内逐级归约到 root 行，再行内到 root（每跳单周期，中间节点本地 reduce，非全量汇聚到 root）；  <strong>All-reduce</strong> 为维度序 RHD：先横向（X）再纵向（Y）递归减半/加倍交换（与 <code>collective-mesh-viz</code> dim-wise exchange 一致），非树归约+多播。
   <strong>All-gather</strong> 为维度序 RHD（X/Y stride 从大到小），每阶段 flit 数随已收集块数倍增，使每 PE 最终持有全体 <code>rows×cols</code> 份数据块。
@@ -132,7 +132,7 @@ svg text{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
 </div>
 
 <h2>Router Color Calendar（E/W/S/N 连接）</h2>
-<p class="small">列=<strong>cycle</strong>（每 hop 一列）；行=<strong>router（PE）</strong>。格子为该 PE 在该 cycle 的 EWSN 合并连接（如 <code>PE→E</code>、<code>W→E+S</code>、<code>E:■</code>，空闲为 <code>·</code>）。<strong>Calendar router</strong> 下拉用于高亮对应行；窗口随当前 cycle 滑动。</p>
+<p class="small">列=<strong>cycle</strong>（每 hop 一列）；行=<strong>router（PE）</strong>。格子为该 PE 在该 cycle 的 <strong>源端口→目的端口</strong> 合并连接（如 <code>W→E</code> 西入东出、<code>PE→E</code> 注入东口、<code>W→E+S</code> 西入东/南出、<code>W:■</code> 西口缓冲，空闲为 <code>·</code>）。<strong>Calendar router</strong> 下拉用于高亮对应行；窗口随当前 cycle 滑动。</p>
 <div class="lane"><div class="lane-grid" id="routerCal"></div></div>
 
 <h3>全网格连接状态（当前 cycle）</h3>
@@ -520,17 +520,33 @@ function packetsToFlows(packets, cols, flitsPerBlock) {
 
 const COMPASS_DIRS = ["E", "W", "S", "N"];
 const IDLE_CONN = "----";
+/** Travel direction along a hop → ingress port on the router (opposite side). */
+const TRAVEL_TO_SRC_PORT = {E: "W", W: "E", N: "S", S: "N"};
 
+function travelToSrcPort(travelDir) {
+  return TRAVEL_TO_SRC_PORT[travelDir] || travelDir;
+}
+
+function travelToDstPort(travelDir) {
+  return travelDir;
+}
+
+/** Format router switch as source-port → dest-port(s) (E/W/S/N = router ports). */
 function formatConnEWNS(inDir, outDirs, isBuf) {
   if (isBuf) {
     if (inDir === "wait") return "PE:wait";
-    if (inDir && COMPASS_DIRS.includes(inDir)) return `${inDir}:■`;
+    if (inDir && COMPASS_DIRS.includes(inDir)) return `${travelToSrcPort(inDir)}:■`;
     return "■";
   }
-  const inn = inDir === "inj" ? "PE" : inDir;
-  const outs = [...new Set(outDirs)].filter(d => COMPASS_DIRS.includes(d)).sort();
-  if (!outs.length) return inn === "PE" ? "PE:·" : `${inn}:·`;
-  return `${inn}→${outs.join("+")}`;
+  const outs = [...new Set(outDirs)].filter(d => COMPASS_DIRS.includes(d)).sort()
+    .map(travelToDstPort);
+  if (inDir === "inj") {
+    if (!outs.length) return "PE:·";
+    return `PE→${outs.join("+")}`;
+  }
+  const src = travelToSrcPort(inDir);
+  if (!outs.length) return `${src}:·`;
+  return `${src}→${outs.join("+")}`;
 }
 
 function recordRouterSwitch(calendar, nodeIdx, colorId, cycle, inDir, outDir, flowColor, isBuf) {
@@ -571,16 +587,15 @@ function portsFromSlot(slot) {
   const p = {E: "·", W: "·", S: "·", N: "·"};
   if (!slot) return p;
   if (slot.isBuf) {
-    if (slot.inDir && COMPASS_DIRS.includes(slot.inDir)) p[slot.inDir] = "■";
+    if (slot.inDir && COMPASS_DIRS.includes(slot.inDir)) p[travelToSrcPort(slot.inDir)] = "■";
     return p;
   }
-  const inn = slot.inDir === "inj" ? null : slot.inDir;
   const outs = slot.outDirs || [];
-  if (inn && COMPASS_DIRS.includes(inn)) p[inn] = "↓";
   if (slot.inDir === "inj") {
-    for (const o of outs) if (COMPASS_DIRS.includes(o)) p[o] = "PE→";
-  } else {
-    for (const o of outs) if (COMPASS_DIRS.includes(o)) p[o] = p[o] === "·" ? "→" : "→";
+    for (const o of outs) if (COMPASS_DIRS.includes(o)) p[travelToDstPort(o)] = "PE→";
+  } else if (slot.inDir && COMPASS_DIRS.includes(slot.inDir)) {
+    p[travelToSrcPort(slot.inDir)] = "↓";
+    for (const o of outs) if (COMPASS_DIRS.includes(o)) p[travelToDstPort(o)] = "→";
   }
   return p;
 }
