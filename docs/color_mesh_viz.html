@@ -142,8 +142,9 @@ svg text{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
   <ul>
     <li><strong>noc（NoC 无缓冲，仅源端等待）</strong>：为每条流寻找一个注入时刻，使整条 XY 路径在 <code>+1/跳</code> 下逐边无冲突；做不到就让数据继续在 home PE 等待（<code>PE:wait</code>）后重试。<em>优点</em>：永不付 10-cycle 进出惩罚、端到端=跳数；<em>代价</em>：拥塞模式（如 all-to-all）源端等待累积、makespan 拉长。</li>
     <li><strong>pe（PE 暂存）</strong>：贪心地优先走 <code>+1</code> 刚性中继；当下一跳边在 <code>t+1</code> 被占用时，把 flit <strong>落入当前节点 PE</strong>（<code>→PE</code>），保持 <code>PE:buf</code> 至少 10 cycle，再在 <code>≥ 到达+10</code> 的最早空闲 slot 重新注入下一跳。<em>优点</em>：化解 NoC 边冲突、降低源端反压；<em>代价</em>：每次暂存 +10 cycle 端到端延迟。</li>
-    <li><strong>defl（NoC 偏转 / hot-potato）</strong>：flit <strong>从不进入中间 PE</strong>，每个 cycle 必须离开 router。优先选一条空闲且<strong>缩短曼哈顿距离</strong>的边（productive），若都被占用则<strong>偏转</strong>到任一空闲边（misroute，尽量不立刻折返），停留在 NoC 上绕行；之后从新节点重新朝目的地路由。<em>优点</em>：无 10-cycle 进出惩罚、源端等待小；<em>代价</em>：路径不再是最短 XY，<strong>额外 hop</strong> 增加端到端延迟，重载下可能游走。若某 cycle 四向出口全被占用（罕见死点），则推迟注入重试。</li>
+    <li><strong>defl（NoC 偏转 / hot-potato）</strong>：flit <strong>从不因中途拥塞而落入 PE</strong>，每个 cycle 必须离开 router。优先选一条空闲且<strong>缩短曼哈顿距离</strong>的边（productive），若都被占用则<strong>偏转</strong>到任一空闲边（misroute，尽量不立刻折返），停留在 NoC 上绕行；之后从新节点重新朝目的地路由。<em>优点</em>：<strong>中途无 10-cycle 进出惩罚</strong>（<code>PE:buf=0</code>）、源端反压小；<em>代价</em>：路径不再是最短 XY，<strong>额外 hop</strong> 增加端到端延迟，重载下可能游走。若某 cycle 四向出口全被占用（罕见死点），则推迟注入重试。</li>
   </ul>
+  <p class="small"><strong>注意 defl 的边界</strong>：<code>defl</code> 只消除“<strong>中途遇阻落 PE</strong>”这一项（中途 <code>PE:buf</code> 恒为 0）。它<strong>不</strong>消除两类与路由策略无关的 PE 驻留：(1) <strong>源端等待</strong> <code>PE:wait</code>（注入前数据停在 home PE，不计进出惩罚，所有策略都有）；(2) <strong>X→Y 维度切换的 10-cycle 进出</strong>——All-gather/All-reduce 的换维累积本就发生在 PE 内（X 收完落 PE、Y 再从 PE 发出），属于集合算法本身，对 <code>noc/pe/defl</code> 三种策略一律生效。因此选 <code>defl</code> 时，allgather 仍会在 X→Y 处看到一次 PE 进出（这不是中途暂存）。</p>
 
   <h3>3. 调度流程（一次性日历）</h3>
   <ol>
