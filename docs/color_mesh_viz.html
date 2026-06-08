@@ -2,7 +2,7 @@
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8">
-<title>Color VN 集合通信逐周期可视化</title>
+<title>流量感知的calendar集合通信逐周期可视化</title>
 <style>
 :root{
   --ink:#1b1b1b;--muted:#666;--border:#dedede;--soft:#f6f7f9;
@@ -11,7 +11,8 @@
 *{box-sizing:border-box}
 body{font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei","Segoe UI",sans-serif;
   max-width:1920px;margin:24px auto;padding:0 24px;color:var(--ink);line-height:1.55}
-h1{border-bottom:2px solid #333;padding-bottom:8px;margin:0 0 10px}
+h1{border-bottom:2px solid #333;padding-bottom:8px;margin:0 0 10px;display:flex;align-items:baseline;flex-wrap:wrap;gap:10px}
+.version{font-size:13px;font-weight:500;color:var(--muted);border:1px solid var(--border);border-radius:6px;padding:2px 10px;background:#f8f9fa;letter-spacing:.02em}
 h2{font-size:20px;color:var(--accent);margin:28px 0 10px}
 h3{font-size:15px;margin:0 0 8px}
 code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;background:#f0f1f3;padding:1px 4px;border-radius:3px}
@@ -69,7 +70,7 @@ svg text{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
 </style>
 </head>
 <body>
-<h1>Color VN 集合通信逐周期可视化</h1>
+<h1>流量感知的calendar集合通信逐周期可视化 <span class="version" id="appVersion" title="页面版本（日期）"></span></h1>
 <div class="intro">
   本页展示 <strong>Color 虚拟网络（VN）</strong> 机制下的 2D Mesh 集合通信调度，与
   <code>collective-mesh-viz.html</code> 的逻辑 butterfly / tree / ring 算法视图互补。
@@ -217,6 +218,9 @@ svg text{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
 <div class="lane"><div class="lane-grid" id="timeline"></div></div>
 
 <script>
+/** Page version — date of last substantive update (YYYY-MM-DD). */
+const APP_VERSION = "2026-06-08";
+
 const MAX_COLORS = 256;
 const COLOR_PALETTE = Array.from({length: MAX_COLORS}, (_, i) =>
   `hsl(${Math.round((i * 137.508) % 360)}, ${58 + (i % 3) * 8}%, ${42 + (i % 2) * 8}%)`);
@@ -1721,6 +1725,8 @@ document.getElementById("calRouter").onchange = render;
 document.getElementById("periodicMode").onchange = render;
 document.getElementById("periodP").onchange = render;
 document.getElementById("relayPolicy").onchange = render;
+document.getElementById("appVersion").textContent = APP_VERSION;
+document.title = `流量感知的calendar集合通信逐周期可视化 (${APP_VERSION})`;
 render();
 </script>
 </body>
