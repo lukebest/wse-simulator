@@ -71,6 +71,7 @@ svg text{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
   集合通信前为各 router 预配置 <strong>color calendar</strong>；全局调度保证同一 cycle 同一物理 edge 至多一个 flit。
   <strong>Broadcast</strong> 用行/列多播树（共享 color bus）；<strong>Gather</strong> 为每 PE 向 root 的 XY 流；<strong>Reduce</strong> 为 2D 树：先列内逐级归约到 root 行，再行内到 root（每跳单周期，中间节点本地 reduce，非全量汇聚到 root）；  <strong>All-reduce</strong> 为维度序 RHD：先横向（X）再纵向（Y）递归减半/加倍交换（与 <code>collective-mesh-viz</code> dim-wise exchange 一致），非树归约+多播。
   <strong>All-gather</strong> 为维度序 RHD（X/Y stride 从大到小），每阶段 flit 数随已收集块数倍增，使每 PE 最终持有全体 <code>rows×cols</code> 份数据块。
+  <strong>All-to-all</strong> 为全置换：每个 PE 向其余每个 PE 各发一条独立消息（共 <code>N×(N-1)</code> 条 VN 流，XY 路由），是对分对剖带宽压力最大的模式。
   调度策略固定为 <strong>T=1（无 router 缓冲）</strong>：任意 router 在 cycle t 入口的数据必须在 t+1 从出口发出；冲突时仅在<strong>源端 PE 等待注入</strong>（<code>PE:wait</code>），中间 router 不缓冲。
   节点 index：<code>node = row×cols + col</code>，显示 <code>(x,y)</code> 为列、行。
 </div>
@@ -85,6 +86,7 @@ svg text{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
       <option value="reduce">Reduce</option>
       <option value="allreduce">All-reduce</option>
       <option value="allgather">All-gather</option>
+      <option value="alltoall">All-to-all</option>
     </select>
   </label>
   <label>Hop advance (T=1 固定)
@@ -139,13 +141,17 @@ svg text{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
 <p class="small">每个 PE 在当前 cycle 的 E/W/S/N 合并连接与四向端口摘要。</p>
 <div class="table-wrap"><table id="rotAll"></table></div>
 
-<h2>Color VN 泳道图</h2>
-<p class="small">每一行是一条 distinct color VN；格子显示该 color 在当前 cycle 占用的 flit 数。</p>
-<div class="lane"><div class="lane-grid" id="colorLane"></div></div>
+<h2>仿真结果摘要</h2>
+<p class="small">端到端调度的关键指标：每条流的注入/到达/延迟由全局日历推导（<code>到达 = 最后一跳 cycle + 1</code>，<code>端到端延迟 = 到达 − release</code>，<code>源端等待 = 注入 cycle − release</code>）。</p>
+<div class="table-wrap"><table id="resultSummary"></table></div>
 
-<h2>物理 Edge 泳道图</h2>
-<p class="small">每一行是一条物理有向 edge，每一列是一个 cycle。窗口会跟随当前 cycle 滑动。</p>
-<div class="lane"><div class="lane-grid" id="lane"></div></div>
+<h2>逐周期网络活动</h2>
+<p class="small">每列一个 cycle，颜色越深表示越繁忙。<strong>在飞 flit</strong>=该 cycle 占用物理 edge 的 flit 数（无冲突时 = 占用 edge 数）；<strong>注入 PE</strong>=该 cycle 从本地口注入的流数；<strong>源端等待</strong>=该 cycle 处于 <code>PE:wait</code> 的 PE 数；<strong>活跃 router</strong>=该 cycle 正在中继的 router 数。</p>
+<div class="lane"><div class="lane-grid" id="activityLane"></div></div>
+
+<h2>每流端到端明细</h2>
+<p class="small">每行一条 VN 流，按到达 cycle 排序。流数较多时仅列出最先注入与最晚到达的若干条（含瓶颈流）。</p>
+<div class="table-wrap"><table id="streamDetail"></table></div>
 
 <h2>VN Stream 时间线</h2>
 <p class="small">每一行是一条 VN stream（<code>c{id}: src→dst</code>）。格子显示该 stream 在当前 cycle 占用的物理 edge。</p>
@@ -396,6 +402,19 @@ function buildDimwiseAllreduceFlows(rows, cols, flits) {
   return flows;
 }
 
+/** All-to-all: every PE sends a distinct message to every other PE (N×(N-1) VN streams, XY routed). */
+function buildAllToAllFlows(rows, cols, flits) {
+  const n = rows * cols;
+  const packets = [];
+  for (let s = 0; s < n; s++) {
+    for (let d = 0; d < n; d++) {
+      if (s === d) continue;
+      packets.push({src: s, dst: d, payload: "alltoall", delay_cycles: 0});
+    }
+  }
+  return packetsToFlows(packets, cols, flits);
+}
+
 /** All-gather: dim-wise RHD with reverse strides; flits per stage scale with blocks held (butterflyExchangeFlows). */
 function buildDimwiseAllgatherFlows(rows, cols, baseFlits) {
   const flows = [];
@@ -445,6 +464,7 @@ function generateCollectiveFlows(pattern, rows, cols, flitsPerBlock, root) {
   if (pattern === "reduce") return buildTreeReduceFlows(rows, cols, root, flits, pattern);
   if (pattern === "allgather") return buildDimwiseAllgatherFlows(rows, cols, flits);
   if (pattern === "allreduce") return buildDimwiseAllreduceFlows(rows, cols, flits);
+  if (pattern === "alltoall") return buildAllToAllFlows(rows, cols, flits);
   throw new Error(`Unknown pattern ${pattern}`);
 }
 
@@ -1003,12 +1023,6 @@ function renderTable(el, headers, rows) {
   }</tbody>`;
 }
 
-function usedEdges(schedule) {
-  const m = new Map();
-  schedule.flows.forEach(f => f.path.forEach(e => m.set(e.id, e)));
-  return [...m.values()].sort((a, b) => a.id.localeCompare(b.id));
-}
-
 function meshLayout(rows, cols) {
   const maxDim = Math.max(rows, cols), nodeCount = rows * cols;
   const step = maxDim >= 14 ? 46 : maxDim >= 10 ? 50 : maxDim >= 7 ? 58 : 76;
@@ -1220,6 +1234,113 @@ function renderAllRouterRotation(schedule, rows, cols, cycle, root) {
     rowsData);
 }
 
+/** Per-flow end-to-end stats derived from the global calendar. */
+function computeFlowStats(schedule) {
+  const acc = new Map();
+  for (const ev of schedule.events) {
+    let s = acc.get(ev.flow);
+    if (!s) { s = {inject: Infinity, arrival: -1}; acc.set(ev.flow, s); }
+    if (ev.hop === 0 && ev.cycle < s.inject) s.inject = ev.cycle;
+    if (ev.cycle + 1 > s.arrival) s.arrival = ev.cycle + 1;
+  }
+  const stats = [];
+  for (const f of schedule.flows) {
+    const s = acc.get(f);
+    if (!s) continue;
+    const release = f.release || 0;
+    const inject = s.inject === Infinity ? release : s.inject;
+    stats.push({
+      flow: f, hops: f.path.length, flits: f.flits,
+      inject, arrival: s.arrival,
+      latency: s.arrival - release, stall: inject - release,
+    });
+  }
+  return stats;
+}
+
+function renderResultSummary(schedule, rows, cols, op) {
+  const stats = computeFlowStats(schedule);
+  const n = stats.length;
+  const totalFlits = stats.reduce((a, s) => a + s.flits, 0);
+  const sum = (key) => stats.reduce((a, s) => a + s[key], 0);
+  const max = (key) => stats.reduce((a, s) => Math.max(a, s[key]), 0);
+  const avgLat = n ? sum("latency") / n : 0;
+  const avgHops = n ? sum("hops") / n : 0;
+  const el = computeEdgeLoad(schedule.flows);
+  const opName = {
+    broadcast: "Broadcast", gather: "Gather", reduce: "Reduce",
+    allreduce: "All-reduce", allgather: "All-gather", alltoall: "All-to-all",
+  }[op] || op;
+  renderTable(document.getElementById("resultSummary"),
+    ["指标", "值", "说明"],
+    [
+      ["集合操作", opName, `${rows}×${cols} mesh · ${rows * cols} PE`],
+      ["VN 流数 / 总 flit", `${n} / ${totalFlits}`, "每条 (src,dst) 一条 color VN"],
+      ["Makespan", `${schedule.duration} cycles`, "全部流完成所需周期"],
+      ["端到端延迟 avg / max", `${avgLat.toFixed(1)} / ${max("latency")}`, "到达 − release（cycle）"],
+      ["路径跳数 avg / max", `${avgHops.toFixed(1)} / ${max("hops")}`, "XY 维序 hop 数"],
+      ["源端等待总量", `${schedule.totalStall} cycles`, "router 无缓冲，冲突仅源端 PE:wait"],
+      ["最大有向边负载 L*", `${el.L}`, `瓶颈边 ${el.witness || "-"} · 周期下界`],
+      ["峰值 edge 共享", `${schedule.peak}`, "calendar 无冲突恒为 1"],
+    ]);
+}
+
+function renderActivityLane(schedule, cycles) {
+  const inflight = new Map(), inject = new Map(), waiting = new Map(), activeR = new Map();
+  for (const ev of schedule.events) {
+    inflight.set(ev.cycle, (inflight.get(ev.cycle) || 0) + 1);
+    if (ev.hop === 0) inject.set(ev.cycle, (inject.get(ev.cycle) || 0) + 1);
+  }
+  for (const [, tl] of schedule.nodeConn) {
+    for (let c = 0; c < tl.length; c++) {
+      const conn = tl[c].conn;
+      if (conn === IDLE_CONN) continue;
+      if (conn.includes("PE:wait")) waiting.set(c, (waiting.get(c) || 0) + 1);
+      if (conn.includes("→")) activeR.set(c, (activeR.get(c) || 0) + 1);
+    }
+  }
+  const peak = (m) => Math.max(1, ...m.values());
+  const defs = [
+    ["在飞 flit", inflight, peak(inflight), "26,68,128"],
+    ["注入 PE", inject, peak(inject), "22,101,52"],
+    ["源端等待", waiting, peak(waiting), "154,91,0"],
+    ["活跃 router", activeR, peak(activeR), "120,60,140"],
+  ];
+  renderLaneGrid(document.getElementById("activityLane"),
+    defs.map(d => d[0]), cycles,
+    (label, cy) => {
+      const d = defs.find(x => x[0] === label);
+      const v = d[1].get(cy) || 0;
+      if (!v) return {text: ""};
+      const a = (0.15 + 0.6 * Math.min(1, v / d[2])).toFixed(2);
+      return {text: String(v), style: `background:rgba(${d[3]},${a});font-weight:600;color:#1b1b1b`};
+    });
+}
+
+function renderStreamDetail(schedule) {
+  const cols = 8;
+  const stats = computeFlowStats(schedule)
+    .sort((a, b) => a.arrival - b.arrival || a.inject - b.inject || a.flow.colorId - b.flow.colorId);
+  const CAP = 40, HALF = CAP / 2;
+  let rowsData = stats;
+  if (stats.length > CAP) {
+    const omitted = stats.length - CAP;
+    rowsData = [...stats.slice(0, HALF), {divider: omitted}, ...stats.slice(stats.length - HALF)];
+  }
+  const body = rowsData.map(s => {
+    if (s.divider !== undefined) return [`… 省略 ${s.divider} 条（按到达 cycle 居中）…`, ...Array(cols - 1).fill("")];
+    const f = s.flow;
+    return [
+      `(${f.from.x},${f.from.y})→(${f.to.x},${f.to.y})`,
+      `c${f.colorId}`,
+      s.hops, s.flits, s.inject, s.arrival, s.latency, s.stall,
+    ];
+  });
+  renderTable(document.getElementById("streamDetail"),
+    ["源→目的", "color", "跳数", "flits", "注入c", "到达c", "延迟", "源端等待"],
+    body);
+}
+
 function render() {
   const rows = Math.max(2, Math.min(16, +document.getElementById("rows").value || 4));
   const cols = Math.max(2, Math.min(16, +document.getElementById("cols").value || 4));
@@ -1337,27 +1458,9 @@ function render() {
   renderRouterConnMatrix(schedule, rows, cols, cycles, root, calRouter);
   renderAllRouterRotation(schedule, rows, cols, cycle, root);
 
-  const colorIds = [...new Set(schedule.flows.map(f => f.colorId))].sort((a, b) => a - b);
-  renderLaneGrid(document.getElementById("colorLane"),
-    colorIds.map(id => schedule.flows.find(f => f.colorId === id)?.label || `c${id}`),
-    cycles,
-    (rowLabel, cy) => {
-      const id = colorIds.find(cid => schedule.flows.find(f => f.colorId === cid)?.label === rowLabel);
-      if (id === undefined) return {text: ""};
-      const es = filteredEvents(schedule, cy, "all").filter(e => e.flow.colorId === id);
-      if (!es.length) return {text: ""};
-      return {text: String(es.length), color: es.length > 1 ? "#a33" : COLOR_PALETTE[id % MAX_COLORS]};
-    });
-
-  const edges = usedEdges(schedule).map(e => e.id);
-  renderLaneGrid(document.getElementById("lane"), edges, cycles, (edgeId, cy) => {
-    const es = filteredEvents(schedule, cy, colorFilter).filter(e => e.edge.id === edgeId);
-    if (!es.length) return {text: ""};
-    return {
-      text: es.length > 1 ? "conflict" : es[0].label,
-      color: es.length > 1 ? "#a33" : es[0].flow.color,
-    };
-  });
+  renderResultSummary(schedule, rows, cols, op);
+  renderActivityLane(schedule, cycles);
+  renderStreamDetail(schedule);
 
   const streams = schedule.flows.map(f => f.label);
   renderLaneGrid(document.getElementById("timeline"), streams, cycles, (label, cy) => {
