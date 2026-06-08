@@ -126,7 +126,7 @@ svg text{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
 </div>
 
 <div class="metrics" id="metrics"></div>
-<p class="small">指标说明：Makespan 为最后 flit 占用最后一条 edge 的 cycle+1；Peak edge sharing 恒为 1（calendar 调度无冲突）；源端等待为数据滞留 home PE 的总拍数（不计进出惩罚）；PE 暂存次数/惩罚为中间落 PE 的次数与累计 10-cycle 进出代价（仅 <code>pe</code> 策略 &gt; 0）。下表对比两种 relay 策略，<code>▶</code> 为当前所选。</p>
+<p class="small">指标说明：Makespan = 第一个 flit 注入 NoC 的 cycle 到最后一个 flit 到达目的 PE 的 cycle 之差（末包到达 − 首包发出）；时间轴上界 <code>lastArrival</code> 为末包到达时刻。Peak edge sharing 恒为 1（calendar 调度无冲突）；源端等待为数据滞留 home PE 的总拍数（不计进出惩罚）；PE 暂存次数/惩罚为中间落 PE 的次数与累计 10-cycle 进出代价（仅 <code>pe</code> 策略 &gt; 0）。下表对比三种 relay 策略，<code>▶</code> 为当前所选。</p>
 
 <details class="algo">
 <summary><strong>算法思路与流程</strong>（约束模型 · 两种 relay 策略 · 各集合通信，含 all-to-all）</summary>
@@ -155,7 +155,7 @@ svg text{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
       <code>pe</code>：注入后逐跳判断——空闲则 <code>+1</code> 刚性中继；被占用则落 PE 暂存（<code>到达+10</code> 起找最早空闲 slot）。<br>
       <code>defl</code>：注入后逐 cycle 选边——优先空闲的 productive 边，否则偏转到任一空闲边；动态生成实际边序列（非固定 XY），死点则推迟注入重试。</li>
     <li>把选定的 (边, cycle) 写入 <code>reserved</code> 并记录 calendar：源端 <code>PE:wait→PE→dir</code>；中间刚性/偏转 <code>src→dst</code>（偏转可出现折返如 <code>E→W</code>）；中间暂存 <code>src→PE … PE:buf … PE→dst</code>。</li>
-    <li>统计 makespan、源端等待、PE 暂存次数与进出惩罚，并与另一策略并排对比。</li>
+    <li>统计 makespan（首包注入 → 末包到达）、源端等待、PE 暂存次数与进出惩罚，并与三种 relay 策略并排对比。</li>
   </ol>
 
   <h3>4. 各集合通信的生成思路</h3>
@@ -761,7 +761,6 @@ function buildCalendarSchedule(flows, cols, nodeCount, opts = {}) {
   const reserved = new Set();
   const events = [];
   const calendar = new Map();
-  let maxCycle = 0;
   let totalStall = 0;     // source-side wait cycles (held in home PE before injection)
   let peBufCount = 0;     // # of intermediate PE store-and-forward events
   let pePenalty = 0;      // total cycles spent buffered inside intermediate PEs
@@ -897,7 +896,6 @@ function buildCalendarSchedule(flows, cols, nodeCount, opts = {}) {
       for (let h = 0; h < edges.length; h++) {
         const t = times[h];
         const edge = edges[h];
-        maxCycle = Math.max(maxCycle, t);
         reserved.add(edgeKey(t, edge.id));
         events.push({cycle: t, flow, flit, hop: h, edge, dwell: peDwell[h], label: `${flow.id}.f${flit}`});
 
@@ -936,7 +934,8 @@ function buildCalendarSchedule(flows, cols, nodeCount, opts = {}) {
   }
 
   const routerRot = buildRouterRotationStates(calendar);
-  const duration = maxCycle + 1;
+  const {makespan, firstInject, lastArrival} = computeMakespanFromEvents(events);
+  const duration = lastArrival; // timeline upper bound (exclusive end cycle index)
   const nodeConn = buildNodeConnTimeline(calendar, nodeCount, duration);
 
   return {
@@ -947,6 +946,9 @@ function buildCalendarSchedule(flows, cols, nodeCount, opts = {}) {
     nodeConn,
     routerRot,
     duration,
+    makespan,
+    firstInject,
+    lastArrival,
     period: 1,
     peak: 1,
     maxDwell: 0,
@@ -1430,6 +1432,29 @@ function renderAllRouterRotation(schedule, rows, cols, cycle, root) {
     rowsData);
 }
 
+/**
+ * Makespan over all scheduled flits: last arrival − first injection.
+ * First injection = min cycle of hop-0 (NoC inject) across all flits.
+ * Last arrival = max cycle+1 after each flit's final hop (T=1: hop at t → at dest by t+1).
+ */
+function computeMakespanFromEvents(events) {
+  if (!events.length) return {makespan: 0, firstInject: 0, lastArrival: 0};
+  let firstInject = Infinity;
+  const flitLast = new Map();
+  for (const ev of events) {
+    if (ev.hop === 0) firstInject = Math.min(firstInject, ev.cycle);
+    const fk = `${ev.flow.id}|${ev.flit}`;
+    const prev = flitLast.get(fk);
+    if (!prev || ev.hop > prev.hop || (ev.hop === prev.hop && ev.cycle > prev.cycle)) {
+      flitLast.set(fk, ev);
+    }
+  }
+  let lastArrival = 0;
+  for (const ev of flitLast.values()) lastArrival = Math.max(lastArrival, ev.cycle + 1);
+  if (firstInject === Infinity) firstInject = 0;
+  return {makespan: lastArrival - firstInject, firstInject, lastArrival};
+}
+
 /** Per-flow end-to-end stats derived from the global calendar. */
 function computeFlowStats(schedule) {
   const acc = new Map();
@@ -1482,7 +1507,7 @@ function renderResultSummary(schedule, rows, cols, op) {
       ["集合操作", opName, `${rows}×${cols} mesh · ${rows * cols} PE`],
       ["Relay 策略", polName, "noc：永不进 PE；pe：阻塞落 PE 付进出代价；defl：NoC 偏转绕行"],
       ["VN 流数 / 总 flit", `${n} / ${totalFlits}`, "每条 (src,dst) 一条 color VN"],
-      ["Makespan", `${schedule.duration} cycles`, "全部流完成所需周期"],
+      ["Makespan", `${schedule.makespan} cycles`, `首包发出 c${schedule.firstInject} → 末包到达 c${schedule.lastArrival}`],
       ["端到端延迟 avg / max", `${avgLat.toFixed(1)} / ${max("latency")}`, "到达 − release（含暂存/绕行）"],
       ["XY 跳数 avg / max", `${avgHops.toFixed(1)} / ${max("hops")}`, "标称 XY 维序 hop 数"],
       ["源端等待总量", `${schedule.totalStall} cycles`, "数据滞留 home PE，不计进出惩罚"],
@@ -1650,7 +1675,7 @@ function render() {
     const polName = {noc: "NoC 无缓冲", pe: "PE 暂存 (+10/次)", defl: "NoC 偏转 (绕行)"}[relayPolicy];
     document.getElementById("metrics").innerHTML = [
       ["Mesh", `${rows}×${cols}`, `${rows * cols} PEs · root ${root} (${root % cols},${Math.floor(root / cols)})`],
-      ["Makespan", `${schedule.duration} cycles`, `${schedule.flows.length} VN streams · ${polName}`],
+      ["Makespan", `${schedule.makespan} cycles`, `c${schedule.firstInject}→c${schedule.lastArrival} · ${schedule.flows.length} VN · ${polName}`],
       ["Peak edge sharing", `${schedule.peak}`, `conflict-free`, true],
       ["源端等待", `${schedule.totalStall} cycles`, `数据滞留 home PE（不计进出惩罚）`],
       ["PE 进出惩罚", `${schedule.pePenalty} cycles`, `${schedule.peBufCount} 次落 PE · 每次 +${schedule.peLatency}`, schedule.pePenalty === 0],
@@ -1662,7 +1687,7 @@ function render() {
     const rowFor = (label, p) => {
       const s = schedFor(p);
       return [p === relayPolicy ? `▶ ${label}` : label,
-        s.duration, s.totalStall, s.peBufCount, s.pePenalty, s.deflectExtra, s.flows.length];
+        s.makespan, s.totalStall, s.peBufCount, s.pePenalty, s.deflectExtra, s.flows.length];
     };
     renderTable(document.getElementById("compare"),
       ["Relay 策略", "Makespan", "源端等待", "PE 暂存次数", "PE 进出惩罚", "偏转额外hop", "VN 流"],
