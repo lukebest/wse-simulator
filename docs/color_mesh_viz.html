@@ -1358,8 +1358,16 @@ function render() {
 
   const flows = generateCollectiveFlows(op, rows, cols, base, root);
 
+  // Phase-backtracking is exponential; skip it for large stream counts (e.g. all-to-all)
+  // so the UI never freezes. all-to-all has no rigid periodic T=1 solution anyway.
+  const PERIODIC_FLOW_CAP = 128;
   let schedule, periodicInfo = null;
-  if (periodic) {
+  if (periodic && flows.length > PERIODIC_FLOW_CAP) {
+    const el = computeEdgeLoad(flows);
+    const P = periodPInput > 0 ? periodPInput : el.L;
+    periodicInfo = {el, P, placement: {ok: false}, minP: {P: null}, tooMany: true};
+    schedule = buildPeriodicSchedule(flows, P, cols, rows * cols, {assign: new Map()});
+  } else if (periodic) {
     const el = computeEdgeLoad(flows);
     const P = periodPInput > 0 ? periodPInput : el.L;
     const placement = buildPeriodicCalendar(flows, P, 1);
@@ -1387,7 +1395,23 @@ function render() {
 
   const evs = filteredEvents(schedule, cycle, colorFilter);
 
-  if (periodic) {
+  if (periodic && periodicInfo.tooMany) {
+    const {el, P} = periodicInfo;
+    document.getElementById("metrics").innerHTML = [
+      ["Mesh", `${rows}×${cols}`, `${rows * cols} PEs · ${schedule.flows.length} streams`],
+      ["L* (下界)", `${el.L}`, `瓶颈边 ${el.witness || "-"} · P ≥ L*`],
+      ["Period P", `${P}`, "帧长（默认 L*）"],
+      ["周期 T=1 求解", "已跳过", `流数 ${schedule.flows.length} > ${PERIODIC_FLOW_CAP}：回溯求解器为指数级`],
+      ["建议", "取消周期模式", "用一次性日历查看该集合（如 all-to-all）"],
+    ].map(m => `<div class="metric"><div class="name">${m[0]}</div><div class="value">${m[1]}</div><div class="sub">${m[2]}</div></div>`).join("");
+    renderTable(document.getElementById("compare"),
+      ["维度", "结果", "说明"],
+      [
+        ["L* (最大有向边负载 = P 下界)", `${el.L}`, `瓶颈边 ${el.witness || "-"}`],
+        ["周期 T=1 相位求解", "跳过（流数过多）", `${schedule.flows.length} 条 VN 流回溯不可行；all-to-all 无刚性周期解`],
+        ["改用", "一次性日历", "取消勾选「周期稳态日历」查看逐周期调度"],
+      ]);
+  } else if (periodic) {
     const {el, P, placement, minP} = periodicInfo;
     const feasible = placement.ok;
     const minPtxt = minP.P !== null ? `P=${minP.P}` : (minP.exhausted ? "搜索超限" : ">cap");
