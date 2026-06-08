@@ -163,6 +163,7 @@ svg text{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
     <li><strong>Reduce</strong>：2D 归约树——先列内逐级归约到 root 所在行，再行内归约到 root；中间节点本地做 reduce，非全量汇聚。</li>
     <li><strong>All-reduce</strong>：维度序递归减半/加倍（RHD），先 X 后 Y 逐维交换，等价 reduce-scatter + all-gather，无单点 incast。</li>
     <li><strong>All-gather</strong>：维度序 RHD（stride 由大到小），每阶段 flit 数随已收集块数倍增，最终每 PE 持有全部 <code>rows×cols</code> 块。</li>
+    <li><strong>维度切换的 PE 进出惩罚</strong>：All-reduce / All-gather 的 X 阶段与 Y 阶段是<strong>各自独立的 VN 流</strong>，仅在物理 PE 处相接——X 阶段的数据<strong>到达后进入该 PE 暂存</strong>，再由 Y 阶段<strong>从同一 PE 重新注入</strong>，这正是一次“进 PE 再出 PE”。因此在 <code>X→Y 维度切换处</code>，Y 阶段的 <code>release</code> 额外 <code>+PE_INOUT_LATENCY (10)</code> cycle。<strong>同维度内</strong>连续 stride 的过渡只算传输时间（假设可在 router 内流水、不重新完整进出 PE），不计该惩罚。</li>
     <li><strong>All-to-all</strong>：全置换，<code>N×(N-1)</code> 条独立 VN 流（每个有序 (src,dst) 一条），XY 路由。这是<strong>对分带宽压力最大</strong>的模式：中央列/行边被大量流穿越，L* 最高。<br>
       在 <code>noc</code> 下表现为大量源端等待错峰注入；<code>pe</code> 用中间 PE 暂存吸收边冲突、缩短源端反压，但累计 10-cycle 进出惩罚；<code>defl</code> 则让被阻塞的 flit 在 NoC 上偏转绕行、用额外 hop 换取更小的源端等待与零进出惩罚——三种策略的 makespan/延迟权衡在对比表中一目了然。周期模式对 all-to-all 无刚性 T=1 解，故流数超阈值时跳过相位回溯。</li>
   </ul>
@@ -443,6 +444,9 @@ function buildDimwiseAllreduceFlows(rows, cols, flits) {
     }
     release += dimExchangeStageCycles(s, flits);
   });
+  // X→Y dimension switch: each PE ejects the X-combined data into its PE core and re-injects
+  // it along Y, paying one enter+exit PE penalty (same-dimension strides pipeline in-router).
+  if (cols > 1 && rows > 1) release += PE_INOUT_LATENCY;
   pow2Strides(rows).forEach(s => {
     for (let x = 0; x < cols; x++) {
       for (let y = 0; y < rows; y += 2 * s) {
@@ -494,6 +498,9 @@ function buildDimwiseAllgatherFlows(rows, cols, baseFlits) {
     release += dimExchangeStageCycles(s, flits);
     blocks *= 2;
   });
+  // X→Y dimension switch: each PE ejects the X-gathered blocks into its PE core and re-injects
+  // them along Y, paying one enter+exit PE penalty (same-dimension strides pipeline in-router).
+  if (cols > 1 && rows > 1) release += PE_INOUT_LATENCY;
   blocks = cols;
   [...pow2Strides(rows)].reverse().forEach(s => {
     const flits = baseFlits * blocks;
