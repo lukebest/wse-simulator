@@ -806,10 +806,15 @@ function buildCalendarSchedule(flows, cols, nodeCount, opts = {}) {
   }
 
   /**
-   * Plan bufferless deflection (hot-potato): no PE entry. At each cycle the flit
-   * takes a free Manhattan-reducing edge if available, else any free edge (misroute).
-   * The traversed edge list is dynamic (not the fixed XY path). If a router has no
-   * free outgoing edge this cycle (rare dead-end), retry from a later injection.
+   * Plan bufferless deflection (hot-potato): no PE entry.
+   *  - At the SOURCE the flit may hold in its home PE (free): it only injects onto a
+   *    free *productive* (Manhattan-reducing) edge — it never misroutes at injection.
+   *  - Once on the NoC it MUST move every cycle: it takes a free productive edge if
+   *    one exists, otherwise it is deflected onto any free edge (misroute), avoiding
+   *    an immediate U-turn when possible. The traversed edge list is dynamic.
+   *  - If a router has no free outgoing edge this cycle (rare dead-end) the attempt
+   *    is abandoned and retried from a later injection. If every attempt fails the
+   *    caller falls back to the rigid plan, so scheduling never throws.
    */
   function planDeflect(flow, releaseAt, prevFirstEdge) {
     const dest = flow.to;
@@ -817,9 +822,9 @@ function buildCalendarSchedule(flows, cols, nodeCount, opts = {}) {
     const inBounds = (n) => n.x >= 0 && n.x < cols && n.y >= 0 && n.y < rows;
     const manh = (n) => Math.abs(n.x - dest.x) + Math.abs(n.y - dest.y);
     const mkEdge = (a, b) => ({id: eid(a, b), from: {...a}, to: {...b}});
-    const hopCap = (flow.path.length || 1) + 4 * (cols + rows) + 8;
+    const hopCap = (flow.path.length || 1) + 6 * (cols + rows) + 8;
     const startLB = Math.max(releaseAt, prevFirstEdge >= 0 ? prevFirstEdge + 1 : releaseAt);
-    const attemptCap = Math.max(8192, flows.length * 256);
+    const attemptCap = Math.max(4096, flows.length * 64);
 
     for (let s = 0; s < attemptCap; s++) {
       const times = [];
@@ -839,21 +844,23 @@ function buildCalendarSchedule(flows, cols, nodeCount, opts = {}) {
           const reverse = lastDir && d.dx === -lastDir.dx && d.dy === -lastDir.dy;
           opts.push({e, nx, d, reduces: manh(nx) < manh(cur) ? 1 : 0, reverse: reverse ? 1 : 0});
         }
-        if (!opts.length) { dead = true; break; } // no free egress this cycle → retry later inject
-        // prefer Manhattan-reducing; among ties avoid immediately reversing; keep XY (DIRS) order.
-        opts.sort((a, b) => b.reduces - a.reduces || a.reverse - b.reverse);
-        const pick = opts[0];
+        // At the source, never misroute: only inject onto a free productive edge,
+        // otherwise hold in the home PE (retry a later injection cycle).
+        const usable = hop === 0 ? opts.filter(o => o.reduces) : opts;
+        if (!usable.length) { dead = true; break; }
+        // prefer Manhattan-reducing; among ties avoid an immediate U-turn; keep XY order.
+        usable.sort((a, b) => b.reduces - a.reduces || a.reverse - b.reverse);
+        const pick = usable[0];
         times.push(t);
         edges.push(pick.e);
         lastDir = pick.d;
         cur = pick.nx;
         t += 1;
       }
-      if (dead) continue;
-      if (!edges.length) continue; // src === dst (shouldn't happen; guarded by caller)
+      if (dead || !edges.length) continue;
       return {times, peDwell: times.map(() => 0), edges};
     }
-    return null;
+    return null; // caller falls back to planNoc so scheduling never throws
   }
 
   for (const flow of ordered) {
@@ -862,9 +869,11 @@ function buildCalendarSchedule(flows, cols, nodeCount, opts = {}) {
       const releaseAt = (flow.release || 0) + flit;
       if (!flow.path.length) continue;
 
-      const plan = policy === "pe" ? planPe(flow, releaseAt, prevFirstEdge)
+      let plan = policy === "pe" ? planPe(flow, releaseAt, prevFirstEdge)
         : policy === "defl" ? planDeflect(flow, releaseAt, prevFirstEdge)
         : planNoc(flow, releaseAt, prevFirstEdge);
+      // Deflection can rarely dead-end; fall back to rigid placement so render never breaks.
+      if (!plan) plan = planNoc(flow, releaseAt, prevFirstEdge);
       if (!plan) throw new Error(`Failed to schedule ${flow.id} flit ${flit}`);
       const {times, peDwell, edges} = plan;
 
