@@ -67,7 +67,7 @@ svg text{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
   本页展示 <strong>Color 虚拟网络（VN）</strong> 机制下的 2D Mesh 集合通信调度，与
   <code>collective-mesh-viz.html</code> 的逻辑 butterfly / tree / ring 算法视图互补。
   每条端到端流分配独立 color（时分虚拟网，数量不限）；路径为固定 XY 维序路由。
-  每个 router 具备 <strong>多播</strong>：calendar 用 <strong>源端口→目的端口</strong>（E/W/S/N 为 router 四向端口，非行进方向）表示连接（如 <code>W→E</code> 西口入东口出、<code>W→E+S</code> 西口入东/南口出、<code>PE→E</code> 本地注入东口、端口缓冲 <code>W:■</code>）；每 hop 占 1 cycle，<strong>每个节点每个 cycle</strong> 更新四向端口状态。
+  每个 router 具备 <strong>多播</strong>：calendar 用 <strong>源端口→目的端口</strong>（E/W/S/N 为 router 四向端口，非行进方向）表示连接（如 <code>W→E</code> 西口入东口出、<code>W→E+S</code> 西口入东/南口出、<code>PE→E</code> 本地注入东口）；等待仅在源端以 <code>PE:wait</code> 表示。每 hop 占 1 cycle，<strong>每个节点每个 cycle</strong> 更新四向端口状态。
   集合通信前为各 router 预配置 <strong>color calendar</strong>；全局调度保证同一 cycle 同一物理 edge 至多一个 flit。
   <strong>Broadcast</strong> 用行/列多播树（共享 color bus）；<strong>Gather</strong> 为每 PE 向 root 的 XY 流；<strong>Reduce</strong> 为 2D 树：先列内逐级归约到 root 行，再行内到 root（每跳单周期，中间节点本地 reduce，非全量汇聚到 root）；  <strong>All-reduce</strong> 为维度序 RHD：先横向（X）再纵向（Y）递归减半/加倍交换（与 <code>collective-mesh-viz</code> dim-wise exchange 一致），非树归约+多播。
   <strong>All-gather</strong> 为维度序 RHD（X/Y stride 从大到小），每阶段 flit 数随已收集块数倍增，使每 PE 最终持有全体 <code>rows×cols</code> 份数据块。
@@ -132,7 +132,7 @@ svg text{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
 </div>
 
 <h2>Router Color Calendar（E/W/S/N 连接）</h2>
-<p class="small">列=<strong>cycle</strong>（每 hop 一列）；行=<strong>router（PE）</strong>。格子为该 PE 在该 cycle 的 <strong>源端口→目的端口</strong> 合并连接（如 <code>W→E</code> 西入东出、<code>PE→E</code> 注入东口、<code>W→E+S</code> 西入东/南出、<code>W:■</code> 西口缓冲，空闲为 <code>·</code>）。<strong>Calendar router</strong> 下拉用于高亮对应行；窗口随当前 cycle 滑动。</p>
+<p class="small">列=<strong>cycle</strong>（每 hop 一列）；行=<strong>router（PE）</strong>。格子为该 PE 在该 cycle 的 <strong>源端口→目的端口</strong> 合并连接（如 <code>W→E</code> 西入东出、<code>PE→E</code> 注入东口、<code>PE:wait</code> 源端等待、<code>W→E+S</code> 西入东/南出，空闲为 <code>·</code>）。<strong>Calendar router</strong> 下拉用于高亮对应行；窗口随当前 cycle 滑动。</p>
 <div class="lane"><div class="lane-grid" id="routerCal"></div></div>
 
 <h3>全网格连接状态（当前 cycle）</h3>
@@ -555,32 +555,36 @@ function recordRouterSwitch(calendar, nodeIdx, colorId, cycle, inDir, outDir, fl
   if (!byColor.has(colorId)) byColor.set(colorId, new Map());
   const slots = byColor.get(colorId);
   const prev = slots.get(cycle);
-  if (prev) {
-    const outs = [...(prev.outDirs || [])];
-    if (outDir && COMPASS_DIRS.includes(outDir) && !outs.includes(outDir)) outs.push(outDir);
-    const conn = formatConnEWNS(prev.inDir, outs, prev.isBuf && isBuf);
+
+  if (isBuf && inDir === "wait") {
+    // Source PE:wait — skip if this cycle already relays (later flit wait vs earlier flit inj).
+    if (prev && !prev.isBuf) return;
+    if (prev && prev.inDir === "wait") return;
+    const conn = formatConnEWNS("wait", [], true);
     slots.set(cycle, {
-      text: conn,
-      conn,
-      inDir: prev.inDir,
-      outDirs: outs,
-      color: flowColor,
-      isBuf: prev.isBuf || isBuf,
-      multicast: !isBuf && outs.length > 1,
+      text: conn, conn, inDir: "wait", outDirs: [], color: flowColor,
+      isBuf: true, multicast: false,
     });
-  } else {
-    const outs = outDir && COMPASS_DIRS.includes(outDir) ? [outDir] : [];
-    const conn = formatConnEWNS(inDir, outs, isBuf);
-    slots.set(cycle, {
-      text: conn,
-      conn,
-      inDir,
-      outDirs: outs,
-      color: flowColor,
-      isBuf,
-      multicast: !isBuf && outs.length > 1,
-    });
+    return;
   }
+
+  const outs = outDir && COMPASS_DIRS.includes(outDir) ? [outDir] : [];
+  if (prev && !prev.isBuf) {
+    const mergedOuts = [...(prev.outDirs || [])];
+    if (outDir && COMPASS_DIRS.includes(outDir) && !mergedOuts.includes(outDir)) mergedOuts.push(outDir);
+    const conn = formatConnEWNS(prev.inDir, mergedOuts, false);
+    slots.set(cycle, {
+      text: conn, conn, inDir: prev.inDir, outDirs: mergedOuts, color: flowColor,
+      isBuf: false, multicast: mergedOuts.length > 1,
+    });
+    return;
+  }
+
+  const conn = formatConnEWNS(inDir, outs, false);
+  slots.set(cycle, {
+    text: conn, conn, inDir, outDirs: outs, color: flowColor,
+    isBuf: false, multicast: outs.length > 1,
+  });
 }
 
 function portsFromSlot(slot) {
