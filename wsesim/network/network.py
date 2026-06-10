@@ -12,7 +12,18 @@ from wsesim.network.link import Link
 from wsesim.network.packet import Packet, packet_to_flits
 from wsesim.network.router import Router
 from wsesim.network.routing.base import RoutingAlgorithm
+from wsesim.network.tdm_clock import TDMClock
+from wsesim.network.tdm_link import TDMLink
 from wsesim.network.topology.base import Topology
+from wsesim.network.topology.rect_flat_butterfly import RectFlatButterfly
+from wsesim.network.topology.restricted_hypercube_fb import RestrictedHypercubeFB
+from wsesim.network.topology.tdm_flat_butterfly import TDMFlatButterfly
+
+
+def _topology_color_plan(topology: Topology):
+    if isinstance(topology, (TDMFlatButterfly, RectFlatButterfly, RestrictedHypercubeFB)):
+        return topology.coloring()
+    return None
 
 
 @dataclass(slots=True)
@@ -28,7 +39,9 @@ class NetworkStats:
     link_wait_cycles: int = 0
     per_router_vc_wait_cycles: dict[int, int] = field(default_factory=dict)
     per_router_buffer_wait_cycles: dict[int, int] = field(default_factory=dict)
+    per_router_color_wait_cycles: dict[int, int] = field(default_factory=dict)
     per_router_pipeline_cycles: dict[int, int] = field(default_factory=dict)
+    color_buffer_wait_cycles: int = 0
 
     def avg_latency(self) -> float:
         return 0.0 if self.packets_sent == 0 else self.total_packet_latency / self.packets_sent
@@ -52,6 +65,7 @@ class UnifiedNetwork:
     st_latency_cycles: int = 1
     crossbar_bw_flits_per_cycle: int = 1
     flit_bytes: int = 128
+    slot_cycles: int = 1
     graph: dict[int, list[int]] = field(init=False)
     routers: dict[int, Router] = field(init=False)
     links: dict[tuple[int, int], Link] = field(init=False)
@@ -59,6 +73,12 @@ class UnifiedNetwork:
 
     def __post_init__(self) -> None:
         self.graph = self.topology.build(self.num_nodes)
+        color_plan = _topology_color_plan(self.topology)
+        tdm_clock = (
+            TDMClock(period=color_plan.C, slot_cycles=max(1, self.slot_cycles))
+            if color_plan is not None
+            else None
+        )
         self.routers = {
             node: Router(
                 env=self.env,
@@ -71,19 +91,35 @@ class UnifiedNetwork:
                 switch_alloc_latency_cycles=self.sa_latency_cycles,
                 switch_traversal_latency_cycles=self.st_latency_cycles,
                 crossbar_bw_flits_per_cycle=self.crossbar_bw_flits_per_cycle,
+                tdm_clock=tdm_clock,
+                color_count=0 if color_plan is None else color_plan.C,
             )
             for node in self.graph
         }
         self.links = {}
         for src, dsts in self.graph.items():
             for dst in dsts:
-                self.links[(src, dst)] = Link(
-                    env=self.env,
-                    src=src,
-                    dst=dst,
-                    bandwidth_flits_per_cycle=self.link_bw_flits_per_cycle,
-                    latency_cycles=self.link_latency_cycles,
-                )
+                if color_plan is not None:
+                    active = color_plan.link_active.get((src, dst), [None] * color_plan.C)
+                    self.links[(src, dst)] = TDMLink(
+                        env=self.env,
+                        src=src,
+                        dst=dst,
+                        bandwidth_flits_per_cycle=self.link_bw_flits_per_cycle,
+                        latency_cycles=self.link_latency_cycles,
+                        period=color_plan.C,
+                        slot_cycles=max(1, self.slot_cycles),
+                        tdm_clock=tdm_clock,
+                        active_logical_per_color=active,
+                    )
+                else:
+                    self.links[(src, dst)] = Link(
+                        env=self.env,
+                        src=src,
+                        dst=dst,
+                        bandwidth_flits_per_cycle=self.link_bw_flits_per_cycle,
+                        latency_cycles=self.link_latency_cycles,
+                    )
 
     def remove_dead_components(
         self, dead_nodes: set[int] | None = None, dead_links: set[tuple[int, int]] | None = None
@@ -119,12 +155,20 @@ class UnifiedNetwork:
 
         while current != packet.dst:
             router = self.routers[current]
-            next_hop = self.routing.next_hop(current, packet.dst, self.graph)
+            flit_color = None
+            logical_link = None
+            if hasattr(self.routing, "next_hop_with_color"):
+                next_hop, flit_color, logical_link = self.routing.next_hop_with_color(
+                    packet, current, packet.dst, self.graph
+                )
+            else:
+                next_hop = self.routing.next_hop(current, packet.dst, self.graph)
             if next_hop not in self.graph.get(current, []):
                 raise ValueError(f"Invalid next hop {next_hop} from {current}.")
             next_router = self.routers[next_hop]
 
             for flit in flits:
+                flit.color = flit_color
                 if flit.is_head:
                     while not next_router.can_reserve_vc(packet_id):
                         self.stats.vc_wait_cycles += 1
@@ -143,7 +187,7 @@ class UnifiedNetwork:
                         continue
 
                 while not self.flow_control.can_send(
-                    len(next_router.input_buffer.items), next_router.input_buffer.capacity
+                    next_router.pending_for_color(flit_color), next_router.capacity_for_color(flit_color)
                 ):
                     self.stats.buffer_wait_cycles += 1
                     router.buffer_wait_cycles += 1
@@ -151,7 +195,7 @@ class UnifiedNetwork:
                         self.stats.per_router_buffer_wait_cycles.get(router.node_id, 0) + 1
                     )
                     yield self.env.timeout(1)
-                while len(router.input_buffer.items) >= router.input_buffer.capacity:
+                while not router.can_admit(flit_color):
                     self.stats.buffer_wait_cycles += 1
                     router.buffer_wait_cycles += 1
                     self.stats.per_router_buffer_wait_cycles[router.node_id] = (
@@ -160,8 +204,17 @@ class UnifiedNetwork:
                     yield self.env.timeout(1)
                 yield router.enqueue(flit)
                 pipeline_before = router.pipeline_cycles
-                yield self.env.process(router.pipeline(1))
+                color_wait_before = router.color_buffer_wait_cycles
+                yield self.env.process(router.pipeline(1, color=flit_color))
                 self.stats.pipeline_cycles += router.pipeline_cycles - pipeline_before
+                self.stats.color_buffer_wait_cycles += (
+                    router.color_buffer_wait_cycles - color_wait_before
+                )
+                if router.color_buffer_wait_cycles - color_wait_before > 0:
+                    self.stats.per_router_color_wait_cycles[router.node_id] = (
+                        self.stats.per_router_color_wait_cycles.get(router.node_id, 0)
+                        + (router.color_buffer_wait_cycles - color_wait_before)
+                    )
                 self.stats.per_router_pipeline_cycles[router.node_id] = (
                     self.stats.per_router_pipeline_cycles.get(router.node_id, 0)
                     + (router.pipeline_cycles - pipeline_before)
@@ -169,7 +222,12 @@ class UnifiedNetwork:
 
                 link = self.links[(current, next_hop)]
                 wait_before = link.total_wait_cycles
-                yield self.env.process(link.transfer(1))
+                if isinstance(link, TDMLink):
+                    yield self.env.process(
+                        link.transfer(1, flit_color=flit_color, logical_link=logical_link)
+                    )
+                else:
+                    yield self.env.process(link.transfer(1))
                 self.stats.link_wait_cycles += link.total_wait_cycles - wait_before
                 self.stats.flits_sent += 1
 
@@ -183,6 +241,8 @@ class UnifiedNetwork:
         self.stats.total_packet_latency += latency
         self.stats.max_packet_latency = max(self.stats.max_packet_latency, latency)
         self.stats.total_hops += hops
+        if hasattr(self.routing, "clear_packet_state"):
+            self.routing.clear_packet_state(packet)
 
     def estimate_transfer_cycles(self, size_bytes: int) -> int:
         flits = max(1, ceil(size_bytes / max(self.flit_bytes, 1)))

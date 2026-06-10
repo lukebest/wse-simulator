@@ -65,7 +65,14 @@ class RandomSearch(SearchStrategy):
                 cfg.workload.partition_shards = self._rng.choice([1, 4])
 
         cfg.network.noc.topology = self._rng.choice(
-            ["mesh2d", "flat_butterfly", "butterfly", "supermesh_bi", "supermesh_alter"]
+            [
+                "mesh2d",
+                "flat_butterfly",
+                "butterfly",
+                "supermesh_bi",
+                "supermesh_alter",
+                "tdm_flat_butterfly_k8_n2",
+            ]
         )
         cfg.network.noc.routing = self._rng.choice(["xy", "ugal", "table_based"])
         cfg.network.noc.flow_control = self._rng.choice(["credit_vc", "wormhole"])
@@ -73,7 +80,9 @@ class RandomSearch(SearchStrategy):
         cfg.network.noc.num_vcs = self._rng.choice([1, 2, 4])
         cfg.network.noc.link_bw_flits_per_cycle = self._rng.choice([1, 2, 4])
 
-        cfg.network.now.topology = self._rng.choice(["mesh2d", "flat_butterfly", "butterfly"])
+        cfg.network.now.topology = self._rng.choice(
+            ["mesh2d", "flat_butterfly", "butterfly", "tdm_flat_butterfly_k8_n2"]
+        )
         cfg.network.now.routing = self._rng.choice(["xy", "ugal", "table_based"])
         cfg.network.now.flow_control = self._rng.choice(["credit_vc", "wormhole"])
 

@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AllGather 8x8 仿真报告</title>
+<style>
+  :root {
+    --bg:#0f1419; --panel:#1a2332; --text:#e8edf4; --muted:#94a3b8; --border:#2d3a4f;
+    --good:#4ade80; --warn:#f59e0b;
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; font-family:"IBM Plex Sans","Segoe UI",system-ui,sans-serif; background:var(--bg); color:var(--text); line-height:1.6; }
+  header { padding:2rem; background:linear-gradient(135deg,#1e293b,#0f172a); border-bottom:1px solid var(--border); }
+  main { max-width:1200px; margin:0 auto; padding:1.5rem; }
+  section { margin-bottom:1.75rem; }
+  h2 { font-size:1.2rem; margin:0 0 .6rem; }
+  .summary-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(210px,1fr)); gap:1rem; margin:1rem 0 1.5rem; }
+  .stat { background:var(--panel); border:1px solid var(--border); border-radius:10px; padding:1rem; }
+  .stat .val { font-size:1.45rem; font-weight:700; }
+  .stat .lbl { color:var(--muted); font-size:.86rem; }
+  .panel { background:var(--panel); border:1px solid var(--border); border-radius:10px; padding:1rem 1.1rem; }
+  table { width:100%; border-collapse:collapse; font-size:.9rem; margin-top:.6rem; }
+  th,td { border:1px solid var(--border); padding:.5rem .65rem; text-align:left; }
+  th { background:#243044; cursor:pointer; }
+  .hint { color:var(--muted); font-size:.9rem; }
+  ul { margin:.4rem 0 0 1.2rem; }
+  .good { color:var(--good); font-weight:600; }
+  .warn { color:var(--warn); font-weight:600; }
+  .mono { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; }
+</style>
+</head>
+<body>
+<header>
+  <h1>8×8 AllGather 仿真分析报告</h1>
+  <p>对比 <span class="mono">mesh2d_8x8_ps</span> 与三种 TDM FB：<span class="mono">k8_n2 (C=16)</span> / <span class="mono">k4_n3 (C=9)</span> / <span class="mono">k2_n6 (C=5)</span>。</p>
+  <p class="hint">主对比算法：<strong>nd_dimension_exchange_allgather</strong>（分组交换）；direct_allgather 256KB 采用 payload/64 缩放以控制 64 节点 O(N²) 仿真成本。</p>
+</header>
+<main>
+  <section>
+    <div class="summary-grid">
+      <div class="stat"><div class="val">42</div><div class="lbl">实验点总数</div></div>
+      <div class="stat"><div class="val">109 cycles</div><div class="lbl">全局最优 (tdm_fb_k2_n6, nd_dimension_exchange_allgather)</div></div>
+      <div class="stat"><div class="val">70279 cycles</div><div class="lbl">全局最慢 (tdm_fb_k8_n2, nd_dimension_exchange_allgather)</div></div>
+      <div class="stat"><div class="val">0.57×</div><div class="lbl">Mesh ND 平均 / TDM ND 平均 (slot=1)</div></div>
+    </div>
+  </section>
+
+  <section class="panel">
+    <h2>1) 关键结论（分组交换 ND，slot=1）</h2>
+    <ul>
+      <li><span class="good">k2_n6 (C=5) ND AllGather：全面优于 Mesh</span>，TDM/Mesh 约为 <span class="mono">0.39×~0.40×</span>。</li>
+      <li><span class="good">k4_n3 (C=9) ND AllGather：与 Mesh 互有胜负</span>，TDM/Mesh 约为 <span class="mono">0.99×~1.18×</span>。</li>
+      <li><span class="warn">k8_n2 (C=16) ND AllGather：整体慢于 Mesh</span>，TDM/Mesh 约为 <span class="mono">2.99×~3.75×</span>。</li>
+      <li>slot 1→4 对 k8_n2 的 ND makespan 比值约 <span class="mono">2.30×~3.44×</span>（color 数越多通常越敏感）。</li>
+      <li>瓶颈分解：TDM 的 <span class="mono">color_buffer_wait_cycles</span> 与 <span class="mono">link_wait_cycles</span> 随 C 增大显著上升，是 k8_n2 落后的主因。</li>
+      <li>direct_allgather 在 64 节点下为 O(N²) 流量，TDM 全面慢于 Mesh；主评估应以 ND 分组交换为准。</li>
+    </ul>
+  </section>
+
+  <section class="panel">
+    <h2>2) ND 分组交换 vs Mesh 基线（slot=1）</h2>
+    <table>
+      <thead><tr><th>拓扑</th><th>msg_bytes</th><th>Mesh makespan</th><th>TDM makespan</th><th>TDM/Mesh</th><th>结论</th></tr></thead>
+      <tbody><tr><td>8-ary 2-flat (C=16)</td><td>1024</td><td>281</td><td>839</td><td class='warn'>2.99×</td><td class='warn'>Mesh 更优</td></tr><tr><td>8-ary 2-flat (C=16)</td><td>16384</td><td>530</td><td>1799</td><td class='warn'>3.39×</td><td class='warn'>Mesh 更优</td></tr><tr><td>8-ary 2-flat (C=16)</td><td>262144</td><td>8168</td><td>30615</td><td class='warn'>3.75×</td><td class='warn'>Mesh 更优</td></tr><tr><td>4-ary 3-flat (C=9)</td><td>1024</td><td>281</td><td>277</td><td class='good'>0.99×</td><td class='good'>TDM 更优</td></tr><tr><td>4-ary 3-flat (C=9)</td><td>16384</td><td>530</td><td>565</td><td class='warn'>1.07×</td><td class='warn'>Mesh 更优</td></tr><tr><td>4-ary 3-flat (C=9)</td><td>262144</td><td>8168</td><td>9664</td><td class='warn'>1.18×</td><td class='warn'>Mesh 更优</td></tr><tr><td>2-ary 6-flat (C=5)</td><td>1024</td><td>281</td><td>109</td><td class='good'>0.39×</td><td class='good'>TDM 更优</td></tr><tr><td>2-ary 6-flat (C=5)</td><td>16384</td><td>530</td><td>212</td><td class='good'>0.40×</td><td class='good'>TDM 更优</td></tr><tr><td>2-ary 6-flat (C=5)</td><td>262144</td><td>8168</td><td>3267</td><td class='good'>0.40×</td><td class='good'>TDM 更优</td></tr></tbody>
+    </table>
+  </section>
+
+  <section class="panel">
+    <h2>3) 256KB ND 瓶颈拆解（slot=1，Mesh makespan=8168 cycles）</h2>
+    <table>
+      <thead><tr><th>拓扑</th><th>makespan</th><th>color_buffer_wait</th><th>link_wait</th><th>avg_link_util</th><th>TDM/Mesh</th></tr></thead>
+      <tbody>
+        <tr><td>8-ary 2-flat (C=16)</td><td>30615</td><td>2044748</td><td>735472</td><td>0.025</td><td class="warn">3.75×</td></tr>
+        <tr><td>4-ary 3-flat (C=9)</td><td>9664</td><td>542889</td><td>134734</td><td>0.047</td><td class="warn">1.18×</td></tr>
+        <tr><td>2-ary 6-flat (C=5)</td><td>3267</td><td>170211</td><td>4353</td><td>0.078</td><td class="good">0.40×</td></tr>
+      </tbody>
+    </table>
+    <p class="hint">k8_n2 的 color 等待在大消息下占主导；k2_n6 等待项最低且链路利用率接近 Mesh，因此端到端最优。</p>
+  </section>
+
+  <section class="panel">
+    <h2>4) slot_cycles 敏感性（ND 算法）</h2>
+    <table>
+      <thead><tr><th>拓扑</th><th>msg_bytes</th><th>slot=1</th><th>slot=4</th><th>slot=4 / slot=1</th></tr></thead>
+      <tbody><tr><td>8-ary 2-flat (C=16)</td><td>1024</td><td>839</td><td>2889</td><td>3.44×</td></tr><tr><td>8-ary 2-flat (C=16)</td><td>16384</td><td>1799</td><td>4871</td><td>2.71×</td></tr><tr><td>8-ary 2-flat (C=16)</td><td>262144</td><td>30615</td><td>70279</td><td>2.30×</td></tr><tr><td>4-ary 3-flat (C=9)</td><td>1024</td><td>277</td><td>837</td><td>3.02×</td></tr><tr><td>4-ary 3-flat (C=9)</td><td>16384</td><td>565</td><td>1483</td><td>2.62×</td></tr><tr><td>4-ary 3-flat (C=9)</td><td>262144</td><td>9664</td><td>20923</td><td>2.17×</td></tr><tr><td>2-ary 6-flat (C=5)</td><td>1024</td><td>109</td><td>247</td><td>2.27×</td></tr><tr><td>2-ary 6-flat (C=5)</td><td>16384</td><td>212</td><td>447</td><td>2.11×</td></tr><tr><td>2-ary 6-flat (C=5)</td><td>262144</td><td>3267</td><td>6427</td><td>1.97×</td></tr></tbody>
+    </table>
+  </section>
+
+  <section class="panel">
+    <h2>5) 工程建议</h2>
+    <ul>
+      <li>8×8 AllGather 若走 TDM FB，优先 <span class="mono">k2_n6 + nd_dimension_exchange + slot=1</span>（109~3267 cycles，相对 Mesh 约 0.39×~0.40×）。</li>
+      <li>k4_n3 小消息略优、中大消息略慢，可作为次优折中（1KB 0.99×，16KB 1.07×，256KB 1.18×）。</li>
+      <li>k8_n2 在当前 color/per-buffer 模型下不适合作为 AllGather 首选（C=16，ND 约为 Mesh 的 3×~3.75×）。</li>
+      <li>direct_allgather 仅作参考：TDM 因 color 等待与 O(N²) 流量叠加，makespan 显著高于 Mesh（例如 1KB 下 k8_n2 为 Mesh 的 2.98×）。</li>
+    </ul>
+    <p class="hint">着色参考：
+      <a href="./tdm_fb_8x8_k8_n2_color_subtopology.html">k8_n2</a> /
+      <a href="./tdm_fb_8x8_k4_n3_color_subtopology.html">k4_n3</a> /
+      <a href="./tdm_fb_8x8_k2_n6_color_subtopology.html">k2_n6</a>
+    </p>
+  </section>
+
+  <section>
+    <h2>6) 完整结果明细（可排序）</h2>
+    <table id="result-table">
+      <thead>
+        <tr>
+          <th>topology</th><th>algorithm</th><th>slot_cycles</th><th>msg_bytes</th><th>simulated_msg_bytes</th>
+          <th>makespan_cycles</th><th>avg_latency</th><th>avg_link_util</th>
+          <th>link_wait_cycles</th><th>color_buffer_wait_cycles</th><th>router_pipeline_cycles</th>
+        </tr>
+      </thead>
+      <tbody><tr><td>mesh2d_8x8_ps</td><td>direct_allgather</td><td>1</td><td>1024</td><td>1024</td><td>2052</td><td>1016.84</td><td>0.094</td><td>0</td><td>0</td><td>241865</td></tr><tr><td>mesh2d_8x8_ps</td><td>direct_allgather</td><td>1</td><td>16384</td><td>16384</td><td>3945</td><td>1945.26</td><td>0.097</td><td>0</td><td>0</td><td>497929</td></tr><tr><td>mesh2d_8x8_ps</td><td>direct_allgather</td><td>1</td><td>262144</td><td>4096 (scaled)</td><td>2052</td><td>1016.84</td><td>0.094</td><td>0</td><td>0</td><td>241865</td></tr><tr><td>mesh2d_8x8_ps</td><td>nd_dimension_exchange_allgather</td><td>1</td><td>1024</td><td>1024</td><td>281</td><td>114.66</td><td>0.085</td><td>0</td><td>0</td><td>30725</td></tr><tr><td>mesh2d_8x8_ps</td><td>nd_dimension_exchange_allgather</td><td>1</td><td>16384</td><td>16384</td><td>530</td><td>218.71</td><td>0.091</td><td>0</td><td>0</td><td>63626</td></tr><tr><td>mesh2d_8x8_ps</td><td>nd_dimension_exchange_allgather</td><td>1</td><td>262144</td><td>262144</td><td>8168</td><td>3306.05</td><td>0.094</td><td>0</td><td>0</td><td>1060255</td></tr><tr><td>tdm_fb_k8_n2</td><td>direct_allgather</td><td>1</td><td>1024</td><td>1024</td><td>6103</td><td>2935.57</td><td>0.031</td><td>188775</td><td>331680</td><td>531439</td></tr><tr><td>tdm_fb_k8_n2</td><td>direct_allgather</td><td>1</td><td>16384</td><td>16384</td><td>13175</td><td>6409.72</td><td>0.029</td><td>370713</td><td>847398</td><td>1260607</td></tr><tr><td>tdm_fb_k8_n2</td><td>direct_allgather</td><td>1</td><td>262144</td><td>4096 (scaled)</td><td>6103</td><td>2935.57</td><td>0.031</td><td>188775</td><td>331680</td><td>531439</td></tr><tr><td>tdm_fb_k8_n2</td><td>direct_allgather</td><td>4</td><td>1024</td><td>1024</td><td>20679</td><td>9997.92</td><td>0.009</td><td>1078002</td><td>1036392</td><td>1188558</td></tr><tr><td>tdm_fb_k8_n2</td><td>direct_allgather</td><td>4</td><td>16384</td><td>16384</td><td>37063</td><td>17976.89</td><td>0.010</td><td>2149789</td><td>1640667</td><td>1914488</td></tr><tr><td>tdm_fb_k8_n2</td><td>direct_allgather</td><td>4</td><td>262144</td><td>4096 (scaled)</td><td>20679</td><td>9997.92</td><td>0.009</td><td>1078002</td><td>1036392</td><td>1188558</td></tr><tr><td>tdm_fb_k8_n2</td><td>nd_dimension_exchange_allgather</td><td>1</td><td>1024</td><td>1024</td><td>839</td><td>318.91</td><td>0.029</td><td>22854</td><td>41008</td><td>65666</td></tr><tr><td>tdm_fb_k8_n2</td><td>nd_dimension_exchange_allgather</td><td>1</td><td>16384</td><td>16384</td><td>1799</td><td>699.21</td><td>0.027</td><td>46420</td><td>105263</td><td>156728</td></tr><tr><td>tdm_fb_k8_n2</td><td>nd_dimension_exchange_allgather</td><td>1</td><td>262144</td><td>262144</td><td>30615</td><td>12113.48</td><td>0.025</td><td>735472</td><td>2044748</td><td>2900098</td></tr><tr><td>tdm_fb_k8_n2</td><td>nd_dimension_exchange_allgather</td><td>4</td><td>1024</td><td>1024</td><td>2889</td><td>1091.16</td><td>0.008</td><td>138479</td><td>130841</td><td>147103</td></tr><tr><td>tdm_fb_k8_n2</td><td>nd_dimension_exchange_allgather</td><td>4</td><td>16384</td><td>16384</td><td>4871</td><td>1979.19</td><td>0.010</td><td>281919</td><td>205785</td><td>235232</td></tr><tr><td>tdm_fb_k8_n2</td><td>nd_dimension_exchange_allgather</td><td>4</td><td>262144</td><td>262144</td><td>70279</td><td>28702.70</td><td>0.011</td><td>4580638</td><td>2487070</td><td>2872770</td></tr><tr><td>tdm_fb_k4_n3</td><td>direct_allgather</td><td>1</td><td>1024</td><td>1024</td><td>4156</td><td>2226.11</td><td>0.055</td><td>66820</td><td>207332</td><td>476657</td></tr><tr><td>tdm_fb_k4_n3</td><td>direct_allgather</td><td>1</td><td>16384</td><td>16384</td><td>8505</td><td>4551.28</td><td>0.054</td><td>134103</td><td>475711</td><td>1018149</td></tr><tr><td>tdm_fb_k4_n3</td><td>direct_allgather</td><td>1</td><td>262144</td><td>4096 (scaled)</td><td>4156</td><td>2226.11</td><td>0.055</td><td>66820</td><td>207332</td><td>476657</td></tr><tr><td>tdm_fb_k4_n3</td><td>direct_allgather</td><td>4</td><td>1024</td><td>1024</td><td>12391</td><td>6520.59</td><td>0.018</td><td>593083</td><td>618468</td><td>825463</td></tr><tr><td>tdm_fb_k4_n3</td><td>direct_allgather</td><td>4</td><td>16384</td><td>16384</td><td>22363</td><td>11967.16</td><td>0.020</td><td>1162988</td><td>1060494</td><td>1443175</td></tr><tr><td>tdm_fb_k4_n3</td><td>direct_allgather</td><td>4</td><td>262144</td><td>4096 (scaled)</td><td>12391</td><td>6520.59</td><td>0.018</td><td>593083</td><td>618468</td><td>825463</td></tr><tr><td>tdm_fb_k4_n3</td><td>nd_dimension_exchange_allgather</td><td>1</td><td>1024</td><td>1024</td><td>277</td><td>118.13</td><td>0.052</td><td>4081</td><td>12222</td><td>28382</td></tr><tr><td>tdm_fb_k4_n3</td><td>nd_dimension_exchange_allgather</td><td>1</td><td>16384</td><td>16384</td><td>565</td><td>244.69</td><td>0.051</td><td>8330</td><td>29363</td><td>62546</td></tr><tr><td>tdm_fb_k4_n3</td><td>nd_dimension_exchange_allgather</td><td>1</td><td>262144</td><td>262144</td><td>9664</td><td>4003.80</td><td>0.047</td><td>134734</td><td>542889</td><td>1088791</td></tr><tr><td>tdm_fb_k4_n3</td><td>nd_dimension_exchange_allgather</td><td>4</td><td>1024</td><td>1024</td><td>837</td><td>336.09</td><td>0.017</td><td>37778</td><td>33601</td><td>45765</td></tr><tr><td>tdm_fb_k4_n3</td><td>nd_dimension_exchange_allgather</td><td>4</td><td>16384</td><td>16384</td><td>1483</td><td>632.78</td><td>0.019</td><td>74967</td><td>60225</td><td>82617</td></tr><tr><td>tdm_fb_k4_n3</td><td>nd_dimension_exchange_allgather</td><td>4</td><td>262144</td><td>262144</td><td>20923</td><td>9556.37</td><td>0.022</td><td>1210287</td><td>859690</td><td>1214406</td></tr><tr><td>tdm_fb_k2_n6</td><td>direct_allgather</td><td>1</td><td>1024</td><td>1024</td><td>3237</td><td>1810.47</td><td>0.079</td><td>14639</td><td>117330</td><td>433452</td></tr><tr><td>tdm_fb_k2_n6</td><td>direct_allgather</td><td>1</td><td>16384</td><td>16384</td><td>6312</td><td>3592.08</td><td>0.081</td><td>25949</td><td>291914</td><td>945418</td></tr><tr><td>tdm_fb_k2_n6</td><td>direct_allgather</td><td>1</td><td>262144</td><td>4096 (scaled)</td><td>3237</td><td>1810.47</td><td>0.079</td><td>14639</td><td>117330</td><td>433452</td></tr><tr><td>tdm_fb_k2_n6</td><td>direct_allgather</td><td>4</td><td>1024</td><td>1024</td><td>7187</td><td>3910.09</td><td>0.036</td><td>267170</td><td>351404</td><td>607121</td></tr><tr><td>tdm_fb_k2_n6</td><td>direct_allgather</td><td>4</td><td>16384</td><td>16384</td><td>13027</td><td>7336.72</td><td>0.039</td><td>511051</td><td>647962</td><td>1151234</td></tr><tr><td>tdm_fb_k2_n6</td><td>direct_allgather</td><td>4</td><td>262144</td><td>4096 (scaled)</td><td>7187</td><td>3910.09</td><td>0.036</td><td>267170</td><td>351404</td><td>607121</td></tr><tr><td>tdm_fb_k2_n6</td><td>nd_dimension_exchange_allgather</td><td>1</td><td>1024</td><td>1024</td><td>109</td><td>46.76</td><td>0.073</td><td>411</td><td>3525</td><td>11979</td></tr><tr><td>tdm_fb_k2_n6</td><td>nd_dimension_exchange_allgather</td><td>1</td><td>16384</td><td>16384</td><td>212</td><td>95.82</td><td>0.075</td><td>653</td><td>8755</td><td>26861</td></tr><tr><td>tdm_fb_k2_n6</td><td>nd_dimension_exchange_allgather</td><td>1</td><td>262144</td><td>262144</td><td>3267</td><td>1537.84</td><td>0.078</td><td>4353</td><td>170211</td><td>492920</td></tr><tr><td>tdm_fb_k2_n6</td><td>nd_dimension_exchange_allgather</td><td>4</td><td>1024</td><td>1024</td><td>247</td><td>101.44</td><td>0.032</td><td>7799</td><td>8964</td><td>16542</td></tr><tr><td>tdm_fb_k2_n6</td><td>nd_dimension_exchange_allgather</td><td>4</td><td>16384</td><td>16384</td><td>447</td><td>195.60</td><td>0.036</td><td>14906</td><td>16680</td><td>31380</td></tr><tr><td>tdm_fb_k2_n6</td><td>nd_dimension_exchange_allgather</td><td>4</td><td>262144</td><td>262144</td><td>6427</td><td>3033.34</td><td>0.040</td><td>227205</td><td>258201</td><td>487753</td></tr></tbody>
+    </table>
+  </section>
+</main>
+<script>
+const table = document.getElementById("result-table");
+const headers = table.querySelectorAll("th");
+headers.forEach((header, idx) => {
+  header.addEventListener("click", () => {
+    const tbody = table.querySelector("tbody");
+    const rows = Array.from(tbody.querySelectorAll("tr"));
+    const asc = header.dataset.asc !== "1";
+    rows.sort((a, b) => {
+      const va = a.children[idx].textContent.trim();
+      const vb = b.children[idx].textContent.trim();
+      const na = Number(va.replace(/[^0-9.-]/g, ""));
+      const nb = Number(vb.replace(/[^0-9.-]/g, ""));
+      if (!Number.isNaN(na) && !Number.isNaN(nb) && va !== "" && vb !== "") return asc ? na - nb : nb - na;
+      return asc ? va.localeCompare(vb) : vb.localeCompare(va);
+    });
+    rows.forEach((r) => tbody.appendChild(r));
+    headers.forEach((h) => delete h.dataset.asc);
+    header.dataset.asc = asc ? "1" : "0";
+  });
+});
+</script>
+</body>
+</html>
