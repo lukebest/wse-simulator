@@ -167,15 +167,22 @@
           <rect x="160" y="220" width="60" height="60" fill="#1e293b" stroke="#475569"/>
           <rect x="220" y="220" width="60" height="60" fill="#1e293b" stroke="#475569"/>
         </g>
-        <!-- cycle path simplified arrows -->
-        <path d="M70 70 L130 70 L190 70 L250 70 L250 130 L190 130 L130 130 L70 130 L70 190 L130 190 L190 190 L250 190 L250 250 L190 250 L130 250 L70 250 L70 220 L130 220 L190 220 L70 70" fill="none" stroke="#4ade80" stroke-width="2.5" marker-end="url(#ring)" opacity=".85"/>
+        <!-- cycle path (matches build_hamilton_cycle 4×4) -->
+        <path d="M 70 70 L 70 130 L 70 190 L 70 250 L 130 250 L 130 190 L 130 130 L 190 130 L 190 190 L 190 250 L 250 250 L 250 190 L 250 130 L 250 70 L 190 70 L 130 70 L 70 70" fill="none" stroke="#4ade80" stroke-width="2.5" marker-end="url(#ring)" opacity=".85"/>
         <text x="55" y="68" fill="#4ade80" font-size="10">0</text>
-        <text x="115" y="68" fill="#94a3b8" font-size="10">1</text>
-        <text x="235" y="68" fill="#94a3b8" font-size="10">3</text>
-        <text x="235" y="188" fill="#94a3b8" font-size="10">11</text>
-        <text x="55" y="248" fill="#94a3b8" font-size="10">15</text>
+        <text x="55" y="128" fill="#94a3b8" font-size="10">1</text>
+        <text x="235" y="248" fill="#94a3b8" font-size="10">10</text>
+        <text x="235" y="128" fill="#94a3b8" font-size="10">12</text>
+        <text x="235" y="68" fill="#94a3b8" font-size="10">13</text>
+        <text x="175" y="68" fill="#94a3b8" font-size="10">14</text>
+        <text x="115" y="68" fill="#f59e0b" font-size="10">15</text>
+        <!-- highlight closing hop 15→0 -->
+        <line x1="130" y1="78" x2="78" y2="78" stroke="#f59e0b" stroke-width="3" marker-end="url(#ring)"/>
+        <text x="88" y="62" fill="#f59e0b" font-size="9">15→0</text>
       </svg>
-      <figcaption>图 2：4×4 蛇形哈密顿环（绿线）。每条物理有向边在环上最多出现一次；X 为偶数时可闭合。</figcaption>
+      <figcaption>图 2：4×4 蛇形哈密顿环（绿线，与 <code>build_hamilton_cycle</code> 一致）。闭合段沿 <strong>y=0</strong> 向西：
+        π(12)=(3,1)→π(13)=(3,0)→π(14)=(2,0)→π(15)=(1,0)→π(0)=(0,0)；
+        最后一跳 <strong>15→0</strong> 即 (1,0)→(0,0) 的单条西向边（橙线）。</figcaption>
     </figure>
 
     <h3>3.2 时隙表（全部源 z=0 同时注入）</h3>

@@ -126,7 +126,10 @@ def build_hamilton_cycle(rows: int, cols: int) -> list[MeshNode]:
     visited: set[tuple[int, int]] = set()
     for x in range(cols):
         if x % 2 == 0:
-            for y in range(rows):
+            # Even columns: y=0..Y-1 on col 0; later even cols start at y=1 so
+            # the link from the prior odd col ending at (x-1,1) is (x-1,1)->(x,1).
+            y_start = 0 if x == 0 else 1
+            for y in range(y_start, rows):
                 cycle.append(node(x, y))
                 visited.add((x, y))
         else:
