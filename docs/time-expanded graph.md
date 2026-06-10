@@ -435,6 +435,77 @@ python3 scripts/run_hamilton_allgather_verify.py
 
 ---
 
+## 9. 节点内联归约模型下的六类集合通信
+
+本节在 §1 时间展开图框架上，**放宽「禁止合流」为「允许节点内联归约（inline-reduce）」**：同一节点、同一时隙可接收多路入边，在 PE 内归约后再转发；**有向边-时隙 `(e,t)` 仍至多 1 flit**（无链路冲突）。目标：最小 makespan `z*`，并给出 **Router 时隙表最短深度**。
+
+### 9.1 模型差异
+
+| 约束 | §1 原始模型 | §9 inline-reduce |
+|------|-------------|------------------|
+| 中间节点入度 | ≤ 1（禁止合流） | 无限制（PE 内归约） |
+| 有向边 `(e,t)` | ≤ 1 flit | ≤ 1 flit（不变） |
+| Broadcast / Reduce | 需多播/多树无冲突 | 行/列总线树可达 `ecc(r)` |
+| AllReduce | 需 Hamilton 或维序 | 双向维累加 `D=X+Y−2` |
+
+**Router 时隙表**（方案 2 TDM FB / 方案 5 日历）存储：每个全局 slot `t ∈ [0, P−1]`，各 router 的 `(in→out, color)` 规则。
+
+- **一次性深度 `Z_router`**：完成一次 collective 所需 slot 数 = 调度 makespan `Z`（预分配无冲突时 `Z_router = Z`）。
+- **周期最短帧 `P_min = L*`**：稳态重复同一流量模式时，边负载下界；`buildPeriodicCalendar` 在 `P ≥ L*` 时可无冲突。
+- **单 router 活跃跨度**：该 router 参与 slot 的 `max(t)−min(t)+1`；可小于 `Z`（仅局部活跃）。
+
+三者关系：`P_min ≤ Z_router`（周期帧可复用更短模式）；AllGather 等流水线型两者相等；Broadcast/Reduce/AllReduce 常见 `P_min=1` 而 `Z_router=D` 或 `ecc`。
+
+### 9.2 最优 makespan 下界 `z*`
+
+设 `N=XY`，根节点 `r`（默认 `(0,0)`），`ecc(r)` 为 `r` 的离心率，`D=X+Y−2` 为 mesh 直径，`deg(r)` 为 `r` 的 mesh 度（角点 2，边 3，内点 4）。
+
+| 集合通信 | 语义（inline-reduce） | `z*` 下界 | 构造（无冲突见证） |
+|----------|----------------------|-----------|-------------------|
+| **Broadcast** | 根向全体复制 | `ecc(r)` | 行广播 + 列广播树 |
+| **Reduce** | 全体归约到根 | `ecc(r)` | 反向多播树 |
+| **AllReduce** | 全体归约再全体复制 | `D` | 双向维累加（X 双向扫 + Y 双向扫） |
+| **AllGather** | 全体互知 | `⌈(N−1)/deg(r)⌉`（开放 mesh 用 Hamilton 达 `⌈(N−1)/2⌉`） | Hamilton 双向环流水线 |
+| **Gather** | 全体发送到根 | 同上 | Hamilton 环向根汇聚 |
+| **AllToAll** | 每对互发 | `max(⌈NX/4⌉, ⌈NY/4⌉)` | XY 单播（贪心调度，可能有 stall） |
+
+**AllGather 开放 mesh**：Hamilton 环使每 slot 两方向各 `N/2` 条边并行，makespan `⌈(N−1)/2⌉`，且 `L*=⌈(N−1)/2⌉`，**Router 一次性表与周期表同长**。
+
+### 9.3 Router 时隙表最短大小（实测 4×4 / 8×8 / 12×16）
+
+| Pattern | 方法 | `P_min=L*` | `Z_router`（一次性） | stall | 说明 |
+|---------|------|------------|---------------------|-------|------|
+| Broadcast | 行列多播树 | **1** | `ecc` | 0 | 周期 1 slot 重复；一次执行需 `ecc` 级联 |
+| Reduce | 反向树 | **1** | `ecc` | 0 | 同上 |
+| AllReduce | 维累加 | **1** | `D` | 0 | 每 slot 全 mesh 并行 X 或 Y 边，无冲突 |
+| AllGather | Hamilton 环 | `⌈(N−1)/2⌉` | **= `L*`** | 0 | 表长紧；见 `hamilton_ring_allgather.html` |
+| Gather | Hamilton→根 | `⌈(N−1)/deg⌉` | `⌈(N−1)/2⌉` | 0 | **周期表可短于一次性** |
+| AllToAll | XY 单播 | 见边负载 | `> z*` | >0 | 仅边负载下界紧；需更大表或接受 stall |
+
+**4×4 数值**：Broadcast/Reduce/AllReduce `Z_router=6`, `P_min=1`；AllGather/Gather `Z_router=8`, AllGather `P_min=8`, Gather `P_min=4`；AllToAll `z*=16`, `L*=16`, `Z_router=22`。
+
+**8×8**：`ecc=14`, AllGather `Z=32`, Gather `P_min=16`；**12×16**：`ecc=26`, AllGather `Z=96`, Gather `P_min=48`。
+
+**结论**：
+
+1. **最短 Router 周期表** = `L*`（边负载最大值）；Broadcast/Reduce/AllReduce 在 mesh 上可达 **`P_min=1`**（单 slot 静态规则循环）。
+2. **最短一次性表** = 无冲突调度的 makespan `Z`；Hamilton AllGather 使 **`Z = L* = ⌈(N−1)/2⌉`** 同时最优。
+3. Gather 的 **`P_min < Z`**：稳态可每 `⌈(N−1)/deg⌉` slot 重复环上注入，但单次完成仍需 `⌈(N−1)/2⌉` slot 填满根。
+
+### 9.4 代码与报告
+
+```bash
+# 六类 collective 分析 + 刷新 HTML 报告
+python3 scripts/generate_collectives_report.py
+
+# 浏览器打开
+# docs/conflict_free_collectives_report.html
+```
+
+实现：`analyze_collective()` / `analyze_all_collectives()` in `collective_patterns.py`；交互专题 `docs/hamilton_ring_allgather.html`；综合报告 `docs/conflict_free_collectives_report.html`。
+
+---
+
 ## 附录 A：符号表
 
 | 符号 | 含义 |
@@ -443,6 +514,8 @@ python3 scripts/run_hamilton_allgather_verify.py
 | `N` | `XY` 节点数 |
 | `𝒢_T` | 时间展开 DAG，makespan 上界 `T` |
 | `T*` | 最优 makespan（AllGather 接收度下界 `⌈(N−1)/2⌉`） |
+| `z*` | inline-reduce 模型下 makespan 下界（§9） |
+| `Z_router` | 一次性 Router 时隙表深度（= 调度 makespan） |
 | `P` | 周期日历帧长 |
 | `L*` | 最大有向边负载（周期下界 `P ≥ L*`） |
 | `phi_f` | 流 `f` 的起始相位 |
@@ -468,4 +541,4 @@ Hamilton 构造给出一组可行 `{x}` 闭式解；Dim-wise 周期日历给出 
 
 ---
 
-*文档版本：2026-06-10 · 与 `collective_patterns.py` / `perfect_slot_calendar.md` / `hamilton_ring_allgather.html` 同步*
+*文档版本：2026-06-11 · 与 `collective_patterns.py` / `perfect_slot_calendar.md` / `hamilton_ring_allgather.html` / `conflict_free_collectives_report.html` 同步*

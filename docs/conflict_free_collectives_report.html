@@ -1,0 +1,667 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>无阻塞无冲突集合通信 — 时间展开图综合报告</title>
+<style>
+  :root {
+    --bg:#0f1419;
+    --panel:#1a2332;
+    --text:#e8edf4;
+    --muted:#94a3b8;
+    --border:#2d3a4f;
+    --accent:#60a5fa;
+    --accent2:#a78bfa;
+    --good:#4ade80;
+    --warn:#f59e0b;
+    --mesh:#334155;
+  }
+  * { box-sizing:border-box; }
+  body {
+    margin:0;
+    font-family:"IBM Plex Sans","Segoe UI",system-ui,sans-serif;
+    background:var(--bg);
+    color:var(--text);
+    line-height:1.65;
+  }
+  header {
+    padding:2rem 1.5rem;
+    background:linear-gradient(135deg,#1e293b 0%,#0f172a 55%,#1a1033 100%);
+    border-bottom:1px solid var(--border);
+  }
+  header h1 { margin:0 0 .5rem; font-size:1.65rem; }
+  header p { margin:.25rem 0; color:var(--muted); max-width:960px; }
+  main { max-width:1100px; margin:0 auto; padding:1.5rem; }
+  section { margin-bottom:2rem; }
+  h2 { font-size:1.25rem; margin:0 0 .75rem; color:var(--accent); }
+  h3 { font-size:1.05rem; margin:1.2rem 0 .5rem; }
+  p, li { color:#dbe4f0; }
+  .panel {
+    background:var(--panel);
+    border:1px solid var(--border);
+    border-radius:12px;
+    padding:1.1rem 1.25rem;
+  }
+  .mono { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:.92em; }
+  .good { color:var(--good); font-weight:600; }
+  .warn { color:var(--warn); }
+  .muted { color:var(--muted); font-size:.9rem; }
+  .grid2 { display:grid; grid-template-columns:1fr 1fr; gap:1rem; }
+  .grid3 { display:grid; grid-template-columns:repeat(3,1fr); gap:.75rem; }
+  @media (max-width:900px) { .grid2,.grid3 { grid-template-columns:1fr; } }
+  figure { margin:1rem 0; }
+  figcaption { color:var(--muted); font-size:.85rem; margin-top:.5rem; text-align:center; }
+  svg { display:block; max-width:100%; height:auto; margin:0 auto; background:#111827; border-radius:8px; border:1px solid var(--border); }
+  table { width:100%; border-collapse:collapse; font-size:.88rem; margin-top:.75rem; }
+  th,td { border:1px solid var(--border); padding:.5rem .55rem; text-align:left; }
+  th { background:#243044; }
+  .formula {
+    background:#0d1117;
+    border-left:3px solid var(--accent2);
+    padding:.75rem 1rem;
+    margin:.75rem 0;
+    border-radius:0 8px 8px 0;
+    overflow-x:auto;
+  }
+  ul { padding-left:1.2rem; }
+  .card {
+    background:#111827;
+    border:1px solid var(--border);
+    border-radius:10px;
+    padding:.85rem 1rem;
+  }
+  .card h4 { margin:0 0 .35rem; color:var(--accent2); font-size:.95rem; }
+  footer { text-align:center; color:var(--muted); font-size:.85rem; padding:2rem 1rem; border-top:1px solid var(--border); }
+  a { color:var(--accent); }
+</style>
+</head>
+<body>
+<header>
+  <h1>无阻塞、无冲突集合通信：时间展开图综合报告</h1>
+  <p>在 2D Mesh 上将 <strong>Broadcast · Reduce · AllReduce · AllGather · Gather · AllToAll</strong> 映射为时间展开 DAG 上的边-时隙占用；采用 <strong>节点内联归约（inline-reduce）</strong> 模型，给出 makespan 下界、无冲突构造，以及 <strong>Router 时隙表最短深度</strong> 分析。</p>
+  <p class="muted">理论：<a href="time-expanded%20graph.md">docs/time-expanded graph.md</a> §9 · AllGather 专题：<a href="hamilton_ring_allgather.html">hamilton_ring_allgather.html</a> · 代码：<span class="mono">wsesim/network/collective_patterns.py</span></p>
+</header>
+
+<main>
+<section>
+  <h2>1. 模型：inline-reduce 时间展开图</h2>
+  <div class="panel">
+    <p>与严格「禁止合流」不同，inline-reduce 允许同一节点、同一时隙多路入边，在 PE 内归约后再转发；<strong>每条有向边在每个 slot 仍至多 1 flit</strong>（链路无冲突）。</p>
+    <div class="formula mono">
+      最小化 makespan Z  s.t.  ∀ 有向边 e, slot t:  Σ_f x_{f,e,t} ≤ 1
+    </div>
+    <ul>
+      <li><span class="mono">z*</span>：inline-reduce 下界（离心率 / 直径 / 接收度 / bisection）</li>
+      <li><span class="mono">Z</span>：实际调度 makespan（= 一次性 Router 表深度 <span class="mono">Z_router</span>）</li>
+      <li><span class="mono">L*</span>：最大有向边负载 → 周期 Router 表最短帧 <span class="mono">P_min</span></li>
+    </ul>
+    <figure>
+      <svg viewBox="0 0 560 200" width="560" height="200" aria-label="三种时间表关系">
+        <text x="20" y="30" fill="#94a3b8" font-size="12">Router 时隙表三尺度</text>
+        <rect x="30" y="50" width="150" height="55" rx="6" fill="#1e3a2f" stroke="#4ade80"/>
+        <text x="45" y="72" fill="#4ade80" font-size="11">P_min = L*</text>
+        <text x="45" y="90" fill="#cbd5e1" font-size="10">周期稳态最短帧</text>
+        <rect x="205" y="50" width="150" height="55" rx="6" fill="#1e293b" stroke="#60a5fa"/>
+        <text x="220" y="72" fill="#60a5fa" font-size="11">Z_router = Z</text>
+        <text x="220" y="90" fill="#cbd5e1" font-size="10">一次性 collective 深度</text>
+        <rect x="380" y="50" width="160" height="55" rx="6" fill="#2e1065" stroke="#a78bfa"/>
+        <text x="395" y="72" fill="#a78bfa" font-size="11">活跃跨度</text>
+        <text x="395" y="90" fill="#cbd5e1" font-size="10">单 router 局部窗口 ≤ Z</text>
+        <text x="30" y="140" fill="#f59e0b" font-size="11">一般 P_min ≤ Z；Broadcast/Reduce/AllReduce 可达 P_min=1；Hamilton AllGather 有 Z = L*</text>
+        <line x1="180" y1="77" x2="205" y2="77" stroke="#64748b" marker-end="url(#arr)"/>
+        <defs><marker id="arr" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 Z" fill="#64748b"/></marker></defs>
+      </svg>
+      <figcaption>Router 时隙表：周期最短帧 L* vs 一次性深度 Z vs 单节点活跃跨度</figcaption>
+    </figure>
+  </div>
+</section>
+
+<section>
+  <h2>2. 六类集合通信：下界与构造</h2>
+  <div class="grid3">
+    <div class="card">
+      <h4>Broadcast</h4>
+      <p class="mono">z* = ecc(r)</p>
+      <p class="muted">行+列多播树；Z=6/14/26 @ 4×4/8×8/12×16</p>
+      <p><span class="good">P_min=1</span> · stall=0</p>
+    </div>
+    <div class="card">
+      <h4>Reduce</h4>
+      <p class="mono">z* = ecc(r)</p>
+      <p class="muted">反向多播 + inline reduce</p>
+      <p><span class="good">P_min=1</span> · stall=0</p>
+    </div>
+    <div class="card">
+      <h4>AllReduce</h4>
+      <p class="mono">z* = D = X+Y−2</p>
+      <p class="muted">双向维累加（X 扫 + Y 扫）</p>
+      <p><span class="good">P_min=1</span> · stall=0</p>
+    </div>
+    <div class="card">
+      <h4>AllGather</h4>
+      <p class="mono">z* = ⌈(N−1)/2⌉</p>
+      <p class="muted">Hamilton 双向环流水线</p>
+      <p><span class="good">Z = L*</span> · stall=0</p>
+    </div>
+    <div class="card">
+      <h4>Gather</h4>
+      <p class="mono">z* = ⌈(N−1)/deg⌉</p>
+      <p class="muted">Hamilton 环向根汇聚</p>
+      <p><span class="good">P_min &lt; Z</span> · stall=0</p>
+    </div>
+    <div class="card">
+      <h4>AllToAll</h4>
+      <p class="mono">z* = max(⌈NX/4⌉,⌈NY/4⌉)</p>
+      <p class="muted">XY 单播 + 贪心调度</p>
+      <p><span class="warn">stall &gt; 0</span> · Z &gt; z*</p>
+    </div>
+  </div>
+</section>
+
+<section>
+  <h2>3. Router 时隙表最短大小</h2>
+  <div class="panel">
+    <h3>3.1 定义</h3>
+    <table>
+      <thead>
+        <tr><th>量</th><th>符号</th><th>含义</th><th>如何得到</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>周期最短帧</td><td class="mono">P_min = L*</td><td>稳态重复时 router 日历最小周期</td><td>max 有向边负载</td></tr>
+        <tr><td>一次性深度</td><td class="mono">Z_router</td><td>单次 collective 的 slot 数</td><td>无冲突调度 makespan Z</td></tr>
+        <tr><td>单 router 活跃跨度</td><td class="mono">span(r)</td><td>该 router 参与 slot 的窗口长</td><td>max(t)−min(t)+1</td></tr>
+      </tbody>
+    </table>
+
+    <h3>3.2 按 Mesh 汇总（最短周期 vs 最长一次性）</h3>
+    <table>
+      <thead>
+        <tr>
+          <th>Mesh</th>
+          <th>min P_min（全 pattern）</th>
+          <th>max Z_router</th>
+          <th>Z = L* 紧构造</th>
+        </tr>
+      </thead>
+      <tbody id="router-body">
+<tr><td>4×4</td><td class='good'>1</td><td>22</td><td>AllGather</td></tr>
+<tr><td>8×8</td><td class='good'>1</td><td>167</td><td>AllGather</td></tr>
+<tr><td>12×16</td><td class='good'>1</td><td>905</td><td>AllGather</td></tr>
+</tbody>
+    </table>
+
+    <h3>3.3 关键结论</h3>
+    <ul>
+      <li><strong>全局最短周期表</strong>：<span class="mono">P_min = 1</span> 对 Broadcast / Reduce / AllReduce 成立（单 slot 静态规则循环即可）。</li>
+      <li><strong>AllGather 表长紧</strong>：Hamilton 方案 <span class="mono">Z_router = L* = ⌈(N−1)/2⌉</span>，一次性与周期同长，且 stall=0。</li>
+      <li><strong>Gather 周期可更短</strong>：<span class="mono">P_min = ⌈(N−1)/deg⌉</span> 而 <span class="mono">Z = ⌈(N−1)/2⌉</span>（如 8×8：16 vs 32）。</li>
+      <li><strong>AllToAll</strong>：边负载给出 <span class="mono">L*</span> 下界，贪心 XY 调度 <span class="mono">Z &gt; z*</span> 且 stall 大；需更大表或更优算法。</li>
+    </ul>
+  </div>
+</section>
+
+<section>
+  <h2>4. 全量 benchmark（4×4 · 8×8 · 12×16）</h2>
+  <div class="panel">
+    <table>
+      <thead>
+        <tr>
+          <th>Pattern</th>
+          <th>Mesh</th>
+          <th>z*</th>
+          <th>Z</th>
+          <th>L*</th>
+          <th>Z_router</th>
+          <th>span_max</th>
+          <th>表关系</th>
+          <th>stall</th>
+          <th>无冲突</th>
+        </tr>
+      </thead>
+      <tbody id="master-body">
+<tr><td>Broadcast</td><td>4×4</td><td>6</td><td class='good'>6</td><td>1</td><td>6</td><td>4</td><td>P&lt;Z (1&lt;6)</td><td class='good'>0</td><td class='good'>✓</td></tr>
+<tr><td>Reduce</td><td>4×4</td><td>6</td><td class='good'>6</td><td>1</td><td>6</td><td>4</td><td>P&lt;Z (1&lt;6)</td><td class='good'>0</td><td class='good'>✓</td></tr>
+<tr><td>AllReduce</td><td>4×4</td><td>6</td><td class='good'>6</td><td>1</td><td>6</td><td>6</td><td>P&lt;Z (1&lt;6)</td><td class='good'>0</td><td class='good'>✓</td></tr>
+<tr><td>AllGather</td><td>4×4</td><td>8</td><td class='good'>8</td><td>8</td><td>8</td><td>8</td><td>Z=L*</td><td class='good'>0</td><td class='good'>✓</td></tr>
+<tr><td>Gather</td><td>4×4</td><td>8</td><td class='good'>8</td><td>4</td><td>8</td><td>8</td><td>P&lt;Z (4&lt;8)</td><td class='good'>0</td><td class='good'>✓</td></tr>
+<tr><td>AllToAll</td><td>4×4</td><td>16</td><td class='good'>22</td><td>16</td><td>22</td><td>22</td><td>P&lt;Z (16&lt;22)</td><td class='warn'>1245</td><td class='good'>✓</td></tr>
+<tr><td>Broadcast</td><td>8×8</td><td>14</td><td class='good'>14</td><td>1</td><td>14</td><td>8</td><td>P&lt;Z (1&lt;14)</td><td class='good'>0</td><td class='good'>✓</td></tr>
+<tr><td>Reduce</td><td>8×8</td><td>14</td><td class='good'>14</td><td>1</td><td>14</td><td>8</td><td>P&lt;Z (1&lt;14)</td><td class='good'>0</td><td class='good'>✓</td></tr>
+<tr><td>AllReduce</td><td>8×8</td><td>14</td><td class='good'>14</td><td>1</td><td>14</td><td>14</td><td>P&lt;Z (1&lt;14)</td><td class='good'>0</td><td class='good'>✓</td></tr>
+<tr><td>AllGather</td><td>8×8</td><td>32</td><td class='good'>32</td><td>32</td><td>32</td><td>32</td><td>Z=L*</td><td class='good'>0</td><td class='good'>✓</td></tr>
+<tr><td>Gather</td><td>8×8</td><td>32</td><td class='good'>32</td><td>16</td><td>32</td><td>32</td><td>P&lt;Z (16&lt;32)</td><td class='good'>0</td><td class='good'>✓</td></tr>
+<tr><td>AllToAll</td><td>8×8</td><td>128</td><td class='good'>167</td><td>128</td><td>167</td><td>167</td><td>P&lt;Z (128&lt;167)</td><td class='warn'>192930</td><td class='good'>✓</td></tr>
+<tr><td>Broadcast</td><td>12×16</td><td>26</td><td class='good'>26</td><td>1</td><td>26</td><td>16</td><td>P&lt;Z (1&lt;26)</td><td class='good'>0</td><td class='good'>✓</td></tr>
+<tr><td>Reduce</td><td>12×16</td><td>26</td><td class='good'>26</td><td>1</td><td>26</td><td>16</td><td>P&lt;Z (1&lt;26)</td><td class='good'>0</td><td class='good'>✓</td></tr>
+<tr><td>AllReduce</td><td>12×16</td><td>26</td><td class='good'>26</td><td>1</td><td>26</td><td>26</td><td>P&lt;Z (1&lt;26)</td><td class='good'>0</td><td class='good'>✓</td></tr>
+<tr><td>AllGather</td><td>12×16</td><td>96</td><td class='good'>96</td><td>96</td><td>96</td><td>96</td><td>Z=L*</td><td class='good'>0</td><td class='good'>✓</td></tr>
+<tr><td>Gather</td><td>12×16</td><td>96</td><td class='good'>96</td><td>48</td><td>96</td><td>96</td><td>P&lt;Z (48&lt;96)</td><td class='good'>0</td><td class='good'>✓</td></tr>
+<tr><td>AllToAll</td><td>12×16</td><td>768</td><td class='good'>905</td><td>768</td><td>905</td><td>905</td><td>P&lt;Z (768&lt;905)</td><td class='warn'>9814908</td><td class='good'>✓</td></tr>
+</tbody>
+    </table>
+    <p class="muted">调度：预分配 slot + verify_preassigned_slots（前 5 类）；AllToAll 用 bufferless 贪心 planNoc。「无冲突」= 已分配 slot 上每 (edge,t) peak≤1。</p>
+  </div>
+</section>
+
+<section>
+  <h2>5. AllGather：Hamilton 环（与专题报告一致）</h2>
+  <div class="panel grid2">
+    <div>
+      <p>偶数列 mesh 上的 Hamilton 环 + CW/CCW 双向流水线，makespan 达 <span class="mono">⌈(N−1)/2⌉</span>，优于 dim-wise XY 维序。</p>
+      <div class="formula mono">
+        T* = ⌈(N−1)/2⌉ = Z = L* · stall = 0 · peak = 1
+      </div>
+      <p>详见 <a href="hamilton_ring_allgather.html">hamilton_ring_allgather.html</a>（含 4×4 环闭合 15→0 图示）。</p>
+    </div>
+    <figure>
+      <svg viewBox="0 0 240 240" width="240" height="240" aria-label="4x4 Hamilton ring">
+        <rect x="20" y="20" width="50" height="50" fill="#1e293b" stroke="#475569"/>
+        <rect x="70" y="20" width="50" height="50" fill="#1e293b" stroke="#475569"/>
+        <rect x="120" y="20" width="50" height="50" fill="#1e293b" stroke="#475569"/>
+        <rect x="170" y="20" width="50" height="50" fill="#1e293b" stroke="#475569"/>
+        <rect x="20" y="70" width="50" height="50" fill="#1e293b" stroke="#475569"/>
+        <rect x="70" y="70" width="50" height="50" fill="#1e293b" stroke="#475569"/>
+        <rect x="120" y="70" width="50" height="50" fill="#1e293b" stroke="#475569"/>
+        <rect x="170" y="70" width="50" height="50" fill="#1e293b" stroke="#475569"/>
+        <rect x="20" y="120" width="50" height="50" fill="#1e293b" stroke="#475569"/>
+        <rect x="70" y="120" width="50" height="50" fill="#1e293b" stroke="#475569"/>
+        <rect x="120" y="120" width="50" height="50" fill="#1e293b" stroke="#475569"/>
+        <rect x="170" y="120" width="50" height="50" fill="#1e293b" stroke="#475569"/>
+        <rect x="20" y="170" width="50" height="50" fill="#1e293b" stroke="#475569"/>
+        <rect x="70" y="170" width="50" height="50" fill="#1e293b" stroke="#475569"/>
+        <rect x="120" y="170" width="50" height="50" fill="#1e293b" stroke="#475569"/>
+        <rect x="170" y="170" width="50" height="50" fill="#1e293b" stroke="#475569"/>
+        <text x="38" y="52" fill="#4ade80" font-size="10">0</text>
+        <text x="188" y="52" fill="#e2e8f0" font-size="10">3</text>
+        <text x="188" y="102" fill="#e2e8f0" font-size="10">7</text>
+        <text x="38" y="202" fill="#e2e8f0" font-size="10">12</text>
+        <path d="M45 45 L95 45 L145 45 L195 45 L195 95 L195 145 L195 195 L145 195 L95 195 L45 195 L45 145 L45 95 Z" fill="none" stroke="#60a5fa" stroke-width="2" stroke-dasharray="4 3"/>
+        <line x1="95" y1="195" x2="45" y2="195" stroke="#f59e0b" stroke-width="2.5"/>
+        <text x="60" y="188" fill="#f59e0b" font-size="9">15→0</text>
+      </svg>
+      <figcaption>4×4 Hamilton 环（虚线）与闭合边 15→0（橙）</figcaption>
+    </figure>
+  </div>
+</section>
+
+<section>
+  <h2>6. 复现</h2>
+  <div class="panel">
+    <pre class="mono" style="background:#0d1117;padding:.75rem;border-radius:8px;overflow-x:auto">python3 scripts/generate_collectives_report.py
+pytest tests/test_hamilton_allgather.py -v</pre>
+    <p class="muted">输出 JSON：<span class="mono">outputs/collectives_report/results.json</span></p>
+  </div>
+</section>
+</main>
+
+<footer>
+  wse-simulator · 无冲突集合通信综合报告 · 数据嵌入见下方 JSON
+</footer>
+
+<script id="bench-data" type="application/json">
+[
+  {
+    "pattern": "broadcast",
+    "rows": 4,
+    "cols": 4,
+    "node_count": 16,
+    "root": 0,
+    "method": "multicast tree (row + column buses)",
+    "z_lower_bound": 6,
+    "z_scheduled": 6,
+    "stall": 0,
+    "ok": true,
+    "peak": 1,
+    "l_star": 1,
+    "p_min_periodic": 1,
+    "router_table_oneshot": 6,
+    "router_table_periodic": 1,
+    "router_max_active_span": 4,
+    "flow_count": 5,
+    "witness_edge": "0,0->1,0"
+  },
+  {
+    "pattern": "reduce",
+    "rows": 4,
+    "cols": 4,
+    "node_count": 16,
+    "root": 0,
+    "method": "reverse multicast tree + inline reduce",
+    "z_lower_bound": 6,
+    "z_scheduled": 6,
+    "stall": 0,
+    "ok": true,
+    "peak": 1,
+    "l_star": 1,
+    "p_min_periodic": 1,
+    "router_table_oneshot": 6,
+    "router_table_periodic": 1,
+    "router_max_active_span": 4,
+    "flow_count": 15,
+    "witness_edge": "0,3->0,2"
+  },
+  {
+    "pattern": "allreduce",
+    "rows": 4,
+    "cols": 4,
+    "node_count": 16,
+    "root": 0,
+    "method": "bidirectional dimension accumulation",
+    "z_lower_bound": 6,
+    "z_scheduled": 6,
+    "stall": 0,
+    "ok": true,
+    "peak": 1,
+    "l_star": 1,
+    "p_min_periodic": 1,
+    "router_table_oneshot": 6,
+    "router_table_periodic": 1,
+    "router_max_active_span": 6,
+    "flow_count": 48,
+    "witness_edge": "0,0->1,0"
+  },
+  {
+    "pattern": "allgather",
+    "rows": 4,
+    "cols": 4,
+    "node_count": 16,
+    "root": 0,
+    "method": "Hamilton bidirectional ring pipeline",
+    "z_lower_bound": 8,
+    "z_scheduled": 8,
+    "stall": 0,
+    "ok": true,
+    "peak": 1,
+    "l_star": 8,
+    "p_min_periodic": 8,
+    "router_table_oneshot": 8,
+    "router_table_periodic": 8,
+    "router_max_active_span": 8,
+    "flow_count": 32,
+    "witness_edge": "0,0->0,1"
+  },
+  {
+    "pattern": "gather",
+    "rows": 4,
+    "cols": 4,
+    "node_count": 16,
+    "root": 0,
+    "method": "Hamilton ring feed to root",
+    "z_lower_bound": 8,
+    "z_scheduled": 8,
+    "stall": 0,
+    "ok": true,
+    "peak": 1,
+    "l_star": 4,
+    "p_min_periodic": 4,
+    "router_table_oneshot": 8,
+    "router_table_periodic": 4,
+    "router_max_active_span": 8,
+    "flow_count": 15,
+    "witness_edge": "2,1->2,2"
+  },
+  {
+    "pattern": "alltoall",
+    "rows": 4,
+    "cols": 4,
+    "node_count": 16,
+    "root": 0,
+    "method": "XY unicast (bufferless greedy schedule)",
+    "z_lower_bound": 16,
+    "z_scheduled": 22,
+    "stall": 1245,
+    "ok": true,
+    "peak": 1,
+    "l_star": 16,
+    "p_min_periodic": 16,
+    "router_table_oneshot": 22,
+    "router_table_periodic": 16,
+    "router_max_active_span": 22,
+    "flow_count": 240,
+    "witness_edge": "1,0->2,0"
+  },
+  {
+    "pattern": "broadcast",
+    "rows": 8,
+    "cols": 8,
+    "node_count": 64,
+    "root": 0,
+    "method": "multicast tree (row + column buses)",
+    "z_lower_bound": 14,
+    "z_scheduled": 14,
+    "stall": 0,
+    "ok": true,
+    "peak": 1,
+    "l_star": 1,
+    "p_min_periodic": 1,
+    "router_table_oneshot": 14,
+    "router_table_periodic": 1,
+    "router_max_active_span": 8,
+    "flow_count": 9,
+    "witness_edge": "0,0->1,0"
+  },
+  {
+    "pattern": "reduce",
+    "rows": 8,
+    "cols": 8,
+    "node_count": 64,
+    "root": 0,
+    "method": "reverse multicast tree + inline reduce",
+    "z_lower_bound": 14,
+    "z_scheduled": 14,
+    "stall": 0,
+    "ok": true,
+    "peak": 1,
+    "l_star": 1,
+    "p_min_periodic": 1,
+    "router_table_oneshot": 14,
+    "router_table_periodic": 1,
+    "router_max_active_span": 8,
+    "flow_count": 63,
+    "witness_edge": "0,7->0,6"
+  },
+  {
+    "pattern": "allreduce",
+    "rows": 8,
+    "cols": 8,
+    "node_count": 64,
+    "root": 0,
+    "method": "bidirectional dimension accumulation",
+    "z_lower_bound": 14,
+    "z_scheduled": 14,
+    "stall": 0,
+    "ok": true,
+    "peak": 1,
+    "l_star": 1,
+    "p_min_periodic": 1,
+    "router_table_oneshot": 14,
+    "router_table_periodic": 1,
+    "router_max_active_span": 14,
+    "flow_count": 224,
+    "witness_edge": "0,0->1,0"
+  },
+  {
+    "pattern": "allgather",
+    "rows": 8,
+    "cols": 8,
+    "node_count": 64,
+    "root": 0,
+    "method": "Hamilton bidirectional ring pipeline",
+    "z_lower_bound": 32,
+    "z_scheduled": 32,
+    "stall": 0,
+    "ok": true,
+    "peak": 1,
+    "l_star": 32,
+    "p_min_periodic": 32,
+    "router_table_oneshot": 32,
+    "router_table_periodic": 32,
+    "router_max_active_span": 32,
+    "flow_count": 128,
+    "witness_edge": "0,0->0,1"
+  },
+  {
+    "pattern": "gather",
+    "rows": 8,
+    "cols": 8,
+    "node_count": 64,
+    "root": 0,
+    "method": "Hamilton ring feed to root",
+    "z_lower_bound": 32,
+    "z_scheduled": 32,
+    "stall": 0,
+    "ok": true,
+    "peak": 1,
+    "l_star": 16,
+    "p_min_periodic": 16,
+    "router_table_oneshot": 32,
+    "router_table_periodic": 16,
+    "router_max_active_span": 32,
+    "flow_count": 63,
+    "witness_edge": "4,3->4,4"
+  },
+  {
+    "pattern": "alltoall",
+    "rows": 8,
+    "cols": 8,
+    "node_count": 64,
+    "root": 0,
+    "method": "XY unicast (bufferless greedy schedule)",
+    "z_lower_bound": 128,
+    "z_scheduled": 167,
+    "stall": 192930,
+    "ok": true,
+    "peak": 1,
+    "l_star": 128,
+    "p_min_periodic": 128,
+    "router_table_oneshot": 167,
+    "router_table_periodic": 128,
+    "router_max_active_span": 167,
+    "flow_count": 4032,
+    "witness_edge": "3,0->4,0"
+  },
+  {
+    "pattern": "broadcast",
+    "rows": 12,
+    "cols": 16,
+    "node_count": 192,
+    "root": 0,
+    "method": "multicast tree (row + column buses)",
+    "z_lower_bound": 26,
+    "z_scheduled": 26,
+    "stall": 0,
+    "ok": true,
+    "peak": 1,
+    "l_star": 1,
+    "p_min_periodic": 1,
+    "router_table_oneshot": 26,
+    "router_table_periodic": 1,
+    "router_max_active_span": 16,
+    "flow_count": 17,
+    "witness_edge": "0,0->1,0"
+  },
+  {
+    "pattern": "reduce",
+    "rows": 12,
+    "cols": 16,
+    "node_count": 192,
+    "root": 0,
+    "method": "reverse multicast tree + inline reduce",
+    "z_lower_bound": 26,
+    "z_scheduled": 26,
+    "stall": 0,
+    "ok": true,
+    "peak": 1,
+    "l_star": 1,
+    "p_min_periodic": 1,
+    "router_table_oneshot": 26,
+    "router_table_periodic": 1,
+    "router_max_active_span": 16,
+    "flow_count": 191,
+    "witness_edge": "0,11->0,10"
+  },
+  {
+    "pattern": "allreduce",
+    "rows": 12,
+    "cols": 16,
+    "node_count": 192,
+    "root": 0,
+    "method": "bidirectional dimension accumulation",
+    "z_lower_bound": 26,
+    "z_scheduled": 26,
+    "stall": 0,
+    "ok": true,
+    "peak": 1,
+    "l_star": 1,
+    "p_min_periodic": 1,
+    "router_table_oneshot": 26,
+    "router_table_periodic": 1,
+    "router_max_active_span": 26,
+    "flow_count": 712,
+    "witness_edge": "0,0->1,0"
+  },
+  {
+    "pattern": "allgather",
+    "rows": 12,
+    "cols": 16,
+    "node_count": 192,
+    "root": 0,
+    "method": "Hamilton bidirectional ring pipeline",
+    "z_lower_bound": 96,
+    "z_scheduled": 96,
+    "stall": 0,
+    "ok": true,
+    "peak": 1,
+    "l_star": 96,
+    "p_min_periodic": 96,
+    "router_table_oneshot": 96,
+    "router_table_periodic": 96,
+    "router_max_active_span": 96,
+    "flow_count": 384,
+    "witness_edge": "0,0->0,1"
+  },
+  {
+    "pattern": "gather",
+    "rows": 12,
+    "cols": 16,
+    "node_count": 192,
+    "root": 0,
+    "method": "Hamilton ring feed to root",
+    "z_lower_bound": 96,
+    "z_scheduled": 96,
+    "stall": 0,
+    "ok": true,
+    "peak": 1,
+    "l_star": 48,
+    "p_min_periodic": 48,
+    "router_table_oneshot": 96,
+    "router_table_periodic": 48,
+    "router_max_active_span": 96,
+    "flow_count": 191,
+    "witness_edge": "8,7->8,8"
+  },
+  {
+    "pattern": "alltoall",
+    "rows": 12,
+    "cols": 16,
+    "node_count": 192,
+    "root": 0,
+    "method": "XY unicast (bufferless greedy schedule)",
+    "z_lower_bound": 768,
+    "z_scheduled": 905,
+    "stall": 9814908,
+    "ok": true,
+    "peak": 1,
+    "l_star": 768,
+    "p_min_periodic": 768,
+    "router_table_oneshot": 905,
+    "router_table_periodic": 768,
+    "router_max_active_span": 905,
+    "flow_count": 36672,
+    "witness_edge": "7,0->8,0"
+  }
+]
+</script>
+</body>
+</html>
