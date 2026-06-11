@@ -125,6 +125,35 @@
 
 <section>
   <h2>2. 六类集合通信：下界与构造</h2>
+  <div class="panel">
+    <h3>2.0 符号：z* 下界用到的图量</h3>
+    <table>
+      <thead><tr><th>符号</th><th>名称</th><th>定义</th><th>开放 mesh 取值</th></tr></thead>
+      <tbody>
+        <tr>
+          <td class="mono">ecc(r)</td><td>根 r 的离心率 (eccentricity)</td>
+          <td>从 r 到<strong>最远</strong>节点的曼哈顿跳数 <span class="mono">max_v dist(r,v)</span></td>
+          <td>角点 root：<span class="mono">(X−1)+(Y−1)</span>（= 直径 D）；内点更小</td>
+        </tr>
+        <tr>
+          <td class="mono">deg(r)</td><td>根 r 的度 (degree)</td>
+          <td>r 在 mesh 上的相邻链路数（一拍最多并行收/发的方向数）</td>
+          <td>角点 2 · 边 3 · 内点 4</td>
+        </tr>
+        <tr>
+          <td class="mono">D</td><td>mesh 直径</td>
+          <td>任意两点最大曼哈顿距离 <span class="mono">X+Y−2</span></td>
+          <td>4×4=6 · 8×8=14 · 12×16=26</td>
+        </tr>
+        <tr>
+          <td class="mono">N·X/4</td><td>bisection 负载</td>
+          <td>竖切把 N 节点分两半，<span class="mono">N²/4</span> 条消息过 <span class="mono">rows</span> 条切边 ⇒ 每边 <span class="mono">N·cols/4</span></td>
+          <td>AllToAll 下界 <span class="mono">max(N·cols/4, N·rows/4)</span></td>
+        </tr>
+      </tbody>
+    </table>
+    <p class="muted">直觉：Broadcast/Reduce 的数据要走到最远节点，故 <span class="mono">z*=ecc(r)</span>；Gather 把 N−1 份数据经 root 的 deg(r) 条入边汇入，故 <span class="mono">z*=⌈(N−1)/deg(r)⌉</span>；AllToAll 受对剖带宽限制，故 <span class="mono">z*</span> 为 bisection 负载。</p>
+  </div>
   <div class="grid3">
     <div class="card">
       <h4>Broadcast</h4>
@@ -294,13 +323,59 @@
     </figure>
   </div>
   <div class="panel">
-    <h3>5.1 AllToAll 的无冲突（stall=0）方案</h3>
-    <p>本报告 §4 的 AllToAll 用<strong>贪心 XY 单播</strong>，故 <span class="mono">stall&gt;0</span> 且 <span class="mono">Z&gt;z*</span>。但达到 bisection 下界 <span class="mono">z*=max(⌈NX/4⌉,⌈NY/4⌉)</span> 的<strong>预分配无冲突</strong>构造是存在的（本仓库尚未实现）：</p>
+    <h3>5.1 AllToAll 的 z 最短无冲突（stall=0）方案</h3>
+    <p>本报告 §4 的 AllToAll 用<strong>贪心 XY 单播 + 在线源端等待</strong>：链路 <span class="mono">peak=1</span>，但注入不是预排的，故 <span class="mono">stall&gt;0</span>。要做到<strong>真正 stall=0</strong>（注入时刻全部预排、flit 一路刚性 +1/跳、无源端等待），需要一份预计算的无冲突日历。下界与最短构造如下。</p>
+
+    <h4>下界（bisection）</h4>
+    <div class="formula mono">
+      z* = max( N·cols/4 , N·rows/4 )
+    </div>
+    <p class="muted">竖切把 N 节点分两半，<span class="mono">(N/2)²=N²/4</span> 条消息须穿过 <span class="mono">rows</span> 条切边，单边至少 <span class="mono">N²/4 / rows = N·cols/4</span> 拍；横切同理。任何 stall=0 日历都不可能短于 z*。</p>
+
+    <h4>最短已知构造：二相维序 + 区间着色</h4>
+    <p>把 XY 路径天然拆成「行段→列段」两相，每相是若干<strong>独立的一维全交换</strong>，用区间着色给出闭式无冲突注入相位：</p>
+    <ol>
+      <li><strong>相 X（行内）</strong>：在每一行的 <span class="mono">cols</span> 节点上做一维全交换——节点 <span class="mono">(sx,sy)</span> 把发往「列 dx」的整束（含该列各行目的，<span class="mono">rows</span> flit）沿行送到 <span class="mono">(dx,sy)</span>。东向消息 <span class="mono">(sx&lt;dx)</span> 占用行链 <span class="mono">sx..dx−1</span>，相位 <span class="mono">φ = sx + g</span>，<span class="mono">g</span> 为<strong>区间着色层号</strong>（重叠区间得不同 g，色数 = 最忙行链负载 = <span class="mono">L*_x</span>）。如此每条有向行链每拍 ≤1 flit。西向独立同理。</li>
+      <li><strong>相切换（PE 中继）</strong>：中间节点 <span class="mono">(dx,sy)</span> 把行汇聚的束 eject 进 PE，再沿列 re-inject（一次 <span class="mono">PE_INOUT_LATENCY</span>）。这是 inline 模型下的 buffered relay，不是 NoC 源端竞争 stall。</li>
+      <li><strong>相 Y（列内）</strong>：在每一列做一维全交换，<span class="mono">(dx,sy)→(dx,dy)</span>，相位区间着色同上，色数 = <span class="mono">L*_y</span>。</li>
+    </ol>
+    <div class="formula mono">
+      Z_a2a = (cols + L*_x) + PE + (rows + L*_y) ≈ N·cols/4 + N·rows/4  ≤ 2·z*
+    </div>
+    <figure>
+      <svg viewBox="0 0 520 160" width="520" height="160" aria-label="二相 all-to-all">
+        <text x="10" y="18" fill="#94a3b8" font-size="12">二相维序 stall=0：行全交换 → PE 中继 → 列全交换</text>
+        <rect x="20" y="40" width="150" height="90" rx="6" fill="#1e293b" stroke="#60a5fa"/>
+        <text x="34" y="60" fill="#60a5fa" font-size="11">相 X（每行一维全交换）</text>
+        <line x1="34" y1="80" x2="156" y2="80" stroke="#475569"/>
+        <circle cx="44" cy="80" r="5" fill="#4ade80"/><circle cx="84" cy="80" r="5" fill="#4ade80"/>
+        <circle cx="124" cy="80" r="5" fill="#4ade80"/><circle cx="156" cy="80" r="5" fill="#4ade80"/>
+        <text x="34" y="108" fill="#cbd5e1" font-size="10">区间着色 φ=sx+g</text>
+        <text x="34" y="122" fill="#cbd5e1" font-size="10">peak=1, 长 ≈ N·cols/4</text>
+        <rect x="190" y="40" width="120" height="90" rx="6" fill="#2e1065" stroke="#a78bfa"/>
+        <text x="204" y="60" fill="#a78bfa" font-size="11">PE 中继</text>
+        <text x="204" y="84" fill="#cbd5e1" font-size="10">eject→reinject</text>
+        <text x="204" y="100" fill="#cbd5e1" font-size="10">+PE_INOUT</text>
+        <text x="204" y="116" fill="#cbd5e1" font-size="10">维度切换一次</text>
+        <rect x="330" y="40" width="170" height="90" rx="6" fill="#1e3a2f" stroke="#4ade80"/>
+        <text x="344" y="60" fill="#4ade80" font-size="11">相 Y（每列一维全交换）</text>
+        <line x1="360" y1="74" x2="360" y2="122" stroke="#475569"/>
+        <circle cx="360" cy="74" r="5" fill="#60a5fa"/><circle cx="360" cy="90" r="5" fill="#60a5fa"/>
+        <circle cx="360" cy="106" r="5" fill="#60a5fa"/><circle cx="360" cy="122" r="5" fill="#60a5fa"/>
+        <text x="380" y="100" fill="#cbd5e1" font-size="10">φ=sy+g, peak=1</text>
+        <text x="380" y="116" fill="#cbd5e1" font-size="10">长 ≈ N·rows/4</text>
+        <line x1="170" y1="85" x2="190" y2="85" stroke="#64748b" marker-end="url(#arr)"/>
+        <line x1="310" y1="85" x2="330" y2="85" stroke="#64748b" marker-end="url(#arr)"/>
+      </svg>
+      <figcaption>区间着色让每相每条有向链 peak=1、注入预排无源端 stall；维度切换用一次 PE 中继。Z ≈ N(cols+rows)/4 ≤ 2·z*。</figcaption>
+    </figure>
+
+    <h4>权衡与现状</h4>
     <ul>
-      <li><strong>置换轮转</strong>：把全置换分解为 <span class="mono">N−1</span> 个无冲突置换（round-robin / Latin square），每个置换一相位，逐相位预分配 slot ⇒ <span class="mono">peak=1, stall=0</span>。</li>
-      <li><strong>维度分解</strong>：先各行内沿 X 做全交换 → 隐式转置 → 各列内沿 Y 做全交换；每相位为无冲突维扫，规则周期 1。</li>
+      <li><strong>stall=0 vs makespan</strong>：二相构造保证 <span class="mono">stall=0、peak=1</span>，代价是 <span class="mono">Z≈2·z*</span>（串行两相）；§4 的贪心 XY makespan 更接近 z*，但有在线源端 stall。两者是<strong>「零等待 vs 短 makespan」</strong>的取舍。</li>
+      <li><strong>逼近 z*</strong>：环面（torus）可用「步进轮转」单相日历精确达 <span class="mono">z*</span>；开放 mesh 单相精确 <span class="mono">z*</span> 无简单闭式，属调度搜索问题。</li>
+      <li><strong>实现状态</strong>：二相 stall=0 调度器本仓库<strong>尚未实现</strong>；§4 数值为贪心基线，可视化见 <a href="color_mesh_viz.html">color_mesh_viz.html</a> 的 all-to-all（贪心 + relay 策略对照）。</li>
     </ul>
-    <p class="muted">两者均可 <span class="mono">stall=0</span>，makespan 受 bisection 限制（不可低于 <span class="mono">z*</span>）。报告表中的贪心结果仅作压力基线。</p>
   </div>
 </section>
 

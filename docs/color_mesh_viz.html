@@ -76,12 +76,13 @@ svg text{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
   <code>collective-mesh-viz.html</code> 的逻辑 butterfly / tree / ring 算法视图互补。
   理论背景见 <a href="time-expanded%20graph.md">time-expanded graph.md</a> §9 与
   <a href="conflict_free_collectives_report.html">无冲突集合通信综合报告</a>。
-  每条端到端流分配独立 color（时分虚拟网）；默认采用 <strong>inline-reduce</strong> 模型（节点内可归约，边-时隙仍无冲突）。
-  默认构造：<strong>Broadcast/Reduce</strong> 行列多播树（<span class="mono">Z=ecc, P_min=1</span>）；
-  <strong>AllReduce</strong> 双向维累加（<span class="mono">Z=D=X+Y−2, P_min=1</span>）；
-  <strong>AllGather/Gather</strong> Hamilton 环（偶数列 mesh，<span class="mono">stall=0</span>）；
+  每条端到端流分配独立 color（时分虚拟网）。节点 router 同时具备 <strong>多播 / fan-out</strong>（一入边复制到多出边）与 <strong>inline-reduce / fan-in</strong>（多入边归约后转发），边-时隙仍无冲突（每有向边每 slot ≤1 flit）。
+  默认构造：<strong>Broadcast/Reduce</strong> 行列多播树（<span class="mono">Z=ecc(r)</span>）；
+  <strong>AllReduce</strong> 双向维累加（<span class="mono">Z=D=X+Y−2</span>）；
+  <strong>AllGather/Gather</strong> Hamilton 环（偶数列 mesh，<span class="mono">Z=⌈(N−1)/2⌉, stall=0</span>）；
   可选 Dim-wise XY/RHD 对照。
-  每个 router 具备 <strong>多播</strong>：calendar 用 <strong>源端口→目的端口</strong> 表示连接。
+  三种时隙表尺度需区分：<strong>静态转发规则周期 <span class="mono">P_min=1</span></strong>（环/树/维扫规则逐拍不变）、一次性 makespan <span class="mono">Z</span>、每边色重数 <span class="mono">L*</span>（≠周期）。
+  calendar 用 <strong>源端口→目的端口</strong> 表示连接。
   调度基线为 <strong>T=1（无 router 缓冲）</strong>；预分配时隙构造（Hamilton / 维累加）可直接零 stall 验证。
   节点 index：<code>node = row×cols + col</code>，显示 <code>(x,y)</code> 为列、行。
 </div>
@@ -167,12 +168,12 @@ svg text{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
 
   <h3>4. 各集合通信的生成思路（与综合报告一致）</h3>
   <ul>
-    <li><strong>Broadcast / Reduce</strong>：行列多播树（inline-reduce），<span class="mono">z*=ecc(r)</span>，预分配可达 <span class="mono">stall=0</span>；周期 Router 表 <span class="mono">P_min=1</span>，一次性深度 <span class="mono">Z=ecc</span>。</li>
-    <li><strong>AllReduce（默认：维累加）</strong>：X/Y 双向扫边，每 slot 全 mesh 并行，<span class="mono">Z=D=X+Y−2</span>，<span class="mono">P_min=1</span>，无 PE 换维惩罚。可选 Dim-wise RHD 对照（含 X→Y +10 cycle）。</li>
-    <li><strong>AllGather（默认：Hamilton 环）</strong>：偶数列 mesh 上 snake 哈密顿环 + CW/CCW 双向流水线，<span class="mono">Z=L*=⌈(N−1)/2⌉</span>，<span class="mono">stall=0</span>。可选 Dim-wise RHD（周期 <span class="mono">P=L*</span> 较小但 makespan 大）。</li>
-    <li><strong>Gather（默认：Hamilton→根）</strong>：环上每源选短弧到 root，<span class="mono">Z=⌈(N−1)/2⌉</span>，<span class="mono">P_min=⌈(N−1)/deg(r)⌉ &lt; Z</span>。可选 XY incast。</li>
-    <li><strong>All-to-all</strong>：全置换 XY 单播，<span class="mono">z*=max(⌈NX/4⌉,⌈NY/4⌉)</span>；贪心调度 <span class="mono">Z&gt;z*</span> 且 stall 大，周期求解流数超阈值时跳过。</li>
-    <li><strong>Router 时隙表</strong>：一次性深度 <span class="mono">Z_router=makespan</span>；周期最短帧 <span class="mono">P_min=L*</span>（边负载下界）。Hamilton AllGather 有 <span class="mono">Z=L*</span>。</li>
+    <li><strong>Broadcast / Reduce</strong>：行列多播树（fan-out / inline-reduce），<span class="mono">z*=ecc(r)</span>（root 离心率 = 到最远节点曼哈顿跳数），预分配 <span class="mono">stall=0</span>；静态转发规则 <span class="mono">P_min=1</span>，一次性 <span class="mono">Z=ecc</span>。</li>
+    <li><strong>AllReduce（默认：维累加）</strong>：X/Y 双向扫边，每 slot 全 mesh 并行，<span class="mono">Z=D=X+Y−2</span>，规则 <span class="mono">P_min=1</span>，无 PE 换维惩罚。可选 Dim-wise RHD 对照（含 X→Y +10 cycle）。</li>
+    <li><strong>AllGather（默认：Hamilton 环）</strong>：偶数列 mesh 上 snake 哈密顿环 + CW/CCW 双向流水线，<span class="mono">Z=⌈(N−1)/2⌉</span>，<span class="mono">stall=0</span>；作为色无关静态环转发规则 <span class="mono">P_min=1</span>，而 <span class="mono">L*=⌈(N−1)/2⌉</span> 是色表深度=makespan（≠规则周期）。可选 Dim-wise RHD。</li>
+    <li><strong>Gather（默认：Hamilton→根）</strong>：环上每源选短弧到 root，<span class="mono">Z=⌈(N−1)/2⌉</span>，下界 <span class="mono">⌈(N−1)/deg(r)⌉</span>（<span class="mono">deg(r)</span>=root 邻接链路数：角 2/边 3/内 4），规则 <span class="mono">P_min=1</span>。可选 XY incast。</li>
+    <li><strong>All-to-all</strong>：<span class="mono">z*=max(N·cols/4, N·rows/4)</span>（bisection 下界）。本页默认 <strong>贪心 XY 单播</strong>：链路 peak=1 但<strong>在线源端等待 stall&gt;0</strong>。<strong>z 最短 stall=0</strong> 方案见报告 §5.1：二相维序（行内→PE 中继→列内）+ 区间着色，<span class="mono">stall=0, peak=1</span>，<span class="mono">Z≈N(cols+rows)/4 ≤ 2·z*</span>（取舍：零等待 vs 短 makespan）；该调度器尚未实现，故此处展示贪心基线 + relay 策略对照。</li>
+    <li><strong>Router 时隙表三尺度</strong>：静态转发规则周期 <span class="mono">P_min=1</span>（结构化构造普适）；一次性深度 <span class="mono">Z_router=makespan</span>；每边色重数 <span class="mono">L*</span>（每源独立 color 时的边负载，≠规则周期）。</li>
   </ul>
 </div>
 </details>
@@ -789,7 +790,7 @@ function flowConstructionLabel(op, variant, rows, cols) {
   }
   if (op === "broadcast") return "行列多播树（Z=ecc, P_min=1）";
   if (op === "reduce") return "反向多播树 + inline reduce";
-  if (op === "alltoall") return "XY 全置换单播";
+  if (op === "alltoall") return "XY 全置换单播（贪心基线；stall=0 见报告 §5.1 二相构造）";
   return variant;
 }
 
