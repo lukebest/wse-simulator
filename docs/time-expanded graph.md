@@ -437,24 +437,25 @@ python3 scripts/run_hamilton_allgather_verify.py
 
 ## 9. 节点内联归约模型下的六类集合通信
 
-本节在 §1 时间展开图框架上，**放宽「禁止合流」为「允许节点内联归约（inline-reduce）」**：同一节点、同一时隙可接收多路入边，在 PE 内归约后再转发；**有向边-时隙 `(e,t)` 仍至多 1 flit**（无链路冲突）。目标：最小 makespan `z*`，并给出 **Router 时隙表最短深度**。
+本节在 §1 时间展开图框架上，节点 router **同时具备多播（fan-out）与内联归约（fan-in / inline-reduce）**：同一入边 flit 可复制到多条出边；同一节点、同一时隙可接收多路入边并在 PE 内归约后转发；**有向边-时隙 `(e,t)` 仍至多 1 flit**（无链路冲突）。目标：最小 makespan `z*`，并给出 **Router 时隙表最短深度**。
 
 ### 9.1 模型差异
 
-| 约束 | §1 原始模型 | §9 inline-reduce |
+| 能力 / 约束 | §1 原始模型 | §9 多播 + inline-reduce |
 |------|-------------|------------------|
-| 中间节点入度 | ≤ 1（禁止合流） | 无限制（PE 内归约） |
+| 中间节点入度（fan-in） | ≤ 1（禁止合流） | 无限制（PE 内归约） |
+| 出边复制（fan-out 多播） | 允许 | 允许 |
 | 有向边 `(e,t)` | ≤ 1 flit | ≤ 1 flit（不变） |
 | Broadcast / Reduce | 需多播/多树无冲突 | 行/列总线树可达 `ecc(r)` |
 | AllReduce | 需 Hamilton 或维序 | 双向维累加 `D=X+Y−2` |
 
-**Router 时隙表**（方案 2 TDM FB / 方案 5 日历）存储：每个全局 slot `t ∈ [0, P−1]`，各 router 的 `(in→out, color)` 规则。
+**Router 时隙表**（方案 2 TDM FB / 方案 5 日历）需区分**三个尺度**：
 
-- **一次性深度 `Z_router`**：完成一次 collective 所需 slot 数 = 调度 makespan `Z`（预分配无冲突时 `Z_router = Z`）。
-- **周期最短帧 `P_min = L*`**：稳态重复同一流量模式时，边负载下界；`buildPeriodicCalendar` 在 `P ≥ L*` 时可无冲突。
-- **单 router 活跃跨度**：该 router 参与 slot 的 `max(t)−min(t)+1`；可小于 `Z`（仅局部活跃）。
+- **静态转发规则周期 `P_min`**：router 开关设置（`in→out` 连接）逐拍重复的最小周期。环 / 树 / 维扫等结构化构造的规则**时不变**，故 **`P_min = 1`**（含 Hamilton AllGather/Gather）。
+- **一次性深度 `Z_router`**：完成一次 collective 填满所需 slot 数 = 调度 makespan `Z`（预分配无冲突时 `Z_router = Z`）。
+- **每边色重数 `L*`**：每源一个 VN color 时单边承载的不同 color 数（`compute_edge_load` 口径），**≠ 规则周期**。AllGather 的 `L*=⌈(N−1)/2⌉` 实为 makespan/填满时间，不是静态规则周期。
 
-三者关系：`P_min ≤ Z_router`（周期帧可复用更短模式）；AllGather 等流水线型两者相等；Broadcast/Reduce/AllReduce 常见 `P_min=1` 而 `Z_router=D` 或 `ecc`。
+关系：`P_min = 1`（结构化构造普适）；`Z_router = Z`（makespan）；`L*` 是色表深度。前文若写「`P_min = L*`」，应理解为**每源独立 color 口径的色表深度**，非静态规则周期。
 
 ### 9.2 最优 makespan 下界 `z*`
 
@@ -469,7 +470,9 @@ python3 scripts/run_hamilton_allgather_verify.py
 | **Gather** | 全体发送到根 | 同上 | Hamilton 环向根汇聚 |
 | **AllToAll** | 每对互发 | `max(⌈NX/4⌉, ⌈NY/4⌉)` | XY 单播（贪心调度，可能有 stall） |
 
-**AllGather 开放 mesh**：Hamilton 环使每 slot 两方向各 `N/2` 条边并行，makespan `⌈(N−1)/2⌉`，且 `L*=⌈(N−1)/2⌉`，**Router 一次性表与周期表同长**。
+**AllGather 开放 mesh**：Hamilton 环使每 slot 两方向各 `N/2` 条边并行，makespan `⌈(N−1)/2⌉`，每源独立 color 时 `L*=⌈(N−1)/2⌉`。但作为**色无关静态环转发规则**（每 router 恒做 `CW入→CW出 / CCW入→CCW出`），规则周期 `P_min=1`；`⌈(N−1)/2⌉` 是填满 makespan 而非规则周期。
+
+**AllToAll stall=0**：§9.2 表中 AllToAll 用贪心 XY，可能有 stall。达 bisection 下界 `max(⌈NX/4⌉,⌈NY/4⌉)` 的**无冲突 stall=0** 构造存在（置换轮转 / 维度分解，每相位预分配 slot、`peak=1`），仓库尚未实现。
 
 ### 9.3 Router 时隙表最短大小（实测 4×4 / 8×8 / 12×16）
 

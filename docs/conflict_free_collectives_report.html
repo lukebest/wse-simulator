@@ -85,34 +85,40 @@
 
 <main>
 <section>
-  <h2>1. 模型：inline-reduce 时间展开图</h2>
+  <h2>1. 模型：多播 + inline-reduce 时间展开图</h2>
   <div class="panel">
-    <p>与严格「禁止合流」不同，inline-reduce 允许同一节点、同一时隙多路入边，在 PE 内归约后再转发；<strong>每条有向边在每个 slot 仍至多 1 flit</strong>（链路无冲突）。</p>
+    <p>每个节点的 router 同时具备两种能力（链路约束不变：<strong>每条有向边在每个 slot 至多 1 flit</strong>）：</p>
+    <ul>
+      <li><strong>多播 / fan-out</strong>：同一入边的 flit 可在同拍复制到多条出边（broadcast / 树分叉 <span class="mono">W→E+S</span>）。</li>
+      <li><strong>inline-reduce / fan-in</strong>：同一节点、同一时隙多路入边可在 PE 内归约后再转发（reduce / allreduce 累加），即放宽「禁止合流」。</li>
+    </ul>
     <div class="formula mono">
       最小化 makespan Z  s.t.  ∀ 有向边 e, slot t:  Σ_f x_{f,e,t} ≤ 1
     </div>
+    <p class="muted">三个尺度需区分（详见 §3）：</p>
     <ul>
-      <li><span class="mono">z*</span>：inline-reduce 下界（离心率 / 直径 / 接收度 / bisection）</li>
-      <li><span class="mono">Z</span>：实际调度 makespan（= 一次性 Router 表深度 <span class="mono">Z_router</span>）</li>
-      <li><span class="mono">L*</span>：最大有向边负载 → 周期 Router 表最短帧 <span class="mono">P_min</span></li>
+      <li><span class="mono">z*</span>：下界（离心率 / 直径 / 接收度 / bisection）。</li>
+      <li><span class="mono">Z = Z_router</span>：实际调度 makespan = 一次性 Router 表深度（填满所需 slot 数）。</li>
+      <li><span class="mono">P_min</span>：<strong>静态转发规则周期</strong> —— router 开关设置逐拍不变时为 1（环 / 树 / 维扫均如此）。</li>
+      <li><span class="mono">L*</span>：最大有向边 color 重数（每源一个 VN 时的「色表深度」），<strong>≠ P_min</strong>。</li>
     </ul>
     <figure>
       <svg viewBox="0 0 560 200" width="560" height="200" aria-label="三种时间表关系">
         <text x="20" y="30" fill="#94a3b8" font-size="12">Router 时隙表三尺度</text>
         <rect x="30" y="50" width="150" height="55" rx="6" fill="#1e3a2f" stroke="#4ade80"/>
-        <text x="45" y="72" fill="#4ade80" font-size="11">P_min = L*</text>
-        <text x="45" y="90" fill="#cbd5e1" font-size="10">周期稳态最短帧</text>
+        <text x="45" y="72" fill="#4ade80" font-size="11">P_min = 1</text>
+        <text x="45" y="90" fill="#cbd5e1" font-size="10">静态转发规则周期</text>
         <rect x="205" y="50" width="150" height="55" rx="6" fill="#1e293b" stroke="#60a5fa"/>
         <text x="220" y="72" fill="#60a5fa" font-size="11">Z_router = Z</text>
-        <text x="220" y="90" fill="#cbd5e1" font-size="10">一次性 collective 深度</text>
+        <text x="220" y="90" fill="#cbd5e1" font-size="10">一次性 makespan / 填满深度</text>
         <rect x="380" y="50" width="160" height="55" rx="6" fill="#2e1065" stroke="#a78bfa"/>
-        <text x="395" y="72" fill="#a78bfa" font-size="11">活跃跨度</text>
-        <text x="395" y="90" fill="#cbd5e1" font-size="10">单 router 局部窗口 ≤ Z</text>
-        <text x="30" y="140" fill="#f59e0b" font-size="11">一般 P_min ≤ Z；Broadcast/Reduce/AllReduce 可达 P_min=1；Hamilton AllGather 有 Z = L*</text>
+        <text x="395" y="72" fill="#a78bfa" font-size="11">L* = 色重数</text>
+        <text x="395" y="90" fill="#cbd5e1" font-size="10">每边 VN color 数（≠周期）</text>
+        <text x="30" y="140" fill="#f59e0b" font-size="11">结构化构造（环/树/维扫）转发规则逐拍不变 ⇒ P_min=1；Z 是填满 makespan；L* 是色表深度。</text>
         <line x1="180" y1="77" x2="205" y2="77" stroke="#64748b" marker-end="url(#arr)"/>
         <defs><marker id="arr" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 Z" fill="#64748b"/></marker></defs>
       </svg>
-      <figcaption>Router 时隙表：周期最短帧 L* vs 一次性深度 Z vs 单节点活跃跨度</figcaption>
+      <figcaption>Router 时隙表三尺度：静态规则周期 P_min（=1）vs 一次性 makespan Z vs 每边色重数 L*</figcaption>
     </figure>
   </div>
 </section>
@@ -140,21 +146,21 @@
     </div>
     <div class="card">
       <h4>AllGather</h4>
-      <p class="mono">z* = ⌈(N−1)/2⌉</p>
+      <p class="mono">z* = Z = ⌈(N−1)/2⌉</p>
       <p class="muted">Hamilton 双向环流水线</p>
-      <p><span class="good">Z = L*</span> · stall=0</p>
+      <p><span class="good">P_min=1</span>（静态环）· L*=Z · stall=0</p>
     </div>
     <div class="card">
       <h4>Gather</h4>
       <p class="mono">z* = ⌈(N−1)/deg⌉</p>
       <p class="muted">Hamilton 环向根汇聚</p>
-      <p><span class="good">P_min &lt; Z</span> · stall=0</p>
+      <p><span class="good">P_min=1</span> · makespan ⌈(N−1)/2⌉ · stall=0</p>
     </div>
     <div class="card">
       <h4>AllToAll</h4>
       <p class="mono">z* = max(⌈NX/4⌉,⌈NY/4⌉)</p>
-      <p class="muted">XY 单播 + 贪心调度</p>
-      <p><span class="warn">stall &gt; 0</span> · Z &gt; z*</p>
+      <p class="muted">本报告：XY 单播 + 贪心</p>
+      <p><span class="warn">贪心 stall&gt;0</span>；最优无冲突方案存在（见 §5.1）</p>
     </div>
   </div>
 </section>
@@ -168,20 +174,22 @@
         <tr><th>量</th><th>符号</th><th>含义</th><th>如何得到</th></tr>
       </thead>
       <tbody>
-        <tr><td>周期最短帧</td><td class="mono">P_min = L*</td><td>稳态重复时 router 日历最小周期</td><td>max 有向边负载</td></tr>
-        <tr><td>一次性深度</td><td class="mono">Z_router</td><td>单次 collective 的 slot 数</td><td>无冲突调度 makespan Z</td></tr>
+        <tr><td>静态规则周期</td><td class="mono">P_min</td><td>router 开关设置逐拍重复的最小周期</td><td>结构化构造（环/树/维扫）= <strong>1</strong></td></tr>
+        <tr><td>一次性深度</td><td class="mono">Z_router</td><td>单次 collective 填满所需 slot 数</td><td>无冲突调度 makespan Z</td></tr>
+        <tr><td>每边色重数</td><td class="mono">L*</td><td>每源一个 VN color 时，单边承载的不同 color 数</td><td>max 有向边负载（≠周期）</td></tr>
         <tr><td>单 router 活跃跨度</td><td class="mono">span(r)</td><td>该 router 参与 slot 的窗口长</td><td>max(t)−min(t)+1</td></tr>
       </tbody>
     </table>
 
-    <h3>3.2 按 Mesh 汇总（最短周期 vs 最长一次性）</h3>
+    <h3>3.2 按 Mesh 汇总（静态规则周期 vs 一次性深度）</h3>
+    <p class="muted">下表「min P_min」对应<strong>每源独立 VN color</strong> 时的最小色表深度 L*（数据列来自 <code>compute_edge_load</code>）。若改用<strong>色无关的静态转发规则</strong>，所有结构化构造（含 Hamilton AllGather/Gather）的规则周期均为 <span class="good">1</span>；此处保留 L* 口径以便与 §4 数值表对齐。</p>
     <table>
       <thead>
         <tr>
           <th>Mesh</th>
-          <th>min P_min（全 pattern）</th>
+          <th>min L*（全 pattern）</th>
           <th>max Z_router</th>
-          <th>Z = L* 紧构造</th>
+          <th>L* = Z 的构造</th>
         </tr>
       </thead>
       <tbody id="router-body">
@@ -193,10 +201,10 @@
 
     <h3>3.3 关键结论</h3>
     <ul>
-      <li><strong>全局最短周期表</strong>：<span class="mono">P_min = 1</span> 对 Broadcast / Reduce / AllReduce 成立（单 slot 静态规则循环即可）。</li>
-      <li><strong>AllGather 表长紧</strong>：Hamilton 方案 <span class="mono">Z_router = L* = ⌈(N−1)/2⌉</span>，一次性与周期同长，且 stall=0。</li>
-      <li><strong>Gather 周期可更短</strong>：<span class="mono">P_min = ⌈(N−1)/deg⌉</span> 而 <span class="mono">Z = ⌈(N−1)/2⌉</span>（如 8×8：16 vs 32）。</li>
-      <li><strong>AllToAll</strong>：边负载给出 <span class="mono">L*</span> 下界，贪心 XY 调度 <span class="mono">Z &gt; z*</span> 且 stall 大；需更大表或更优算法。</li>
+      <li><strong>静态转发规则周期 P_min = 1（普适）</strong>：Broadcast / Reduce / AllReduce / Hamilton AllGather / Hamilton Gather 的 router 开关设置逐拍不变（树分叉、维扫、环转发都是时不变规则），故最小规则周期均为 1。</li>
+      <li><strong>L* 是色表深度，不是规则周期</strong>：若每源用独立 VN color，AllGather 单边承载 <span class="mono">L*=⌈(N−1)/2⌉</span> 个 color；但这等于 makespan，是「填满」时间，而非静态规则周期。</li>
+      <li><strong>一次性 makespan Z</strong>：Broadcast/Reduce <span class="mono">Z=ecc</span>；AllReduce <span class="mono">Z=D</span>；AllGather <span class="mono">Z=⌈(N−1)/2⌉</span>；Gather <span class="mono">Z=⌈(N−1)/2⌉</span>（环填满），下界 <span class="mono">⌈(N−1)/deg⌉</span>。</li>
+      <li><strong>AllToAll</strong>：本报告用贪心 XY，<span class="mono">Z &gt; z*</span> 且 stall 大；但存在达 bisection 下界的<strong>无冲突 stall=0</strong> 构造（§5.1）。</li>
     </ul>
   </div>
 </section>
@@ -240,7 +248,7 @@
 <tr><td>AllToAll</td><td>12×16</td><td>768</td><td class='good'>905</td><td>768</td><td>905</td><td>905</td><td>P&lt;Z (768&lt;905)</td><td class='warn'>9814908</td><td class='good'>✓</td></tr>
 </tbody>
     </table>
-    <p class="muted">调度：预分配 slot + verify_preassigned_slots（前 5 类）；AllToAll 用 bufferless 贪心 planNoc。「无冲突」= 已分配 slot 上每 (edge,t) peak≤1。</p>
+    <p class="muted">调度：预分配 slot + verify_preassigned_slots（前 5 类）；AllToAll 用 bufferless 贪心 planNoc。「无冲突」= 已分配 slot 上每 (edge,t) peak≤1。注：表中 <span class="mono">L*</span> 与「表关系」列为<strong>每源独立 VN color</strong> 口径的色表深度；若用色无关静态转发规则，所有结构化构造的规则周期 <span class="mono">P_min=1</span>（见 §3.3）。</p>
   </div>
 </section>
 
@@ -255,33 +263,44 @@
       <p>详见 <a href="hamilton_ring_allgather.html">hamilton_ring_allgather.html</a>（含 4×4 环闭合 15→0 图示）。</p>
     </div>
     <figure>
-      <svg viewBox="0 0 240 240" width="240" height="240" aria-label="4x4 Hamilton ring">
-        <rect x="20" y="20" width="50" height="50" fill="#1e293b" stroke="#475569"/>
-        <rect x="70" y="20" width="50" height="50" fill="#1e293b" stroke="#475569"/>
-        <rect x="120" y="20" width="50" height="50" fill="#1e293b" stroke="#475569"/>
-        <rect x="170" y="20" width="50" height="50" fill="#1e293b" stroke="#475569"/>
-        <rect x="20" y="70" width="50" height="50" fill="#1e293b" stroke="#475569"/>
-        <rect x="70" y="70" width="50" height="50" fill="#1e293b" stroke="#475569"/>
-        <rect x="120" y="70" width="50" height="50" fill="#1e293b" stroke="#475569"/>
-        <rect x="170" y="70" width="50" height="50" fill="#1e293b" stroke="#475569"/>
-        <rect x="20" y="120" width="50" height="50" fill="#1e293b" stroke="#475569"/>
-        <rect x="70" y="120" width="50" height="50" fill="#1e293b" stroke="#475569"/>
-        <rect x="120" y="120" width="50" height="50" fill="#1e293b" stroke="#475569"/>
-        <rect x="170" y="120" width="50" height="50" fill="#1e293b" stroke="#475569"/>
-        <rect x="20" y="170" width="50" height="50" fill="#1e293b" stroke="#475569"/>
-        <rect x="70" y="170" width="50" height="50" fill="#1e293b" stroke="#475569"/>
-        <rect x="120" y="170" width="50" height="50" fill="#1e293b" stroke="#475569"/>
-        <rect x="170" y="170" width="50" height="50" fill="#1e293b" stroke="#475569"/>
-        <text x="38" y="52" fill="#4ade80" font-size="10">0</text>
-        <text x="188" y="52" fill="#e2e8f0" font-size="10">3</text>
-        <text x="188" y="102" fill="#e2e8f0" font-size="10">7</text>
-        <text x="38" y="202" fill="#e2e8f0" font-size="10">12</text>
-        <path d="M45 45 L95 45 L145 45 L195 45 L195 95 L195 145 L195 195 L145 195 L95 195 L45 195 L45 145 L45 95 Z" fill="none" stroke="#60a5fa" stroke-width="2" stroke-dasharray="4 3"/>
-        <line x1="95" y1="195" x2="45" y2="195" stroke="#f59e0b" stroke-width="2.5"/>
-        <text x="60" y="188" fill="#f59e0b" font-size="9">15→0</text>
+      <svg viewBox="0 0 240 240" width="240" height="240" aria-label="4x4 Hamilton ring snake">
+        <!-- 16 cells: center of (x,y) = (45+50x, 45+50y) -->
+        <g fill="#1e293b" stroke="#475569">
+          <rect x="20" y="20" width="50" height="50"/><rect x="70" y="20" width="50" height="50"/>
+          <rect x="120" y="20" width="50" height="50"/><rect x="170" y="20" width="50" height="50"/>
+          <rect x="20" y="70" width="50" height="50"/><rect x="70" y="70" width="50" height="50"/>
+          <rect x="120" y="70" width="50" height="50"/><rect x="170" y="70" width="50" height="50"/>
+          <rect x="20" y="120" width="50" height="50"/><rect x="70" y="120" width="50" height="50"/>
+          <rect x="120" y="120" width="50" height="50"/><rect x="170" y="120" width="50" height="50"/>
+          <rect x="20" y="170" width="50" height="50"/><rect x="70" y="170" width="50" height="50"/>
+          <rect x="120" y="170" width="50" height="50"/><rect x="170" y="170" width="50" height="50"/>
+        </g>
+        <!-- actual snake: (0,0)(0,1)(0,2)(0,3)(1,3)(1,2)(1,1)(2,1)(2,2)(2,3)(3,3)(3,2)(3,1)(3,0)(2,0)(1,0) -->
+        <path d="M45,45 L45,95 L45,145 L45,195 L95,195 L95,145 L95,95 L145,95 L145,145 L145,195 L195,195 L195,145 L195,95 L195,45 L145,45 L95,45"
+              fill="none" stroke="#60a5fa" stroke-width="2.5" stroke-dasharray="4 3"/>
+        <!-- closing ring edge cycle[15]=(1,0) node1 -> cycle[0]=(0,0) node0 (top row) -->
+        <line x1="95" y1="45" x2="45" y2="45" stroke="#f59e0b" stroke-width="3" marker-end="url(#ringarr)"/>
+        <defs><marker id="ringarr" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 Z" fill="#f59e0b"/></marker></defs>
+        <!-- node index labels (idx = y*4 + x) -->
+        <g font-size="9" fill="#e2e8f0">
+          <text x="40" y="40" fill="#4ade80">0</text><text x="90" y="40">1</text><text x="140" y="40">2</text><text x="190" y="40">3</text>
+          <text x="40" y="90">4</text><text x="90" y="90">5</text><text x="140" y="90">6</text><text x="190" y="90">7</text>
+          <text x="40" y="140">8</text><text x="90" y="140">9</text><text x="140" y="140">10</text><text x="190" y="140">11</text>
+          <text x="40" y="190">12</text><text x="90" y="190">13</text><text x="140" y="190">14</text><text x="190" y="190">15</text>
+        </g>
+        <text x="52" y="38" fill="#f59e0b" font-size="8">close</text>
       </svg>
-      <figcaption>4×4 Hamilton 环（虚线）与闭合边 15→0（橙）</figcaption>
+      <figcaption>4×4 真实 Hamilton snake 环（蓝虚线穿过内部 5,6,9,10）；橙色为闭合边 <span class="mono">cycle[15]=node1 → cycle[0]=node0</span>（顶行）。数字为节点 index = y·4+x。</figcaption>
     </figure>
+  </div>
+  <div class="panel">
+    <h3>5.1 AllToAll 的无冲突（stall=0）方案</h3>
+    <p>本报告 §4 的 AllToAll 用<strong>贪心 XY 单播</strong>，故 <span class="mono">stall&gt;0</span> 且 <span class="mono">Z&gt;z*</span>。但达到 bisection 下界 <span class="mono">z*=max(⌈NX/4⌉,⌈NY/4⌉)</span> 的<strong>预分配无冲突</strong>构造是存在的（本仓库尚未实现）：</p>
+    <ul>
+      <li><strong>置换轮转</strong>：把全置换分解为 <span class="mono">N−1</span> 个无冲突置换（round-robin / Latin square），每个置换一相位，逐相位预分配 slot ⇒ <span class="mono">peak=1, stall=0</span>。</li>
+      <li><strong>维度分解</strong>：先各行内沿 X 做全交换 → 隐式转置 → 各列内沿 Y 做全交换；每相位为无冲突维扫，规则周期 1。</li>
+    </ul>
+    <p class="muted">两者均可 <span class="mono">stall=0</span>，makespan 受 bisection 限制（不可低于 <span class="mono">z*</span>）。报告表中的贪心结果仅作压力基线。</p>
   </div>
 </section>
 
