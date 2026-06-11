@@ -32,6 +32,7 @@ PATTERN_LABELS = {
     "allgather": "AllGather",
     "gather": "Gather",
     "alltoall": "AllToAll",
+    "alltoall_twophase": "AllToAll (2-phase stall=0)",
 }
 
 
@@ -87,7 +88,7 @@ def _router_summary_rows(results: list[dict]) -> str:
         p_min = min(r["router_table_periodic"] for r in subset)
         z_max = max(r["router_table_oneshot"] for r in subset)
         z_tight = [r for r in subset if r["router_table_oneshot"] == r["l_star"]]
-        names = ", ".join(PATTERN_LABELS[r["pattern"]] for r in z_tight)
+        names = ", ".join(PATTERN_LABELS.get(r["pattern"], r["pattern"]) for r in z_tight)
         lines.append(
             "<tr>"
             f"<td>{_mesh_label(rows, cols)}</td>"

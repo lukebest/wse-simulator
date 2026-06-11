@@ -9,10 +9,12 @@ from pathlib import Path
 import pytest
 
 from wsesim.network.collective_patterns import (
+    build_alltoall_twophase_flows,
     build_hamilton_cycle,
     build_hamilton_ring_allgather_flows,
     compare_allgather_patterns,
     optimal_hamilton_makespan,
+    optimal_z_lower_bound,
     schedule_bufferless_noc,
     verify_preassigned_slots,
 )
@@ -63,6 +65,18 @@ def test_compare_hamilton_beats_dimwise(rows: int, cols: int) -> None:
 def test_hamilton_requires_even_cols() -> None:
     with pytest.raises(ValueError, match="even cols"):
         build_hamilton_cycle(3, 5)
+
+
+@pytest.mark.parametrize("rows,cols", [(4, 4), (8, 8)])
+def test_alltoall_twophase_conflict_free_zero_stall(rows: int, cols: int) -> None:
+    flows = build_alltoall_twophase_flows(rows, cols)
+    result = verify_preassigned_slots(flows)
+    z_star = optimal_z_lower_bound("alltoall", rows, cols)
+    assert result.ok, result.collision
+    assert result.peak == 1
+    assert result.total_stall == 0
+    assert result.makespan >= z_star  # cannot beat the bisection lower bound
+    assert result.makespan <= 3 * z_star  # 2-phase stays within a small constant
 
 
 def run_benchmark() -> list[dict]:

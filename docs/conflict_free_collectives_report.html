@@ -187,9 +187,9 @@
     </div>
     <div class="card">
       <h4>AllToAll</h4>
-      <p class="mono">z* = max(⌈NX/4⌉,⌈NY/4⌉)</p>
-      <p class="muted">本报告：XY 单播 + 贪心</p>
-      <p><span class="warn">贪心 stall&gt;0</span>；最优无冲突方案存在（见 §5.1）</p>
+      <p class="mono">z* = max(N·cols/4, N·rows/4)</p>
+      <p class="muted">贪心 XY（基线）vs 二相 stall=0</p>
+      <p><span class="warn">贪心 stall&gt;0</span> · <span class="good">二相 stall=0</span>（Z≈2z*，见 §5.1）</p>
     </div>
   </div>
 </section>
@@ -222,9 +222,9 @@
         </tr>
       </thead>
       <tbody id="router-body">
-<tr><td>4×4</td><td class='good'>1</td><td>22</td><td>AllGather</td></tr>
-<tr><td>8×8</td><td class='good'>1</td><td>167</td><td>AllGather</td></tr>
-<tr><td>12×16</td><td class='good'>1</td><td>905</td><td>AllGather</td></tr>
+<tr><td>4×4</td><td class='good'>1</td><td>44</td><td>AllGather</td></tr>
+<tr><td>8×8</td><td class='good'>1</td><td>272</td><td>AllGather</td></tr>
+<tr><td>12×16</td><td class='good'>1</td><td>1366</td><td>AllGather</td></tr>
 </tbody>
     </table>
 
@@ -233,7 +233,7 @@
       <li><strong>静态转发规则周期 P_min = 1（普适）</strong>：Broadcast / Reduce / AllReduce / Hamilton AllGather / Hamilton Gather 的 router 开关设置逐拍不变（树分叉、维扫、环转发都是时不变规则），故最小规则周期均为 1。</li>
       <li><strong>L* 是色表深度，不是规则周期</strong>：若每源用独立 VN color，AllGather 单边承载 <span class="mono">L*=⌈(N−1)/2⌉</span> 个 color；但这等于 makespan，是「填满」时间，而非静态规则周期。</li>
       <li><strong>一次性 makespan Z</strong>：Broadcast/Reduce <span class="mono">Z=ecc</span>；AllReduce <span class="mono">Z=D</span>；AllGather <span class="mono">Z=⌈(N−1)/2⌉</span>；Gather <span class="mono">Z=⌈(N−1)/2⌉</span>（环填满），下界 <span class="mono">⌈(N−1)/deg⌉</span>。</li>
-      <li><strong>AllToAll</strong>：本报告用贪心 XY，<span class="mono">Z &gt; z*</span> 且 stall 大；但存在达 bisection 下界的<strong>无冲突 stall=0</strong> 构造（§5.1）。</li>
+      <li><strong>AllToAll</strong>：贪心 XY 基线 <span class="mono">Z &gt; z*</span> 且 stall 大；<strong>二相 stall=0</strong> 构造已实现并经 <code>verify_preassigned_slots</code> 验证（peak=1, stall=0），<span class="mono">Z=44/272/1366 @ 4×4/8×8/12×16</span>（§5.1）。</li>
     </ul>
   </div>
 </section>
@@ -263,18 +263,21 @@
 <tr><td>AllGather</td><td>4×4</td><td>8</td><td class='good'>8</td><td>8</td><td>8</td><td>8</td><td>Z=L*</td><td class='good'>0</td><td class='good'>✓</td></tr>
 <tr><td>Gather</td><td>4×4</td><td>8</td><td class='good'>8</td><td>4</td><td>8</td><td>8</td><td>P&lt;Z (4&lt;8)</td><td class='good'>0</td><td class='good'>✓</td></tr>
 <tr><td>AllToAll</td><td>4×4</td><td>16</td><td class='good'>22</td><td>16</td><td>22</td><td>22</td><td>P&lt;Z (16&lt;22)</td><td class='warn'>1245</td><td class='good'>✓</td></tr>
+<tr><td>AllToAll (2-phase stall=0)</td><td>4×4</td><td>16</td><td class='good'>44</td><td>16</td><td>44</td><td>44</td><td>P&lt;Z (16&lt;44)</td><td class='good'>0</td><td class='good'>✓</td></tr>
 <tr><td>Broadcast</td><td>8×8</td><td>14</td><td class='good'>14</td><td>1</td><td>14</td><td>8</td><td>P&lt;Z (1&lt;14)</td><td class='good'>0</td><td class='good'>✓</td></tr>
 <tr><td>Reduce</td><td>8×8</td><td>14</td><td class='good'>14</td><td>1</td><td>14</td><td>8</td><td>P&lt;Z (1&lt;14)</td><td class='good'>0</td><td class='good'>✓</td></tr>
 <tr><td>AllReduce</td><td>8×8</td><td>14</td><td class='good'>14</td><td>1</td><td>14</td><td>14</td><td>P&lt;Z (1&lt;14)</td><td class='good'>0</td><td class='good'>✓</td></tr>
 <tr><td>AllGather</td><td>8×8</td><td>32</td><td class='good'>32</td><td>32</td><td>32</td><td>32</td><td>Z=L*</td><td class='good'>0</td><td class='good'>✓</td></tr>
 <tr><td>Gather</td><td>8×8</td><td>32</td><td class='good'>32</td><td>16</td><td>32</td><td>32</td><td>P&lt;Z (16&lt;32)</td><td class='good'>0</td><td class='good'>✓</td></tr>
 <tr><td>AllToAll</td><td>8×8</td><td>128</td><td class='good'>167</td><td>128</td><td>167</td><td>167</td><td>P&lt;Z (128&lt;167)</td><td class='warn'>192930</td><td class='good'>✓</td></tr>
+<tr><td>AllToAll (2-phase stall=0)</td><td>8×8</td><td>128</td><td class='good'>272</td><td>128</td><td>272</td><td>272</td><td>P&lt;Z (128&lt;272)</td><td class='good'>0</td><td class='good'>✓</td></tr>
 <tr><td>Broadcast</td><td>12×16</td><td>26</td><td class='good'>26</td><td>1</td><td>26</td><td>16</td><td>P&lt;Z (1&lt;26)</td><td class='good'>0</td><td class='good'>✓</td></tr>
 <tr><td>Reduce</td><td>12×16</td><td>26</td><td class='good'>26</td><td>1</td><td>26</td><td>16</td><td>P&lt;Z (1&lt;26)</td><td class='good'>0</td><td class='good'>✓</td></tr>
 <tr><td>AllReduce</td><td>12×16</td><td>26</td><td class='good'>26</td><td>1</td><td>26</td><td>26</td><td>P&lt;Z (1&lt;26)</td><td class='good'>0</td><td class='good'>✓</td></tr>
 <tr><td>AllGather</td><td>12×16</td><td>96</td><td class='good'>96</td><td>96</td><td>96</td><td>96</td><td>Z=L*</td><td class='good'>0</td><td class='good'>✓</td></tr>
 <tr><td>Gather</td><td>12×16</td><td>96</td><td class='good'>96</td><td>48</td><td>96</td><td>96</td><td>P&lt;Z (48&lt;96)</td><td class='good'>0</td><td class='good'>✓</td></tr>
 <tr><td>AllToAll</td><td>12×16</td><td>768</td><td class='good'>905</td><td>768</td><td>905</td><td>905</td><td>P&lt;Z (768&lt;905)</td><td class='warn'>9814908</td><td class='good'>✓</td></tr>
+<tr><td>AllToAll (2-phase stall=0)</td><td>12×16</td><td>768</td><td class='good'>1366</td><td>768</td><td>1366</td><td>1366</td><td>P&lt;Z (768&lt;1366)</td><td class='good'>0</td><td class='good'>✓</td></tr>
 </tbody>
     </table>
     <p class="muted">调度：预分配 slot + verify_preassigned_slots（前 5 类）；AllToAll 用 bufferless 贪心 planNoc。「无冲突」= 已分配 slot 上每 (edge,t) peak≤1。注：表中 <span class="mono">L*</span> 与「表关系」列为<strong>每源独立 VN color</strong> 口径的色表深度；若用色无关静态转发规则，所有结构化构造的规则周期 <span class="mono">P_min=1</span>（见 §3.3）。</p>
@@ -340,8 +343,9 @@
       <li><strong>相 Y（列内）</strong>：在每一列做一维全交换，<span class="mono">(dx,sy)→(dx,dy)</span>，相位区间着色同上，色数 = <span class="mono">L*_y</span>。</li>
     </ol>
     <div class="formula mono">
-      Z_a2a = (cols + L*_x) + PE + (rows + L*_y) ≈ N·cols/4 + N·rows/4  ≤ 2·z*
+      Z_a2a = (cols + L*_x) + PE + (rows + L*_y) ≈ N·cols/4 + N·rows/4
     </div>
+    <p class="muted">实测（<code>build_alltoall_twophase_flows</code> + <code>verify_preassigned_slots</code>）：<span class="mono">Z = 44 / 272 / 1366</span> 对 <span class="mono">4×4 / 8×8 / 12×16</span>，即 <span class="mono">z*</span> 的 <span class="mono">2.75× / 2.13× / 1.78×</span>（小 mesh 受固定 <span class="mono">PE=10</span> 拉高，大 mesh 趋于 2×）。<strong>peak=1, stall=0</strong> 全部验证通过。</p>
     <figure>
       <svg viewBox="0 0 520 160" width="520" height="160" aria-label="二相 all-to-all">
         <text x="10" y="18" fill="#94a3b8" font-size="12">二相维序 stall=0：行全交换 → PE 中继 → 列全交换</text>
@@ -374,7 +378,7 @@
     <ul>
       <li><strong>stall=0 vs makespan</strong>：二相构造保证 <span class="mono">stall=0、peak=1</span>，代价是 <span class="mono">Z≈2·z*</span>（串行两相）；§4 的贪心 XY makespan 更接近 z*，但有在线源端 stall。两者是<strong>「零等待 vs 短 makespan」</strong>的取舍。</li>
       <li><strong>逼近 z*</strong>：环面（torus）可用「步进轮转」单相日历精确达 <span class="mono">z*</span>；开放 mesh 单相精确 <span class="mono">z*</span> 无简单闭式，属调度搜索问题。</li>
-      <li><strong>实现状态</strong>：二相 stall=0 调度器本仓库<strong>尚未实现</strong>；§4 数值为贪心基线，可视化见 <a href="color_mesh_viz.html">color_mesh_viz.html</a> 的 all-to-all（贪心 + relay 策略对照）。</li>
+      <li><strong>实现状态</strong>：二相 stall=0 调度器已实现（<code>collective_patterns.build_alltoall_twophase_flows</code>），§4 表含其实测行；贪心基线行并列对照。可视化见 <a href="color_mesh_viz.html">color_mesh_viz.html</a> 的 all-to-all <span class="mono">variant=「二相 stall=0」</span>。</li>
     </ul>
   </div>
 </section>
@@ -516,6 +520,26 @@ pytest tests/test_hamilton_allgather.py -v</pre>
     "witness_edge": "1,0->2,0"
   },
   {
+    "pattern": "alltoall_twophase",
+    "rows": 4,
+    "cols": 4,
+    "node_count": 16,
+    "root": 0,
+    "method": "2-phase dim-ordered + interval coloring (preassigned, stall=0)",
+    "z_lower_bound": 16,
+    "z_scheduled": 44,
+    "stall": 0,
+    "ok": true,
+    "peak": 1,
+    "l_star": 16,
+    "p_min_periodic": 16,
+    "router_table_oneshot": 44,
+    "router_table_periodic": 16,
+    "router_max_active_span": 44,
+    "flow_count": 240,
+    "witness_edge": "1,0->2,0"
+  },
+  {
     "pattern": "broadcast",
     "rows": 8,
     "cols": 8,
@@ -636,6 +660,26 @@ pytest tests/test_hamilton_allgather.py -v</pre>
     "witness_edge": "3,0->4,0"
   },
   {
+    "pattern": "alltoall_twophase",
+    "rows": 8,
+    "cols": 8,
+    "node_count": 64,
+    "root": 0,
+    "method": "2-phase dim-ordered + interval coloring (preassigned, stall=0)",
+    "z_lower_bound": 128,
+    "z_scheduled": 272,
+    "stall": 0,
+    "ok": true,
+    "peak": 1,
+    "l_star": 128,
+    "p_min_periodic": 128,
+    "router_table_oneshot": 272,
+    "router_table_periodic": 128,
+    "router_max_active_span": 272,
+    "flow_count": 4032,
+    "witness_edge": "3,0->4,0"
+  },
+  {
     "pattern": "broadcast",
     "rows": 12,
     "cols": 16,
@@ -752,6 +796,26 @@ pytest tests/test_hamilton_allgather.py -v</pre>
     "router_table_oneshot": 905,
     "router_table_periodic": 768,
     "router_max_active_span": 905,
+    "flow_count": 36672,
+    "witness_edge": "7,0->8,0"
+  },
+  {
+    "pattern": "alltoall_twophase",
+    "rows": 12,
+    "cols": 16,
+    "node_count": 192,
+    "root": 0,
+    "method": "2-phase dim-ordered + interval coloring (preassigned, stall=0)",
+    "z_lower_bound": 768,
+    "z_scheduled": 1366,
+    "stall": 0,
+    "ok": true,
+    "peak": 1,
+    "l_star": 768,
+    "p_min_periodic": 768,
+    "router_table_oneshot": 1366,
+    "router_table_periodic": 768,
+    "router_max_active_span": 1366,
     "flow_count": 36672,
     "witness_edge": "7,0->8,0"
   }

@@ -1004,6 +1004,101 @@ def build_allto_all_flows(
     return flows
 
 
+def build_alltoall_twophase_flows(
+    rows: int,
+    cols: int,
+    base_flits: int = 1,
+) -> list[CollectiveFlow]:
+    """All-to-all as a preassigned, conflict-free (stall=0) calendar.
+
+    Two-phase dimension-ordered construction (report Section 5.1):
+      * Phase X: every (s,d) message moves along its row (sx -> dx). Row links
+        are first-fit interval-colored, so each directed row edge carries <= 1
+        flit per slot. Takes Tx slots.
+      * PE relay: the dimension turn at (dx, sy) ejects to PE and re-injects on
+        the column, separated by a global barrier B = Tx + PE_INOUT_LATENCY.
+      * Phase Y: every message moves along its column (sy -> dy), column links
+        first-fit interval-colored.
+
+    Each flow keeps its XY path; slots are contiguous within a phase with a gap
+    at the turn (the planned PE relay). Result: peak=1, stall=0 (no online
+    source contention), makespan Z ~= N*cols/4 + N*rows/4 <= 2*z*.
+    """
+    n = rows * cols
+    reserved: dict[str, set[int]] = {}
+
+    def first_free(edges: list[MeshEdge], start: int) -> int:
+        phi = start
+        while True:
+            if all(phi + j not in reserved.get(e.id, ()) for j, e in enumerate(edges)):
+                return phi
+            phi += 1
+
+    def occupy(edges: list[MeshEdge], phi: int) -> None:
+        for j, e in enumerate(edges):
+            reserved.setdefault(e.id, set()).add(phi + j)
+
+    items = []
+    for s in range(n):
+        sx, sy = s % cols, s // cols
+        for d in range(n):
+            if s == d:
+                continue
+            dx, dy = d % cols, d // cols
+            path = xy_path(idx_to_node(s, cols), idx_to_node(d, cols))
+            nx = abs(dx - sx)
+            items.append((s, d, sx, sy, dx, dy, path, nx))
+
+    # Phase X: row moves, first-fit by left column endpoint (optimal interval coloring).
+    x_slots: dict[tuple[int, int], list[int]] = {}
+    tx = 0
+    x_items = [it for it in items if it[7] > 0]
+    x_items.sort(key=lambda it: (min(it[2], it[4]), abs(it[4] - it[2])))
+    for s, d, sx, sy, dx, dy, path, nx in x_items:
+        x_edges = path[:nx]
+        phi = first_free(x_edges, 0)
+        occupy(x_edges, phi)
+        x_slots[(s, d)] = [phi + j for j in range(nx)]
+        tx = max(tx, phi + nx)
+
+    barrier = tx + PE_INOUT_LATENCY
+
+    # Phase Y: column moves, injected at/after the barrier.
+    y_slots: dict[tuple[int, int], list[int]] = {}
+    y_items = [it for it in items if len(it[6]) - it[7] > 0]
+    y_items.sort(key=lambda it: (min(it[3], it[5]), abs(it[5] - it[3])))
+    for s, d, sx, sy, dx, dy, path, nx in y_items:
+        y_edges = path[nx:]
+        phi = first_free(y_edges, barrier)
+        occupy(y_edges, phi)
+        y_slots[(s, d)] = [phi + j for j in range(len(y_edges))]
+
+    flows: list[CollectiveFlow] = []
+    cid = 0
+    for s, d, sx, sy, dx, dy, path, nx in items:
+        slots: list[int] = []
+        if nx > 0:
+            slots += x_slots[(s, d)]
+        if len(path) - nx > 0:
+            slots += y_slots[(s, d)]
+        flows.append(
+            CollectiveFlow(
+                id=f"a2a2p_{s}_{d}",
+                label=f"{s}->{d}",
+                from_node=idx_to_node(s, cols),
+                to_node=idx_to_node(d, cols),
+                path=path,
+                flits=base_flits,
+                release=0,
+                color_id=cid,
+                payload="alltoall_twophase",
+                slots=slots,
+            )
+        )
+        cid += 1
+    return flows
+
+
 def assign_rigid_slots(flows: list[CollectiveFlow]) -> None:
     """release + hop rigid placement for edge-disjoint tree flows."""
     for flow in flows:
@@ -1069,9 +1164,14 @@ def analyze_collective(
         method = "Hamilton ring feed to root"
         z_lb = min(z_lb, z_opt)
     elif pattern == "alltoall":
-        flows = build_allto_all_flows(rows, cols)
-        sched = schedule_bufferless_noc(flows)
-        method = "XY unicast (bufferless greedy schedule)"
+        if variant == "twophase":
+            flows = build_alltoall_twophase_flows(rows, cols)
+            sched = verify_preassigned_slots(flows)
+            method = "2-phase dim-ordered + interval coloring (preassigned, stall=0)"
+        else:
+            flows = build_allto_all_flows(rows, cols)
+            sched = schedule_bufferless_noc(flows)
+            method = "XY unicast (bufferless greedy schedule)"
     else:
         raise ValueError(pattern)
 
@@ -1114,4 +1214,7 @@ def analyze_all_collectives(
     for rows, cols in meshes:
         for pattern in patterns:
             out.append(analyze_collective(pattern, rows, cols, root=root))
+        a2a_2p = analyze_collective("alltoall", rows, cols, root=root, variant="twophase")
+        a2a_2p["pattern"] = "alltoall_twophase"
+        out.append(a2a_2p)
     return out
