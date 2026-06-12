@@ -12,13 +12,16 @@ from wsesim.network.collective_patterns import (
     build_alltoall_twophase_flows,
     build_hamilton_cycle,
     build_hamilton_ring_allgather_flows,
+    build_hamilton_ring_allgather_flows_aniso,
     compare_allgather_patterns,
     dilate_slots,
     optimal_hamilton_makespan,
     optimal_z_lower_bound,
+    optimal_z_lower_bound_aniso,
     optimal_z_lower_bound_h,
     schedule_bufferless_noc,
     verify_hop_spacing,
+    verify_hop_spacing_aniso,
     verify_preassigned_slots,
 )
 
@@ -111,6 +114,47 @@ def test_dilation_preserves_conflict_freedom(rows: int, cols: int) -> None:
     assert result.peak == 1
     assert verify_hop_spacing(flows, h)
     assert result.makespan == h * (t_star - 1) + 1  # last launch; arrival = h*t_star
+
+
+@pytest.mark.parametrize("rows,cols", [(4, 4), (8, 8), (12, 16)])
+def test_hamilton_allgather_aniso_conflict_free(rows: int, cols: int) -> None:
+    """Cumulative-weighted ring timing under (hx=4, hy=8): conflict-free, h-spaced."""
+    hx, hy = 4, 8
+    flows, arrival, meta = build_hamilton_ring_allgather_flows_aniso(
+        rows, cols, hx, hy, orient="auto"
+    )
+    result = verify_preassigned_slots(flows)
+    assert result.ok, result.collision
+    assert result.peak == 1
+    assert verify_hop_spacing_aniso(flows, hx, hy)
+    # hy > hx: the horizontal-heavy row snake must win the orientation choice.
+    assert meta["orient"] == "row"
+    assert arrival >= optimal_z_lower_bound_aniso(
+        "allgather", rows, cols, hx=hx, hy=hy
+    )
+
+
+def test_hamilton_allgather_aniso_orientation_matters() -> None:
+    hx, hy = 4, 8
+    _, z_col, _ = build_hamilton_ring_allgather_flows_aniso(8, 8, hx, hy, orient="col")
+    _, z_row, _ = build_hamilton_ring_allgather_flows_aniso(8, 8, hx, hy, orient="row")
+    assert z_row < z_col  # snake along the cheap axis wins when hy > hx
+
+
+@pytest.mark.parametrize("rows,cols", [(4, 4), (8, 8)])
+def test_alltoall_twophase_aniso_links(rows: int, cols: int) -> None:
+    """Per-axis strides (hx=4, hy=8): conflict-free, spaced, additive overhead."""
+    hx, hy = 4, 8
+    base = verify_preassigned_slots(build_alltoall_twophase_flows(rows, cols))
+    flows = build_alltoall_twophase_flows(rows, cols, hop_latency_x=hx, hop_latency_y=hy)
+    result = verify_preassigned_slots(flows)
+    assert result.ok, result.collision
+    assert result.peak == 1
+    assert verify_hop_spacing_aniso(flows, hx, hy)
+    assert result.makespan < base.makespan + hx * cols + hy * rows + hy * 10
+    assert result.makespan + hy >= optimal_z_lower_bound_aniso(
+        "alltoall", rows, cols, hx=hx, hy=hy
+    )
 
 
 def run_benchmark() -> list[dict]:

@@ -428,6 +428,49 @@
       <li><strong>膨胀 Hamilton</strong> 到达时刻 <span class="mono">h·⌈(N−1)/2⌉</span>（h=4 实测：4×4 → 32，8×8 → 128），而下界 <span class="mono">max(h·D, ⌈(N−1)/2⌉)</span> = 24 / 56：gap 因子最大 <span class="mono">min(h, ⌈(N−1)/2⌉/D)</span>。根因：环转发的「接收 → 转发」串行依赖把链路利用率压到 <span class="mono">1/h</span>，这是<strong>单 flit 块</strong>的固有时延代价（更宽的多路径树形 allgather 属开放调度问题）。</li>
       <li><strong>大块摊销</strong>：块大小 <span class="mono">F ≥ h</span> flits 时，同块身位 flits 以 II=1 跟进填满空 slot，时延被摊销回带宽口径 <span class="mono">Z ≈ F·⌈(N−1)/2⌉ + h·D</span>——即<strong>增大消息粒度是隐藏多周期链路时延的首选手段</strong>。</li>
     </ul>
+
+    <h3>6.6 各向异性时延：横向 hx=4、纵向 hy=8</h3>
+    <p>横向（E/W）与纵向（N/S）链路时延不同（仍流水线、II=1）。逐边间距约束 <span class="mono">t_{j+1} ≥ t_j + h(e_j)</span>（<code>verify_hop_spacing_aniso</code>）。<strong>下界</strong>：距离项换成<strong>加权曼哈顿度量</strong> <span class="mono">dist_w = hx·|Δx| + hy·|Δy|</span>，即加权离心率 <span class="mono">ecc_w(r)</span>、加权直径 <span class="mono">D_w = hx(X−1)+hy(Y−1)</span>；带宽项（接收度、bisection 为逐链路计数）<strong>与时延无关、不缩放</strong>（<code>optimal_z_lower_bound_aniso()</code>）。hx=4, hy=8 时 <span class="mono">D_w = 36 / 84 / 148</span>（4×4 / 8×8 / 12×16）。</p>
+    <table>
+      <thead>
+        <tr><th>集合通信</th><th><span class="mono">z*</span>（各向异性）</th><th>达界杠杆</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>Broadcast / Reduce</td><td class="mono">ecc_w(r)</td><td>逐边累积时序的多播树（紧）</td></tr>
+        <tr><td>AllReduce</td><td class="mono">D_w</td><td>逐边累积时序的维累加（紧）</td></tr>
+        <tr><td><strong>AllGather</strong></td><td class="mono">max(D_w, ⌈(N−1)/2⌉)</td><td><strong>环走向偏置</strong> + 累积加权时序</td></tr>
+        <tr><td><strong>AllToAll</strong></td><td class="mono">max(⌈N·cols/4⌉, ⌈N·rows/4⌉, D_w)</td><td><strong>逐轴跨步</strong>二相装配</td></tr>
+      </tbody>
+    </table>
+
+    <h4>重点 1：AllGather——环时序与环走向</h4>
+    <p>均匀膨胀（×max(hx,hy)=8）会浪费便宜的横边。改用<strong>累积加权时序</strong>（<code>build_hamilton_ring_allgather_flows_aniso</code>）：flit 到达即转发，第 k 跳发射时刻 = 前 k 条环边时延累积和。<strong>冲突自由证明</strong>：同一条有向环边上，各 flit 走的是「以该边结尾的 k 条连续边」（k=1,2,…），发射时刻为长度递增的后缀和（每项 ≥1）⇒ 严格递增 ⇒ 两两不同。新自由度是<strong>环的走向</strong>：<span class="mono">hy &gt; hx</span> 时蛇形应<strong>沿便宜的横向</strong>扫（row snake），让环主要由 hx 边构成。实测（到达时刻）：</p>
+    <table>
+      <thead>
+        <tr><th>规模</th><th>纵蛇形（贵向）</th><th>横蛇形（便宜向）</th><th>提升</th><th><span class="mono">z*</span></th></tr>
+      </thead>
+      <tbody>
+        <tr><td>4×4</td><td class="mono warn">56</td><td class="mono good">48</td><td class="mono">1.17×</td><td class="mono">36</td></tr>
+        <tr><td>8×8</td><td class="mono warn">240</td><td class="mono good">168</td><td class="mono">1.43×</td><td class="mono">84</td></tr>
+        <tr><td>12×16</td><td class="mono warn">736</td><td class="mono good">448</td><td class="mono">1.64×</td><td class="mono">148</td></tr>
+      </tbody>
+    </table>
+    <p class="muted">横蛇形 ≈ <span class="mono">⌈(N−1)/2⌉·h̄</span>（h̄ → hx，环上加权平均时延）；相对 z* 的剩余 gap 是 §6.5 的单 flit 串行代价，<span class="mono">F ≥ h̄</span> 大块同样摊销。</p>
+
+    <h4>重点 2：AllToAll——逐轴跨步二相装配</h4>
+    <p>二相构造天然按维分相（X 相全横边、Y 相全纵边），first-fit 改<strong>逐轴步长</strong>：X 相检查 <span class="mono">φ, φ+hx, φ+2hx, …</span>，Y 相 <span class="mono">φ, φ+hy, …</span>（<code>build_alltoall_twophase_flows(hop_latency_x=4, hop_latency_y=8)</code>）。同链路不同 flit 仍 1 flit/cycle 密排，带宽项不受 (hx,hy) 影响：</p>
+    <table>
+      <thead>
+        <tr><th>规模</th><th><span class="mono">Z₁</span>（hx=hy=1）</th><th><span class="mono">Z</span>（4/8）</th><th>增量</th><th><span class="mono">z*</span>（4/8）</th><th>比值</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>4×4</td><td class="mono">44</td><td class="mono good">61</td><td class="mono">+17</td><td class="mono">36</td><td class="mono">≈1.9×</td></tr>
+        <tr><td>8×8</td><td class="mono">272</td><td class="mono good">305</td><td class="mono">+33</td><td class="mono">128</td><td class="mono">≈2.4×</td></tr>
+        <tr><td>12×16</td><td class="mono">1366</td><td class="mono good">1425</td><td class="mono">+59</td><td class="mono">768</td><td class="mono">≈1.9×</td></tr>
+      </tbody>
+    </table>
+    <p class="muted">增量 ≈ <span class="mono">O(hx·X + hy·Y)</span> 加性尾巴（X/Y 相各拉长 <span class="mono">(X−1)(hx−1)</span> / <span class="mono">(Y−1)(hy−1)</span> + PE 屏障平移），乘性带宽项原封不动。全部经 <code>verify_preassigned_slots</code> + <code>verify_hop_spacing_aniso</code> 验证（<span class="mono">ok, peak=1, stall=0</span>）。</p>
+    <p><strong>结论</strong>：各向异性把「距离 × h」细化为「逐轴加权距离」。两条新的达界杠杆：<strong>(1) 拓扑走向偏置</strong>——环/树尽量走便宜轴，AllGather 换向白拿 1.2–1.6×；<strong>(2) 逐轴跨步</strong>——AllToAll 二相按维分相后每相单一步长，天然适配各向异性。</p>
   </div>
 </section>
 
@@ -436,7 +479,7 @@
   <div class="panel">
     <pre class="mono" style="background:#0d1117;padding:.75rem;border-radius:8px;overflow-x:auto">python3 scripts/generate_collectives_report.py
 pytest tests/test_hamilton_allgather.py -v</pre>
-    <p class="muted">输出 JSON：<span class="mono">outputs/collectives_report/results.json</span>；多周期时延（h&gt;1）验证：<span class="mono">test_alltoall_twophase_multicycle_links / test_dilation_preserves_conflict_freedom</span></p>
+    <p class="muted">输出 JSON：<span class="mono">outputs/collectives_report/results.json</span>；多周期时延（h&gt;1）验证：<span class="mono">test_alltoall_twophase_multicycle_links / test_dilation_preserves_conflict_freedom</span>；各向异性（hx≠hy）验证：<span class="mono">test_hamilton_allgather_aniso_* / test_alltoall_twophase_aniso_links</span></p>
   </div>
 </section>
 </main>

@@ -234,6 +234,116 @@ def build_hamilton_ring_allgather_flows(
     return flows, t_star, meta
 
 
+def _transposed_hamilton_cycle(rows: int, cols: int) -> list[MeshNode]:
+    """Row-major snake: Hamilton cycle of the transposed grid mapped back."""
+    return [node(nd.y, nd.x) for nd in build_hamilton_cycle(cols, rows)]
+
+
+def build_hamilton_ring_allgather_flows_aniso(
+    rows: int,
+    cols: int,
+    hx: int,
+    hy: int,
+    base_flits: int = 1,
+    orient: str = "auto",
+) -> tuple[list[CollectiveFlow], int, dict[str, int]]:
+    """Hamilton-ring allgather under per-axis link latency (hx, hy).
+
+    Timing is cumulative-weighted: a flit forwards exactly when it arrives, so
+    its launch on the k-th ring edge is the sum of latencies of the previous k
+    edges. Conflict-freedom: on a directed ring edge, the flits crossing it
+    traveled k = 1, 2, ... consecutive edges ending there; their launch times
+    are suffix sums of >= 1 latencies, strictly increasing in k, hence distinct.
+
+    orient: "col" = column-major snake (vertical-heavy), "row" = row-major
+    snake (horizontal-heavy), "auto" = pick the smaller weighted makespan.
+    Makespan = worst window of ceil((N-1)/2) consecutive edge latencies.
+    """
+
+    def cycle_for(o: str) -> list[MeshNode]:
+        return (
+            build_hamilton_cycle(rows, cols)
+            if o == "col"
+            else _transposed_hamilton_cycle(rows, cols)
+        )
+
+    def ring_makespan(cycle: list[MeshNode]) -> int:
+        n = len(cycle)
+        t_star = optimal_hamilton_makespan(n)
+        lats = [
+            edge_hop_latency(e, hx, hy) for e in _ring_edges(cycle)
+        ]
+        worst = 0
+        for start in range(n):
+            worst = max(
+                worst, sum(lats[(start + i) % n] for i in range(t_star))
+            )
+        return worst
+
+    if orient == "auto":
+        candidates = {}
+        for o in ("col", "row"):
+            try:
+                candidates[o] = ring_makespan(cycle_for(o))
+            except ValueError:
+                pass  # snake needs the swept dimension even
+        if not candidates:
+            raise ValueError(f"no Hamilton snake for {rows}x{cols}")
+        orient = min(candidates, key=candidates.get)
+
+    cycle = cycle_for(orient)
+    n = len(cycle)
+    t_star = optimal_hamilton_makespan(n)
+    pos = {cycle[i]: i for i in range(n)}
+    ring_edges = _ring_edges(cycle)
+    flows: list[CollectiveFlow] = []
+    cid = 0
+    arrival_makespan = 0
+
+    for src_idx in range(n):
+        src_node = cycle[src_idx]
+        pos_src = pos[src_node]
+
+        for direction in ("cw", "ccw"):
+            path: list[MeshEdge] = []
+            slots: list[int] = []
+            t = 0
+            for hop in range(t_star):
+                if direction == "cw":
+                    edge = ring_edges[(pos_src + hop) % n]
+                else:
+                    ring_pos = (pos_src - hop) % n
+                    edge = make_edge(cycle[ring_pos], cycle[(ring_pos - 1) % n])
+                path.append(edge)
+                slots.append(t)
+                t += edge_hop_latency(edge, hx, hy)
+            arrival_makespan = max(arrival_makespan, t)
+            flows.append(
+                CollectiveFlow(
+                    id=f"hra_{direction}_{src_idx}",
+                    label=f"hr-aniso {direction} src={src_idx}",
+                    from_node=src_node,
+                    to_node=path[-1].to_node if path else src_node,
+                    path=path,
+                    flits=base_flits,
+                    release=0,
+                    color_id=cid,
+                    payload="allgather_hamilton_aniso",
+                    slots=slots,
+                )
+            )
+            cid += 1
+
+    meta = {
+        "node_count": n,
+        "t_star": t_star,
+        "flow_count": len(flows),
+        "orient": orient,
+        "arrival_makespan": arrival_makespan,
+    }
+    return flows, arrival_makespan, meta
+
+
 def _add_dim_exchange_pair(
     flows: list[CollectiveFlow],
     cid_ref: list[int],
@@ -659,6 +769,43 @@ def optimal_z_lower_bound_h(
     raise ValueError(f"Unknown pattern {pattern}")
 
 
+def optimal_z_lower_bound_aniso(
+    pattern: str,
+    rows: int,
+    cols: int,
+    *,
+    root: int = 0,
+    hx: int = 1,
+    hy: int = 1,
+) -> int:
+    """Makespan lower bound with per-axis link latency (hx horizontal, hy vertical).
+
+    Distance terms use the weighted Manhattan metric hx*|dx| + hy*|dy|;
+    bandwidth/serialization terms are latency-free (links pipelined at II=1).
+    """
+    n = rows * cols
+    pattern = pattern.lower()
+    ecc_w = weighted_eccentricity(rows, cols, root, hx, hy)
+    deg = node_degree(rows, cols, root)
+    d_w = weighted_diameter(rows, cols, hx, hy)
+
+    if pattern in ("broadcast", "reduce"):
+        return ecc_w
+    if pattern == "allreduce":
+        return d_w
+    if pattern == "allgather":
+        return max(d_w, math.ceil((n - 1) / 2))
+    if pattern == "gather":
+        return max(ecc_w, math.ceil((n - 1) / deg))
+    if pattern == "alltoall":
+        return max(
+            math.ceil(n * cols / 4),
+            math.ceil(n * rows / 4),
+            d_w,
+        )
+    raise ValueError(f"Unknown pattern {pattern}")
+
+
 # ---------------------------------------------------------------------------
 # Flow builders (ported from color_mesh_viz.html)
 # ---------------------------------------------------------------------------
@@ -1068,11 +1215,47 @@ def verify_hop_spacing(flows: Iterable[CollectiveFlow], hop_latency: int) -> boo
     return True
 
 
+def edge_hop_latency(edge: MeshEdge, hx: int, hy: int) -> int:
+    """Latency of one edge: hx for horizontal (E/W), hy for vertical (N/S)."""
+    return hx if edge.from_node.y == edge.to_node.y else hy
+
+
+def verify_hop_spacing_aniso(
+    flows: Iterable[CollectiveFlow],
+    hx: int,
+    hy: int,
+) -> bool:
+    """Per-edge spacing: next hop launches >= latency of the edge just crossed."""
+    for flow in flows:
+        if flow.slots is None:
+            continue
+        for j in range(1, len(flow.slots)):
+            need = edge_hop_latency(flow.path[j - 1], hx, hy)
+            if flow.slots[j] - flow.slots[j - 1] < need:
+                return False
+    return True
+
+
+def weighted_eccentricity(rows: int, cols: int, root: int, hx: int, hy: int) -> int:
+    rx, ry = root_coords(root, cols)
+    farthest = 0
+    for y in range(rows):
+        for x in range(cols):
+            farthest = max(farthest, hx * abs(x - rx) + hy * abs(y - ry))
+    return farthest
+
+
+def weighted_diameter(rows: int, cols: int, hx: int, hy: int) -> int:
+    return hx * (cols - 1) + hy * (rows - 1)
+
+
 def build_alltoall_twophase_flows(
     rows: int,
     cols: int,
     base_flits: int = 1,
     hop_latency: int = 1,
+    hop_latency_x: int | None = None,
+    hop_latency_y: int | None = None,
 ) -> list[CollectiveFlow]:
     """All-to-all as a preassigned, conflict-free (stall=0) calendar.
 
@@ -1090,24 +1273,25 @@ def build_alltoall_twophase_flows(
     source contention), makespan Z ~= N*cols/4 + N*rows/4 <= 2*z*.
     """
     n = rows * cols
-    h = max(1, hop_latency)
+    hx = max(1, hop_latency_x if hop_latency_x is not None else hop_latency)
+    hy = max(1, hop_latency_y if hop_latency_y is not None else hop_latency)
     reserved: dict[str, set[int]] = {}
 
-    def first_free(edges: list[MeshEdge], start: int) -> int:
-        # Successive hops of one flit launch h cycles apart (slot phi + j*h);
-        # each link still accepts one new flit per cycle (pipelined, II=1).
+    def first_free(edges: list[MeshEdge], stride: int, start: int) -> int:
+        # Successive hops of one flit launch `stride` cycles apart (the axis
+        # latency); each link still accepts one new flit per cycle (II=1).
         phi = start
         while True:
             if all(
-                phi + j * h not in reserved.get(e.id, ())
+                phi + j * stride not in reserved.get(e.id, ())
                 for j, e in enumerate(edges)
             ):
                 return phi
             phi += 1
 
-    def occupy(edges: list[MeshEdge], phi: int) -> None:
+    def occupy(edges: list[MeshEdge], stride: int, phi: int) -> None:
         for j, e in enumerate(edges):
-            reserved.setdefault(e.id, set()).add(phi + j * h)
+            reserved.setdefault(e.id, set()).add(phi + j * stride)
 
     items = []
     for s in range(n):
@@ -1127,10 +1311,10 @@ def build_alltoall_twophase_flows(
     x_items.sort(key=lambda it: (min(it[2], it[4]), abs(it[4] - it[2])))
     for s, d, sx, sy, dx, dy, path, nx in x_items:
         x_edges = path[:nx]
-        phi = first_free(x_edges, 0)
-        occupy(x_edges, phi)
-        x_slots[(s, d)] = [phi + j * h for j in range(nx)]
-        tx = max(tx, phi + (nx - 1) * h + h)  # arrival of the last X-phase flit
+        phi = first_free(x_edges, hx, 0)
+        occupy(x_edges, hx, phi)
+        x_slots[(s, d)] = [phi + j * hx for j in range(nx)]
+        tx = max(tx, phi + nx * hx)  # arrival of the last X-phase flit
 
     barrier = tx + PE_INOUT_LATENCY
 
@@ -1140,9 +1324,9 @@ def build_alltoall_twophase_flows(
     y_items.sort(key=lambda it: (min(it[3], it[5]), abs(it[5] - it[3])))
     for s, d, sx, sy, dx, dy, path, nx in y_items:
         y_edges = path[nx:]
-        phi = first_free(y_edges, barrier)
-        occupy(y_edges, phi)
-        y_slots[(s, d)] = [phi + j * h for j in range(len(y_edges))]
+        phi = first_free(y_edges, hy, barrier)
+        occupy(y_edges, hy, phi)
+        y_slots[(s, d)] = [phi + j * hy for j in range(len(y_edges))]
 
     flows: list[CollectiveFlow] = []
     cid = 0
