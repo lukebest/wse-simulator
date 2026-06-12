@@ -472,7 +472,7 @@ python3 scripts/run_hamilton_allgather_verify.py
 
 **AllGather 开放 mesh**：Hamilton 环使每 slot 两方向各 `N/2` 条边并行，makespan `⌈(N−1)/2⌉`，每源独立 color 时 `L*=⌈(N−1)/2⌉`。但作为**色无关静态环转发规则**（每 router 恒做 `CW入→CW出 / CCW入→CCW出`），规则周期 `P_min=1`；`⌈(N−1)/2⌉` 是填满 makespan 而非规则周期。
 
-**AllToAll stall=0**：§9.2 表中 AllToAll 用贪心 XY，可能有 stall。达 bisection 下界 `max(⌈NX/4⌉,⌈NY/4⌉)` 的**无冲突 stall=0** 构造存在（置换轮转 / 维度分解，每相位预分配 slot、`peak=1`），仓库尚未实现。
+**AllToAll stall=0**：§9.2 表中 AllToAll 用贪心 XY，可能有 stall。**二相维序 + 区间着色**的无冲突 stall=0 构造已实现（`build_alltoall_twophase_flows`，预分配 slot、`peak=1`，`Z≈2z*`），见报告 §5.1。
 
 ### 9.3 Router 时隙表最短大小（实测 4×4 / 8×8 / 12×16）
 
@@ -506,6 +506,43 @@ python3 scripts/generate_collectives_report.py
 ```
 
 实现：`analyze_collective()` / `analyze_all_collectives()` in `collective_patterns.py`；交互专题 `docs/hamilton_ring_allgather.html`；综合报告 `docs/conflict_free_collectives_report.html`。
+
+### 9.5 多周期链路时延（h > 1，如 h=4）
+
+前文默认每条链路 1 cycle。当链路时延为 `h` cycle 时，采用**流水线链路模型**（latency `h`、initiation interval = 1）：一条 flit 在 slot `t` 上链、`t+h` 到达；同一链路每 cycle 仍可启动 1 条新 flit。冲突约束不变：`(有向边, 发射slot)` 至多 1 flit；新增**单 flit 跨 hop 间距**约束 `t_{j+1} ≥ t_j + h`。
+
+**下界结构定理**：所有下界拆成两类项——
+
+- **距离项 × h**：单条 flit 走 `k` 跳串行经历 `k·h` cycle，故 `ecc(r)`、`D` 类下界变为 `h·ecc(r)`、`h·D`；
+- **带宽/串行化项 × 1**：链路 II=1 不变，`⌈(N−1)/deg⌉`、bisection `⌈NX/4⌉` 类下界**不随 h 缩放**。
+
+即 `z*_h = max(h·距离项, 带宽项)`（实现：`optimal_z_lower_bound_h()`）：
+
+| 集合通信 | `z*_h` 下界 | h=1 时退化为 |
+|----------|------------|--------------|
+| Broadcast / Reduce | `h·ecc(r)` | `ecc(r)` |
+| AllReduce | `h·D` | `D` |
+| AllGather | `max(h·D, ⌈(N−1)/2⌉)` | `⌈(N−1)/2⌉` |
+| Gather | `max(h·ecc(r), ⌈(N−1)/deg(r)⌉)` | `⌈(N−1)/deg⌉` |
+| AllToAll | `max(⌈NX/4⌉, ⌈NY/4⌉, h·D)` | bisection |
+
+**两条达界路线**（均已实现并经 `verify_preassigned_slots` + `verify_hop_spacing` 验证）：
+
+1. **时间膨胀（dilation）**：任意 h=1 无冲突日历做映射 `slot t → h·t`（`dilate_slots()`）。映射单射 ⇒ 冲突自由保持；相邻 hop `t, t+1 → h·t, h·t+h` 自动满足间距。代价 `Z_h = h·Z_1`。**对距离主导的 collective 这就是最优**：
+   - Broadcast/Reduce 膨胀后到达时刻 = `h·ecc(r)` = 下界，**任意 h 均紧**（实测 4×4/8×8, h=4：`peak=1, stall=0`，到达 24/56 = 下界）。
+   - AllReduce 膨胀维累加 = `h·D` = 下界，紧。
+   - Hamilton AllGather 膨胀后到达 `h·⌈(N−1)/2⌉`：h=1 时紧（角点带宽强制），h>1 时与下界 `max(h·D, ⌈(N−1)/2⌉)` 有最大 `min(h, ⌈(N−1)/2⌉/D)` 倍 gap——环转发链 `接收→转发` 串行依赖使链路利用率降至 `1/h`，这是单 flit 块的固有代价；**多 flit 大块（F ≥ h flits）时身位流水填满空 slot，时延被摊销回带宽界 `≈ F·⌈(N−1)/2⌉ + h·D`**。
+2. **跨步装配（stride-h packing）**：带宽主导的 AllToAll 不能膨胀（会把不该缩放的带宽项也 ×h）。`build_alltoall_twophase_flows(hop_latency=h)` 把区间着色 first-fit 改为检查 `φ, φ+h, φ+2h, …`：单 flit 各 hop 间距 h，但**同一链路不同 flit 仍按 1/cycle 密排**，带宽项不受 h 影响。
+
+**h=4 实测**（发射 slot 数；到达 +h）：
+
+| 规模 | A2A 二相 `Z_1` | A2A stride-4 `Z_4` | 膨胀法 `4·Z_1`（对照） | `z*_4` |
+|------|---------------|--------------------|----------------------|--------|
+| 4×4 | 44 | **53** | 176 | 24 |
+| 8×8 | 272 | **293** | 1088 | 128 |
+| 12×16 | 1366 | **1405** | 5464 | 768 |
+
+stride-h 仅付出加性开销 `O(h·(X+Y))`（+9/+21/+39），相对 `z*_4` 的比值 2.4×/2.3×/1.8× 与 h=1 持平；膨胀法则付出乘性 `4×`。**结论：距离主导 → 膨胀即最优；带宽主导 → 跨步装配保持带宽项不缩放，h 只贡献加性尾巴。**
 
 ---
 

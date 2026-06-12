@@ -619,6 +619,46 @@ def optimal_z_lower_bound(
     raise ValueError(f"Unknown pattern {pattern}")
 
 
+def optimal_z_lower_bound_h(
+    pattern: str,
+    rows: int,
+    cols: int,
+    *,
+    root: int = 0,
+    hop_latency: int = 1,
+) -> int:
+    """Makespan lower bound with per-hop link latency h (pipelined, II=1).
+
+    Distance terms scale by h (a flit crossing k links needs k*h cycles);
+    bandwidth/serialization terms do NOT scale (each link still launches one
+    flit per cycle). z*_h = max(h * distance_term, bandwidth_term).
+    """
+    n = rows * cols
+    h = max(1, hop_latency)
+    pattern = pattern.lower()
+    ecc = eccentricity(rows, cols, root)
+    deg = node_degree(rows, cols, root)
+    d = mesh_diameter(rows, cols)
+
+    if pattern in ("broadcast", "reduce"):
+        return h * ecc
+    if pattern == "allreduce":
+        return h * d
+    if pattern == "allgather":
+        # every node must receive the farthest block (h*D) and the worst node
+        # ingests N-1 blocks over deg_min=2 ports (corner) at 1 flit/cycle.
+        return max(h * d, math.ceil((n - 1) / 2))
+    if pattern == "gather":
+        return max(h * ecc, math.ceil((n - 1) / deg))
+    if pattern == "alltoall":
+        return max(
+            math.ceil(n * cols / 4),
+            math.ceil(n * rows / 4),
+            h * d,
+        )
+    raise ValueError(f"Unknown pattern {pattern}")
+
+
 # ---------------------------------------------------------------------------
 # Flow builders (ported from color_mesh_viz.html)
 # ---------------------------------------------------------------------------
@@ -1004,10 +1044,35 @@ def build_allto_all_flows(
     return flows
 
 
+def dilate_slots(flows: list[CollectiveFlow], hop_latency: int) -> list[CollectiveFlow]:
+    """Stretch a verified h=1 calendar to hop latency h: slot t -> h*t.
+
+    The map t -> h*t is injective, so (edge, slot) uniqueness is preserved;
+    consecutive hops t, t+1 map to h*t, h*t+h, satisfying the h-cycle spacing.
+    Makespan multiplies by h (launch-slot count; add +h for last-flit arrival).
+    """
+    for flow in flows:
+        if flow.slots is not None:
+            flow.slots = [hop_latency * s for s in flow.slots]
+    return flows
+
+
+def verify_hop_spacing(flows: Iterable[CollectiveFlow], hop_latency: int) -> bool:
+    """Check every flow's consecutive hop launches are >= hop_latency apart."""
+    for flow in flows:
+        if flow.slots is None:
+            continue
+        for j in range(1, len(flow.slots)):
+            if flow.slots[j] - flow.slots[j - 1] < hop_latency:
+                return False
+    return True
+
+
 def build_alltoall_twophase_flows(
     rows: int,
     cols: int,
     base_flits: int = 1,
+    hop_latency: int = 1,
 ) -> list[CollectiveFlow]:
     """All-to-all as a preassigned, conflict-free (stall=0) calendar.
 
@@ -1025,18 +1090,24 @@ def build_alltoall_twophase_flows(
     source contention), makespan Z ~= N*cols/4 + N*rows/4 <= 2*z*.
     """
     n = rows * cols
+    h = max(1, hop_latency)
     reserved: dict[str, set[int]] = {}
 
     def first_free(edges: list[MeshEdge], start: int) -> int:
+        # Successive hops of one flit launch h cycles apart (slot phi + j*h);
+        # each link still accepts one new flit per cycle (pipelined, II=1).
         phi = start
         while True:
-            if all(phi + j not in reserved.get(e.id, ()) for j, e in enumerate(edges)):
+            if all(
+                phi + j * h not in reserved.get(e.id, ())
+                for j, e in enumerate(edges)
+            ):
                 return phi
             phi += 1
 
     def occupy(edges: list[MeshEdge], phi: int) -> None:
         for j, e in enumerate(edges):
-            reserved.setdefault(e.id, set()).add(phi + j)
+            reserved.setdefault(e.id, set()).add(phi + j * h)
 
     items = []
     for s in range(n):
@@ -1058,8 +1129,8 @@ def build_alltoall_twophase_flows(
         x_edges = path[:nx]
         phi = first_free(x_edges, 0)
         occupy(x_edges, phi)
-        x_slots[(s, d)] = [phi + j for j in range(nx)]
-        tx = max(tx, phi + nx)
+        x_slots[(s, d)] = [phi + j * h for j in range(nx)]
+        tx = max(tx, phi + (nx - 1) * h + h)  # arrival of the last X-phase flit
 
     barrier = tx + PE_INOUT_LATENCY
 
@@ -1071,7 +1142,7 @@ def build_alltoall_twophase_flows(
         y_edges = path[nx:]
         phi = first_free(y_edges, barrier)
         occupy(y_edges, phi)
-        y_slots[(s, d)] = [phi + j for j in range(len(y_edges))]
+        y_slots[(s, d)] = [phi + j * h for j in range(len(y_edges))]
 
     flows: list[CollectiveFlow] = []
     cid = 0

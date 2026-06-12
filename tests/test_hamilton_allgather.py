@@ -13,9 +13,12 @@ from wsesim.network.collective_patterns import (
     build_hamilton_cycle,
     build_hamilton_ring_allgather_flows,
     compare_allgather_patterns,
+    dilate_slots,
     optimal_hamilton_makespan,
     optimal_z_lower_bound,
+    optimal_z_lower_bound_h,
     schedule_bufferless_noc,
+    verify_hop_spacing,
     verify_preassigned_slots,
 )
 
@@ -77,6 +80,37 @@ def test_alltoall_twophase_conflict_free_zero_stall(rows: int, cols: int) -> Non
     assert result.total_stall == 0
     assert result.makespan >= z_star  # cannot beat the bisection lower bound
     assert result.makespan <= 3 * z_star  # 2-phase stays within a small constant
+
+
+@pytest.mark.parametrize("rows,cols", [(4, 4), (8, 8)])
+@pytest.mark.parametrize("h", [2, 4])
+def test_alltoall_twophase_multicycle_links(rows: int, cols: int, h: int) -> None:
+    """Strided two-phase under hop latency h: conflict-free, h-spaced, near-additive cost."""
+    base = verify_preassigned_slots(build_alltoall_twophase_flows(rows, cols))
+    flows = build_alltoall_twophase_flows(rows, cols, hop_latency=h)
+    result = verify_preassigned_slots(flows)
+    assert result.ok, result.collision
+    assert result.peak == 1
+    assert verify_hop_spacing(flows, h)
+    # bandwidth term is untouched: cost grows additively (O(h*(cols+rows))),
+    # nowhere near the multiplicative h*Z_1 of naive dilation.
+    assert result.makespan < base.makespan + h * (cols + rows) + h * 10
+    assert result.makespan + h >= optimal_z_lower_bound_h(
+        "alltoall", rows, cols, hop_latency=h
+    )
+
+
+@pytest.mark.parametrize("rows,cols", [(4, 4), (8, 8)])
+def test_dilation_preserves_conflict_freedom(rows: int, cols: int) -> None:
+    """slot -> h*slot keeps (edge, slot) uniqueness and enforces h-spacing."""
+    h = 4
+    flows, t_star, _ = build_hamilton_ring_allgather_flows(rows, cols, 1)
+    dilate_slots(flows, h)
+    result = verify_preassigned_slots(flows)
+    assert result.ok, result.collision
+    assert result.peak == 1
+    assert verify_hop_spacing(flows, h)
+    assert result.makespan == h * (t_star - 1) + 1  # last launch; arrival = h*t_star
 
 
 def run_benchmark() -> list[dict]:

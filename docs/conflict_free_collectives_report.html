@@ -384,11 +384,59 @@
 </section>
 
 <section>
-  <h2>6. 复现</h2>
+  <h2>6. 多周期链路时延（h &gt; 1，如 h=4）</h2>
+  <div class="panel">
+    <h3>6.1 模型扩展</h3>
+    <p>前文默认链路 1 cycle。链路时延为 <span class="mono">h</span> cycle 时，采用<strong>流水线链路模型</strong>（latency <span class="mono">h</span>、initiation interval = 1）：flit 在 slot <span class="mono">t</span> 上链、<span class="mono">t+h</span> 到达；同一链路每 cycle 仍可启动 1 条新 flit。冲突约束不变（每 <span class="mono">(有向边, 发射slot)</span> ≤ 1 flit），新增单 flit 跨 hop 间距约束 <span class="mono">t_{j+1} ≥ t_j + h</span>（验证器 <code>verify_hop_spacing</code>）。</p>
+
+    <h3>6.2 下界结构定理：距离项 × h，带宽项 × 1</h3>
+    <p>所有下界拆为两类：<strong>距离项</strong>（单 flit 走 k 跳需 <span class="mono">k·h</span> cycle，随 h 缩放）与<strong>带宽/串行化项</strong>（链路 II=1 不变，<strong>不随 h 缩放</strong>）。<span class="mono">z*_h = max(h·距离项, 带宽项)</span>（实现：<code>optimal_z_lower_bound_h()</code>）：</p>
+    <table>
+      <thead>
+        <tr><th>集合通信</th><th><span class="mono">z*_h</span> 下界</th><th>主导项（h=4 典型）</th><th>达界方案</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>Broadcast / Reduce</td><td class="mono">h·ecc(r)</td><td>距离</td><td class="good">膨胀多播树，紧</td></tr>
+        <tr><td>AllReduce</td><td class="mono">h·D</td><td>距离</td><td class="good">膨胀维累加，紧</td></tr>
+        <tr><td>AllGather</td><td class="mono">max(h·D, ⌈(N−1)/2⌉)</td><td>视 N/D 与 h</td><td class="warn">膨胀 Hamilton = h·⌈(N−1)/2⌉，有 gap（见 6.4）</td></tr>
+        <tr><td>Gather</td><td class="mono">max(h·ecc(r), ⌈(N−1)/deg(r)⌉)</td><td>同上</td><td class="warn">同上</td></tr>
+        <tr><td>AllToAll</td><td class="mono">max(⌈N·cols/4⌉, ⌈N·rows/4⌉, h·D)</td><td>带宽（bisection）</td><td class="good">stride-h 二相，加性开销</td></tr>
+      </tbody>
+    </table>
+
+    <h3>6.3 两条达界路线（均已实现验证）</h3>
+    <ul>
+      <li><strong>时间膨胀 dilation</strong>（<code>dilate_slots(flows, h)</code>）：把任意 h=1 无冲突日历做 <span class="mono">slot t → h·t</span>。映射单射 ⇒ <span class="mono">(边, slot)</span> 唯一性保持；相邻 hop <span class="mono">t, t+1 → h·t, h·t+h</span> 自动满足间距。代价 <span class="mono">Z_h = h·Z_1</span>。<strong>距离主导的 collective（Broadcast/Reduce/AllReduce）膨胀即最优</strong>：实测 h=4 膨胀广播树 <span class="mono">peak=1, stall=0</span>，到达时刻 <span class="mono">= 4·ecc = 24 / 56</span>（4×4 / 8×8）恰为下界。</li>
+      <li><strong>跨步装配 stride-h packing</strong>（<code>build_alltoall_twophase_flows(hop_latency=h)</code>）：带宽主导的 AllToAll <strong>不能膨胀</strong>——膨胀会把不该缩放的带宽项也 ×h。改法：区间着色 first-fit 改为检查 <span class="mono">φ, φ+h, φ+2h, …</span>，单 flit 各 hop 间距 h，但<strong>同一链路不同 flit 仍按 1 flit/cycle 密排</strong>，带宽项不受 h 影响，h 只贡献加性尾巴 <span class="mono">O(h·(cols+rows))</span>。</li>
+    </ul>
+
+    <h3>6.4 h=4 实测（发射 slot 数；到达 +h）</h3>
+    <table>
+      <thead>
+        <tr><th>规模</th><th>A2A 二相 Z₁ (h=1)</th><th>A2A stride-4 Z₄</th><th>朴素膨胀 4·Z₁（对照）</th><th>z*₄</th><th>Z₄/z*₄</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>4×4</td><td class="mono">44</td><td class="mono good">53</td><td class="mono warn">176</td><td class="mono">24</td><td class="mono">≈2.4×</td></tr>
+        <tr><td>8×8</td><td class="mono">272</td><td class="mono good">293</td><td class="mono warn">1088</td><td class="mono">128</td><td class="mono">≈2.3×</td></tr>
+        <tr><td>12×16</td><td class="mono">1366</td><td class="mono good">1405</td><td class="mono warn">5464</td><td class="mono">768</td><td class="mono">≈1.8×</td></tr>
+      </tbody>
+    </table>
+    <p class="muted">全部经 <code>verify_preassigned_slots</code>（冲突）+ <code>verify_hop_spacing</code>（h 间距）验证：<span class="mono">ok, peak=1, stall=0</span>。stride-4 相对 h=1 仅 +9/+21/+39 slot（加性 <span class="mono">O(h·(X+Y))</span>），相对 z*₄ 的比值与 h=1 持平；朴素膨胀付出乘性 4×。</p>
+
+    <h3>6.5 AllGather/Gather 的固有 gap 与摊销</h3>
+    <ul>
+      <li><strong>膨胀 Hamilton</strong> 到达时刻 <span class="mono">h·⌈(N−1)/2⌉</span>（h=4 实测：4×4 → 32，8×8 → 128），而下界 <span class="mono">max(h·D, ⌈(N−1)/2⌉)</span> = 24 / 56：gap 因子最大 <span class="mono">min(h, ⌈(N−1)/2⌉/D)</span>。根因：环转发的「接收 → 转发」串行依赖把链路利用率压到 <span class="mono">1/h</span>，这是<strong>单 flit 块</strong>的固有时延代价（更宽的多路径树形 allgather 属开放调度问题）。</li>
+      <li><strong>大块摊销</strong>：块大小 <span class="mono">F ≥ h</span> flits 时，同块身位 flits 以 II=1 跟进填满空 slot，时延被摊销回带宽口径 <span class="mono">Z ≈ F·⌈(N−1)/2⌉ + h·D</span>——即<strong>增大消息粒度是隐藏多周期链路时延的首选手段</strong>。</li>
+    </ul>
+  </div>
+</section>
+
+<section>
+  <h2>7. 复现</h2>
   <div class="panel">
     <pre class="mono" style="background:#0d1117;padding:.75rem;border-radius:8px;overflow-x:auto">python3 scripts/generate_collectives_report.py
 pytest tests/test_hamilton_allgather.py -v</pre>
-    <p class="muted">输出 JSON：<span class="mono">outputs/collectives_report/results.json</span></p>
+    <p class="muted">输出 JSON：<span class="mono">outputs/collectives_report/results.json</span>；多周期时延（h&gt;1）验证：<span class="mono">test_alltoall_twophase_multicycle_links / test_dilation_preserves_conflict_freedom</span></p>
   </div>
 </section>
 </main>
