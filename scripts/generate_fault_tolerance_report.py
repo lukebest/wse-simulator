@@ -11,12 +11,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from wsesim.network.collective_faults import (  # noqa: E402
-    FAULT_TYPES,
-    PATTERNS,
-    REGIONS,
-    analyze_fault_matrix,
-)
+from wsesim.network.collective_faults import analyze_fault_matrix  # noqa: E402
+from wsesim.network.fault_schematic import inject_schematics_into_html, render_all_schematics  # noqa: E402
 
 MESHES = [(4, 4), (8, 8), (12, 16)]
 OUT_JSON = ROOT / "outputs/fault_tolerance/results.json"
@@ -138,9 +134,11 @@ def main() -> None:
     OUT_JSON.write_text(json.dumps(results, indent=2, ensure_ascii=False), encoding="utf-8")
 
     html = OUT_HTML.read_text(encoding="utf-8")
+    schematics = render_all_schematics()
+    html = inject_schematics_into_html(html, schematics)
     OUT_HTML.write_text(inject_results_into_html(html, results), encoding="utf-8")
     print(f"Wrote {OUT_JSON}")
-    print(f"Updated {OUT_HTML}")
+    print(f"Updated {OUT_HTML} (with §2b schematics)")
     print(f"Analyzed {len(results)} fault scenarios")
 
 

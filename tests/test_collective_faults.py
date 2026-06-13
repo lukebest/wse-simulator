@@ -122,3 +122,17 @@ def test_unreachable_when_root_bad():
     result = analyze_collective_faulty("broadcast", 4, 4, fault, root=0)
     assert not result["reachable"]
     assert result["z_faulty"] == 0
+
+
+def test_fault_schematics_render():
+    from wsesim.network.fault_schematic import render_all_schematics, render_pattern_row
+
+    row = render_pattern_row("broadcast", 4, 4)
+    assert "Golden" in row
+    assert "PE 坏点" in row
+    assert "<svg" in row
+
+    all_html = render_all_schematics()
+    for pat in ("broadcast", "allgather", "alltoall"):
+        assert f'schem-{pat}' in all_html
+    assert "2b. Golden vs 故障处理示意图" in all_html
