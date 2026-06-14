@@ -15,6 +15,7 @@ from wsesim.network.collective_patterns import (
     assign_rigid_slots,
     build_allto_all_flows,
     build_dimaccum_allreduce_flows,
+    enhanced_edge_id_set,
     build_hamilton_cycle,
     build_hamilton_gather_flows,
     build_hamilton_ring_allgather_flows,
@@ -26,11 +27,13 @@ from wsesim.network.collective_patterns import (
     node,
     node_idx,
     optimal_hamilton_makespan,
+    optimal_z_lower_bound_bw,
     root_coords,
     schedule_bufferless_noc,
     verify_preassigned_slots,
     xy_path,
 )
+from wsesim.network.topology.supermesh_bi import SuperMeshBi
 
 FaultType = Literal["pe_point", "link_point", "pe_block"]
 Region = Literal["corner", "edge", "center"]
@@ -733,7 +736,10 @@ def schedule_collective_flows(flows: list[CollectiveFlow]) -> dict:
     }
 
 
-def schedule_collective_fair(flows: list[CollectiveFlow]) -> dict:
+def schedule_collective_fair(
+    flows: list[CollectiveFlow],
+    edge_capacity: dict[str, int] | None = None,
+) -> dict:
     """Bufferless schedule on fresh flow copies (fair healthy vs faulty compare)."""
     copies = [
         CollectiveFlow(
@@ -750,7 +756,7 @@ def schedule_collective_fair(flows: list[CollectiveFlow]) -> dict:
         )
         for f in flows
     ]
-    sched = schedule_bufferless_noc(copies)
+    sched = schedule_bufferless_noc(copies, edge_capacity=edge_capacity)
     return {
         "ok": sched.ok,
         "makespan": sched.makespan,
@@ -758,6 +764,48 @@ def schedule_collective_fair(flows: list[CollectiveFlow]) -> dict:
         "peak": sched.peak,
         "collision": sched.collision,
     }
+
+
+def supermesh_bi_enhanced_pairs(rows: int, cols: int) -> set[tuple[int, int]]:
+    """Undirected node-index pairs with 2× link capacity (SuperMesh Bi)."""
+    n = rows * cols
+    pairs: set[tuple[int, int]] = set()
+    for u, v in SuperMeshBi(rows=rows, cols=cols).enhanced_edges(n):
+        pairs.add((min(u, v), max(u, v)))
+    return pairs
+
+
+def supermesh_edge_capacity(
+    rows: int,
+    cols: int,
+    fault: MeshFault | None = None,
+) -> dict[str, int]:
+    """Directed edge id → capacity (2 on surviving perimeter links)."""
+    enhanced = supermesh_bi_enhanced_pairs(rows, cols)
+    cap: dict[str, int] = {}
+    fault = fault or MeshFault()
+    for u, v in enhanced:
+        a = idx_to_node(u, cols)
+        b = idx_to_node(v, cols)
+        for edge in (make_edge(a, b), make_edge(b, a)):
+            if fault.edge_bad(edge):
+                continue
+            cap[edge.id] = 2
+    return cap
+
+
+def is_enhanced_perimeter_link(
+    rows: int,
+    cols: int,
+    fault: MeshFault,
+) -> bool:
+    """True when the faulted link is a SuperMesh Bi enhanced perimeter edge."""
+    if not fault.bad_edges:
+        return False
+    enhanced_ids = enhanced_edge_id_set(
+        rows, cols, supermesh_bi_enhanced_pairs(rows, cols)
+    )
+    return bool(fault.bad_edges & enhanced_ids)
 
 
 def analyze_collective_faulty(
@@ -981,4 +1029,252 @@ def _analyze_with_cached_healthy(
         "flow_count_expected": expected_full,
         "partial_coverage": partial,
         "note": "; ".join(note_parts) if note_parts else "",
+    }
+
+
+TopologyMode = Literal["mesh", "supermesh_bi"]
+
+
+def _analyze_with_cached_healthy_topology(
+    pattern: str,
+    rows: int,
+    cols: int,
+    fault: MeshFault,
+    healthy: dict,
+    *,
+    root: int = 0,
+    region: str = "",
+    fault_type: str = "",
+    topology: TopologyMode = "mesh",
+) -> dict:
+    edge_cap_healthy = (
+        supermesh_edge_capacity(rows, cols)
+        if topology == "supermesh_bi"
+        else None
+    )
+    edge_cap_faulty = (
+        supermesh_edge_capacity(rows, cols, fault)
+        if topology == "supermesh_bi"
+        else None
+    )
+
+    healthy_sched = schedule_collective_fair(
+        healthy["flows"], edge_capacity=edge_cap_healthy
+    )
+    faulty_flows, meta = _build_faulty_flows(pattern, rows, cols, fault, root=root)
+    faulty_sched = schedule_collective_fair(
+        faulty_flows, edge_capacity=edge_cap_faulty
+    )
+
+    healthy_ref = healthy["ref"]
+    z_healthy = healthy_sched["makespan"] or healthy_ref["z_scheduled"]
+    z_faulty = faulty_sched["makespan"]
+
+    n = rows * cols
+    full_flow_counts = {
+        "broadcast": len(healthy["flows"]),
+        "reduce": n - 1,
+        "allreduce": len(healthy["flows"]),
+        "allgather": len(healthy["flows"]),
+        "gather": n - 1,
+        "alltoall": n * (n - 1),
+    }
+    expected_full = full_flow_counts.get(pattern.lower(), len(healthy["flows"]))
+    flow_count_faulty = len(faulty_flows)
+    partial = flow_count_faulty < expected_full
+
+    if z_healthy and z_faulty and not partial:
+        ratio = round(z_faulty / z_healthy, 3)
+    elif z_healthy and z_faulty and partial:
+        ratio = round(max(1.0, z_faulty / z_healthy), 3)
+    else:
+        ratio = None
+
+    note_parts: list[str] = []
+    if topology == "supermesh_bi":
+        note_parts.append("SuperMesh Bi 2×周界")
+    if not meta.get("reachable", True):
+        note_parts.append("不可达/无流")
+    if partial:
+        note_parts.append(f"部分流({flow_count_faulty}/{expected_full})")
+    if meta.get("hamilton_degraded"):
+        note_parts.append("哈密顿环→路径")
+    if not faulty_sched["ok"]:
+        note_parts.append(f"调度冲突:{faulty_sched.get('collision')}")
+    if topology == "supermesh_bi" and fault_type == "link_point":
+        if is_enhanced_perimeter_link(rows, cols, fault):
+            note_parts.append("增强周界链路失效")
+
+    z_star = optimal_z_lower_bound_bw(
+        pattern.lower(),
+        rows,
+        cols,
+        enhanced_undirected=(
+            supermesh_bi_enhanced_pairs(rows, cols)
+            if topology == "supermesh_bi"
+            else None
+        ),
+    )
+
+    return {
+        "pattern": pattern.lower(),
+        "rows": rows,
+        "cols": cols,
+        "mesh": f"{rows}×{cols}",
+        "topology": topology,
+        "root": root,
+        "region": region,
+        "fault_type": fault_type,
+        "bad_nodes": sorted(fault.bad_nodes),
+        "bad_edges": sorted(fault.bad_edges),
+        "z_star": z_star,
+        "z_healthy_ref": healthy_ref["z_scheduled"],
+        "z_healthy_scheduled": z_healthy,
+        "z_faulty": z_faulty,
+        "ratio": ratio,
+        "stall_healthy": healthy_sched["stall"],
+        "stall_faulty": faulty_sched["stall"],
+        "peak_healthy": healthy_sched["peak"],
+        "peak_faulty": faulty_sched["peak"],
+        "ok_healthy": healthy_sched["ok"],
+        "ok_faulty": faulty_sched["ok"],
+        "reachable": meta.get("reachable", True),
+        "hamilton_degraded": meta.get("hamilton_degraded", False),
+        "is_cycle": meta.get("is_cycle", True),
+        "flow_count_faulty": flow_count_faulty,
+        "flow_count_expected": expected_full,
+        "partial_coverage": partial,
+        "note": "; ".join(note_parts) if note_parts else "",
+    }
+
+
+def analyze_fault_matrix_topology(
+    meshes: list[tuple[int, int]],
+    *,
+    topology: TopologyMode = "mesh",
+    root: int = 0,
+    fault_types: Iterable[FaultType] = FAULT_TYPES,
+    regions: Iterable[Region] = REGIONS,
+    patterns: Iterable[str] = PATTERNS,
+) -> list[dict]:
+    """Like analyze_fault_matrix but with optional SuperMesh Bi edge capacity."""
+    results: list[dict] = []
+    healthy_cache: dict[tuple[str, int, int], dict] = {}
+
+    for rows, cols in meshes:
+        for pattern in patterns:
+            key = (pattern.lower(), rows, cols)
+            if key not in healthy_cache:
+                healthy_ref = analyze_collective(pattern, rows, cols, root=root)
+                healthy_flows = _build_healthy_flows_for_schedule(
+                    pattern, rows, cols, root=root
+                )
+                healthy_cache[key] = {
+                    "ref": healthy_ref,
+                    "flows": healthy_flows,
+                }
+
+        for fault_type in fault_types:
+            for region in regions:
+                fault = make_scenario_fault(
+                    rows, cols, fault_type, region, root=root
+                )
+                for pattern in patterns:
+                    key = (pattern.lower(), rows, cols)
+                    row = _analyze_with_cached_healthy_topology(
+                        pattern,
+                        rows,
+                        cols,
+                        fault,
+                        healthy_cache[key],
+                        root=root,
+                        region=region,
+                        fault_type=fault_type,
+                        topology=topology,
+                    )
+                    results.append(row)
+    return results
+
+
+def compile_fault_study_8x8(
+    *,
+    hx: int = 4,
+    hy: int = 8,
+) -> dict:
+    """8×8 fault degradation snapshot: plain mesh vs SuperMesh Bi."""
+    rows, cols = 8, 8
+    mesh_rows = analyze_fault_matrix_topology([(rows, cols)], topology="mesh")
+    sm_rows = analyze_fault_matrix_topology(
+        [(rows, cols)], topology="supermesh_bi"
+    )
+    sm_index = {
+        (r["pattern"], r["fault_type"], r["region"]): r for r in sm_rows
+    }
+
+    comparison: list[dict] = []
+    for mr in mesh_rows:
+        key = (mr["pattern"], mr["fault_type"], mr["region"])
+        sr = sm_index[key]
+        mesh_ratio = mr.get("ratio")
+        sm_ratio = sr.get("ratio")
+        delta = None
+        if mesh_ratio is not None and sm_ratio is not None:
+            delta = round(sm_ratio - mesh_ratio, 3)
+        comparison.append(
+            {
+                "pattern": mr["pattern"],
+                "fault_type": mr["fault_type"],
+                "region": mr["region"],
+                "mesh_z_h": mr["z_healthy_scheduled"],
+                "mesh_z_f": mr["z_faulty"],
+                "mesh_ratio": mesh_ratio,
+                "sm_z_h": sr["z_healthy_scheduled"],
+                "sm_z_f": sr["z_faulty"],
+                "sm_z_star": sr["z_star"],
+                "sm_ratio": sm_ratio,
+                "ratio_delta": delta,
+                "perimeter_link_fault": (
+                    is_enhanced_perimeter_link(
+                        rows,
+                        cols,
+                        make_scenario_fault(
+                            rows, cols, mr["fault_type"], mr["region"]
+                        ),
+                    )
+                    if mr["fault_type"] == "link_point"
+                    else False
+                ),
+            }
+        )
+
+    worst_mesh = max(
+        (c for c in comparison if c["mesh_ratio"] is not None),
+        key=lambda c: c["mesh_ratio"],
+    )
+    worst_sm = max(
+        (c for c in comparison if c["sm_ratio"] is not None),
+        key=lambda c: c["sm_ratio"],
+    )
+
+    enhanced = supermesh_bi_enhanced_pairs(rows, cols)
+    return {
+        "rows": rows,
+        "cols": cols,
+        "hx": hx,
+        "hy": hy,
+        "mesh_scenarios": mesh_rows,
+        "supermesh_scenarios": sm_rows,
+        "comparison": comparison,
+        "healthy_bounds_mesh": {
+            p: optimal_z_lower_bound_bw(p, rows, cols, hx=hx, hy=hy)
+            for p in PATTERNS
+        },
+        "healthy_bounds_supermesh_bi": {
+            p: optimal_z_lower_bound_bw(
+                p, rows, cols, hx=hx, hy=hy, enhanced_undirected=enhanced
+            )
+            for p in PATTERNS
+        },
+        "worst_mesh": worst_mesh,
+        "worst_supermesh": worst_sm,
     }

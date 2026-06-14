@@ -8,13 +8,17 @@ from wsesim.network.collective_faults import (
     MeshFault,
     analyze_collective_faulty,
     analyze_fault_matrix,
+    analyze_fault_matrix_topology,
     bfs_path,
     build_hamilton_on_punctured,
+    compile_fault_study_8x8,
     hamilton_cycle_possible,
+    is_enhanced_perimeter_link,
     make_scenario_fault,
     reroute_flow,
     reroute_flows,
     schedule_collective_flows,
+    supermesh_bi_enhanced_pairs,
 )
 from wsesim.network.collective_patterns import (
     CollectiveFlow,
@@ -136,3 +140,29 @@ def test_fault_schematics_render():
     for pat in ("broadcast", "allgather", "alltoall"):
         assert f'schem-{pat}' in all_html
     assert "2b. Golden vs 故障处理示意图" in all_html
+
+
+def test_supermesh_corner_link_is_enhanced_perimeter():
+    fault = make_scenario_fault(8, 8, "link_point", "corner")
+    assert is_enhanced_perimeter_link(8, 8, fault)
+
+
+def test_supermesh_8x8_study_compiles():
+    study = compile_fault_study_8x8()
+    assert study["rows"] == 8
+    assert len(study["comparison"]) == 54
+    assert study["healthy_bounds_supermesh_bi"]["alltoall"] < study["healthy_bounds_mesh"]["alltoall"]
+
+
+def test_supermesh_alltoall_healthy_makespan_le_mesh():
+    mesh = analyze_fault_matrix_topology([(8, 8)], topology="mesh")
+    sm = analyze_fault_matrix_topology([(8, 8)], topology="supermesh_bi")
+    m_a2a = next(
+        r for r in mesh
+        if r["pattern"] == "alltoall" and r["fault_type"] == "link_point" and r["region"] == "corner"
+    )
+    s_a2a = next(
+        r for r in sm
+        if r["pattern"] == "alltoall" and r["fault_type"] == "link_point" and r["region"] == "corner"
+    )
+    assert s_a2a["z_healthy_scheduled"] <= m_a2a["z_healthy_scheduled"]

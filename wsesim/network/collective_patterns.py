@@ -517,8 +517,17 @@ def _peak_from_assignments(flows: Iterable[CollectiveFlow]) -> int:
     return max(max(bucket.values()) for bucket in per_slot.values())
 
 
-def schedule_bufferless_noc(flows: list[CollectiveFlow]) -> ScheduleResult:
-    """Rigid +1/hop bufferless placement (planNoc in color_mesh_viz.html)."""
+def schedule_bufferless_noc(
+    flows: list[CollectiveFlow],
+    edge_capacity: dict[str, int] | None = None,
+) -> ScheduleResult:
+    """Rigid +1/hop bufferless placement (planNoc in color_mesh_viz.html).
+
+    When *edge_capacity* is set, each directed edge id may carry up to that many
+    flits per slot (SuperMesh perimeter 2×).
+    """
+    if edge_capacity:
+        return _schedule_bufferless_noc_cap(flows, edge_capacity)
     reserved: set[tuple[str, int]] = set()
     total_stall = 0
     peak = 0
@@ -571,6 +580,65 @@ def schedule_bufferless_noc(flows: list[CollectiveFlow]) -> ScheduleResult:
     )
 
 
+def _edge_cap(edge_capacity: dict[str, int], edge_id: str) -> int:
+    return edge_capacity.get(edge_id, 1)
+
+
+def _schedule_bufferless_noc_cap(
+    flows: list[CollectiveFlow],
+    edge_capacity: dict[str, int],
+) -> ScheduleResult:
+    usage: dict[tuple[str, int], int] = {}
+    total_stall = 0
+    peak = 0
+    makespan = 0
+
+    ordered = sorted(
+        flows,
+        key=lambda f: (f.release, len(f.path), f.color_id),
+    )
+
+    for flow in ordered:
+        prev_first_edge = -1
+        for flit in range(flow.flits):
+            release_at = flow.release + flit
+            if not flow.path:
+                continue
+            plan = _plan_noc_cap(
+                flow.path, release_at, prev_first_edge, usage, edge_capacity
+            )
+            if plan is None:
+                return ScheduleResult(
+                    ok=False,
+                    makespan=0,
+                    total_stall=total_stall,
+                    peak=peak,
+                    collision=f"failed {flow.id} flit {flit}",
+                )
+            times, edges = plan
+            prev_first_edge = times[0]
+            total_stall += times[0] - release_at
+            flow_slots = flow.slots
+            if flow_slots is None:
+                flow.slots = [-1] * len(flow.path)
+                flow_slots = flow.slots
+            for hop, t in enumerate(times):
+                eid_str = edges[hop].id
+                key = (eid_str, t)
+                usage[key] = usage.get(key, 0) + 1
+                peak = max(peak, usage[key])
+                if hop < len(flow_slots):
+                    flow_slots[hop] = t
+                makespan = max(makespan, t + 1)
+
+    return ScheduleResult(
+        ok=True,
+        makespan=makespan,
+        total_stall=total_stall,
+        peak=max(peak, 1),
+    )
+
+
 def _earliest_edge(
     start: int,
     edge_id: str,
@@ -579,6 +647,19 @@ def _earliest_edge(
 ) -> int:
     for t in range(start, limit):
         if (edge_id, t) not in reserved:
+            return t
+    return limit
+
+
+def _earliest_edge_cap(
+    start: int,
+    edge_id: str,
+    usage: dict[tuple[str, int], int],
+    cap: int,
+    limit: int = 200_000,
+) -> int:
+    for t in range(start, limit):
+        if usage.get((edge_id, t), 0) < cap:
             return t
     return limit
 
@@ -599,6 +680,37 @@ def _plan_noc(
         for hop in range(1, len(path)):
             t = times[hop - 1] + 1
             if (path[hop].id, t) in reserved:
+                ok = False
+                break
+            times.append(t)
+        if ok:
+            return times, path
+    return None
+
+
+def _plan_noc_cap(
+    path: list[MeshEdge],
+    release_at: int,
+    prev_first_edge: int,
+    usage: dict[tuple[str, int], int],
+    edge_capacity: dict[str, int],
+) -> tuple[list[int], list[MeshEdge]] | None:
+    max_attempts = max(8192, len(path) * 128)
+    for stall in range(max_attempts):
+        times: list[int] = []
+        t0 = max(
+            release_at + stall,
+            prev_first_edge + 1 if prev_first_edge >= 0 else release_at + stall,
+        )
+        t0 = _earliest_edge_cap(
+            t0, path[0].id, usage, _edge_cap(edge_capacity, path[0].id)
+        )
+        times.append(t0)
+        ok = True
+        for hop in range(1, len(path)):
+            t = times[hop - 1] + 1
+            cap = _edge_cap(edge_capacity, path[hop].id)
+            if usage.get((path[hop].id, t), 0) >= cap:
                 ok = False
                 break
             times.append(t)
