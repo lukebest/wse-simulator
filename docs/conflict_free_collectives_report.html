@@ -475,11 +475,124 @@
 </section>
 
 <section>
-  <h2>7. 复现</h2>
+  <h2>7. 8×8 案例：PE 注入带宽 b 与 SuperMesh（hx=4, hy=8）</h2>
+  <div class="panel">
+    <p>固定 <strong>8×8</strong>、横向 <span class="mono">hx=4</span> / 纵向 <span class="mono">hy=8</span> cycle。Router↔PE 带宽 <span class="mono">b ∈ {1,2,4}</span> flit/cycle（注入+弹出），有效速率 <span class="mono">min(b, deg)</span>。实现：<code>optimal_z_lower_bound_bw</code>、<code>verify_port_bandwidth</code>、<code>compile_case_study_8x8_report</code>。</p>
+
+    <h3>7.1 模型示意</h3>
+    <figure>
+      <svg viewBox="0 0 520 200" width="100%" style="max-width:520px;background:#0d1117;border-radius:8px">
+        <text x="20" y="24" fill="#94a3b8" font-size="11">8×8 mesh · hx=4 (E/W) · hy=8 (N/S) · PE port width b</text>
+        <rect x="40" y="40" width="160" height="120" fill="none" stroke="#475569" stroke-width="1"/>
+        <line x1="60" y1="80" x2="100" y2="80" stroke="#38bdf8" stroke-width="3"/>
+        <text x="105" y="84" fill="#38bdf8" font-size="9">hx=4</text>
+        <line x1="120" y1="60" x2="120" y2="100" stroke="#f97316" stroke-width="3"/>
+        <text x="125" y="70" fill="#f97316" font-size="9">hy=8</text>
+        <circle cx="120" cy="100" r="14" fill="#1e293b" stroke="#a78bfa" stroke-width="2"/>
+        <text x="112" y="104" fill="#e2e8f0" font-size="9">PE</text>
+        <text x="112" y="118" fill="#a78bfa" font-size="8">≤b/cy</text>
+        <text x="240" y="70" fill="#cbd5e1" font-size="10">z* = max(距离项, 端口项, 割项)</text>
+        <text x="240" y="90" fill="#64748b" font-size="9">距离 D_w = 4·7+8·7 = 84</text>
+        <text x="240" y="108" fill="#64748b" font-size="9">割 bisection = 128 (mesh)</text>
+        <text x="240" y="126" fill="#64748b" font-size="9">端口 ⌈63/min(b,2)⌉ — 本例不绑定</text>
+        <text x="240" y="150" fill="#22c55e" font-size="10">→ 全部 collective z*=84 或 128，与 b 无关</text>
+      </svg>
+      <figcaption>三类下界取 max；8×8 下 latency/割压过端口串行化。</figcaption>
+    </figure>
+
+    <h3>7.2 下界表（b=1/2/4 相同，代码验证）</h3>
+    <table>
+      <thead><tr><th>Pattern</th><th>z*</th><th>绑定项</th></tr></thead>
+      <tbody>
+        <tr><td>Broadcast / Reduce</td><td class="mono good">84</td><td>ecc_w = hx·7+hy·7</td></tr>
+        <tr><td>AllReduce</td><td class="mono good">84</td><td>D_w</td></tr>
+        <tr><td>AllGather / Gather</td><td class="mono good">84</td><td>D_w（端口 63/32 &lt; 84）</td></tr>
+        <tr><td>AllToAll (mesh)</td><td class="mono good">128</td><td>bisection</td></tr>
+        <tr><td>AllToAll (SuperMesh Bi)</td><td class="mono good">103</td><td>2× 周界割容量 10</td></tr>
+        <tr><td>AllToAll (SuperMesh Alter)</td><td class="mono">128</td><td>中割无 2× 边</td></tr>
+      </tbody>
+    </table>
+
+    <h3>7.3 AllGather：环走向 + 端口 b</h3>
+    <figure>
+      <svg viewBox="0 0 520 220" width="100%" style="max-width:520px;background:#0d1117;border-radius:8px">
+        <text x="20" y="22" fill="#94a3b8" font-size="11">横蛇形环 (row snake) · 累积加权时序 · 每源 CW+CCW</text>
+        <path d="M 60 120 L 200 120 L 200 60 L 60 60 L 60 120" fill="none" stroke="#38bdf8" stroke-width="2" stroke-dasharray="4"/>
+        <text x="210" y="90" fill="#38bdf8" font-size="9">cheap hx edges</text>
+        <circle cx="60" cy="120" r="8" fill="#a78bfa"/>
+        <text x="48" y="140" fill="#e2e8f0" font-size="8">src</text>
+        <text x="280" y="70" fill="#e2e8f0" font-size="9">b=1: CW@0 + CCW@0 → 2 inject ✗</text>
+        <text x="280" y="88" fill="#22c55e" font-size="9">b≥2: 双向同时 ✓ Z=168</text>
+        <text x="280" y="106" fill="#22c55e" font-size="9">stagger CCW +32: b=1 ✓ Z=200</text>
+        <text x="280" y="130" fill="#64748b" font-size="9">纵蛇形 Z=240 (1.43× 慢)</text>
+        <text x="280" y="152" fill="#64748b" font-size="9">z* = 84 (latency-bound)</text>
+      </svg>
+      <figcaption>hy&gt;hx 时环应沿便宜横向扫；b 决定能否双向同时注入。</figcaption>
+    </figure>
+
+    <h3>7.4 AllToAll stall=0：二相逐轴跨步（详解）</h3>
+    <figure>
+      <svg viewBox="0 0 560 240" width="100%" style="max-width:560px;background:#0d1117;border-radius:8px">
+        <text x="16" y="22" fill="#94a3b8" font-size="11">Phase X (stride hx=4) → PE relay → Phase Y (stride hy=8)</text>
+        <rect x="30" y="50" width="80" height="40" rx="4" fill="#1e3a5f" stroke="#38bdf8"/>
+        <text x="42" y="75" fill="#e2e8f0" font-size="9">Phase X</text>
+        <text x="38" y="88" fill="#64748b" font-size="8">row sx→dx</text>
+        <path d="M 115 70 L 155 70" stroke="#38bdf8" stroke-width="2" marker-end="url(#arr)"/>
+        <rect x="160" y="50" width="70" height="40" rx="4" fill="#312e81" stroke="#a78bfa"/>
+        <text x="172" y="75" fill="#e2e8f0" font-size="9">PE @B</text>
+        <text x="168" y="88" fill="#64748b" font-size="8">B=Tx+10</text>
+        <path d="M 235 70 L 275 70" stroke="#f97316" stroke-width="2"/>
+        <rect x="280" y="50" width="80" height="40" rx="4" fill="#431407" stroke="#f97316"/>
+        <text x="292" y="75" fill="#e2e8f0" font-size="9">Phase Y</text>
+        <text x="288" y="88" fill="#64748b" font-size="8">col sy→dy</text>
+        <text x="30" y="130" fill="#cbd5e1" font-size="9">• 每有向边每 slot ≤1 flit（区间着色 first-fit）</text>
+        <text x="30" y="148" fill="#cbd5e1" font-size="9">• 单 flit 跨 hop 间距 hx / hy（aniso spacing）</text>
+        <text x="30" y="166" fill="#cbd5e1" font-size="9">• 预分配 slot ⇒ stall=0, peak=1</text>
+        <text x="30" y="190" fill="#22c55e" font-size="10">实测 Z=305 · z*=128 · b≥2 端口 OK</text>
+        <text x="30" y="210" fill="#64748b" font-size="9">b=1: 同源同 cycle 双注入 → 端口验证失败（界仍为 128）</text>
+      </svg>
+      <figcaption>两相串行 + 时延尾巴导致 Z≈2.4·z*；链路无在线冲突。</figcaption>
+    </figure>
+
+    <h3>7.5 SuperMesh 与 b 扫掠</h3>
+    <figure>
+      <svg viewBox="0 0 560 200" width="100%" style="max-width:560px;background:#0d1117;border-radius:8px">
+        <rect x="40" y="40" width="120" height="100" fill="none" stroke="#475569"/>
+        <line x1="40" y1="40" x2="160" y2="40" stroke="#fbbf24" stroke-width="3"/>
+        <line x1="40" y1="140" x2="160" y2="140" stroke="#fbbf24" stroke-width="3"/>
+        <line x1="40" y1="40" x2="40" y2="140" stroke="#fbbf24" stroke-width="3"/>
+        <line x1="160" y1="40" x2="160" y2="140" stroke="#fbbf24" stroke-width="3"/>
+        <line x1="95" y1="40" x2="95" y2="140" stroke="#ef4444" stroke-width="1" stroke-dasharray="3"/>
+        <text x="98" y="95" fill="#ef4444" font-size="8">cut</text>
+        <text x="200" y="60" fill="#fbbf24" font-size="9">SuperMesh Bi: 周界 2× BW</text>
+        <text x="200" y="78" fill="#22c55e" font-size="9">A2A z*: 128 → 103</text>
+        <text x="200" y="96" fill="#64748b" font-size="9">Alter: z* 仍为 128</text>
+        <text x="200" y="120" fill="#64748b" font-size="9">当前二相调度 Z=305（未吃满 2× 割）</text>
+        <text x="200" y="150" fill="#cbd5e1" font-size="10">b 扫掠：z* 平坦 ──── 84/128</text>
+        <text x="200" y="168" fill="#cbd5e1" font-size="9">方案 Z：AG 168/200 · A2A 305</text>
+      </svg>
+      <figcaption>SuperMesh 只收紧 AllToAll 割界；调度器利用 2× 割带宽仍为开放问题。</figcaption>
+    </figure>
+
+    <h3>7.6 方案可达性汇总（verify_* 实测）</h3>
+    <table>
+      <thead><tr><th>方案</th><th>Z</th><th>冲突</th><th>port b=1</th><th>port b≥2</th></tr></thead>
+      <tbody>
+        <tr><td>AllGather 横蛇形双向</td><td class="mono">168</td><td class="good">✓</td><td class="warn">✗</td><td class="good">✓</td></tr>
+        <tr><td>AllGather stagger (b=1)</td><td class="mono">200</td><td class="good">✓</td><td class="good">✓</td><td class="good">✓</td></tr>
+        <tr><td>AllToAll 二相 stall=0</td><td class="mono">305</td><td class="good">✓</td><td class="warn">✗</td><td class="good">✓</td></tr>
+        <tr><td>AllToAll + SuperMesh Bi</td><td class="mono">305</td><td class="good">✓ peak≤2</td><td class="warn">✗</td><td class="good">✓</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section>
+  <h2>8. 复现</h2>
   <div class="panel">
     <pre class="mono" style="background:#0d1117;padding:.75rem;border-radius:8px;overflow-x:auto">python3 scripts/generate_collectives_report.py
 pytest tests/test_hamilton_allgather.py -v</pre>
-    <p class="muted">输出 JSON：<span class="mono">outputs/collectives_report/results.json</span>；多周期时延（h&gt;1）验证：<span class="mono">test_alltoall_twophase_multicycle_links / test_dilation_preserves_conflict_freedom</span>；各向异性（hx≠hy）验证：<span class="mono">test_hamilton_allgather_aniso_* / test_alltoall_twophase_aniso_links</span></p>
+    <p class="muted">输出 JSON：<span class="mono">outputs/collectives_report/results.json</span>；8×8 案例：<span class="mono">test_8x8_bounds_invariant_in_inject_bw / test_8x8_allgather_port_bandwidth_by_scheme / test_8x8_alltoall_twophase_port_and_supermesh / test_compile_case_study_8x8_report</span></p>
   </div>
 </section>
 </main>

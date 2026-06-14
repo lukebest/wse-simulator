@@ -14,16 +14,24 @@ from wsesim.network.collective_patterns import (
     build_hamilton_ring_allgather_flows,
     build_hamilton_ring_allgather_flows_aniso,
     compare_allgather_patterns,
+    compile_case_study_8x8_report,
     dilate_slots,
+    effective_pe_io_rate,
+    enhanced_edge_id_set,
     optimal_hamilton_makespan,
     optimal_z_lower_bound,
     optimal_z_lower_bound_aniso,
+    optimal_z_lower_bound_bw,
     optimal_z_lower_bound_h,
     schedule_bufferless_noc,
+    verify_edge_capacity,
     verify_hop_spacing,
     verify_hop_spacing_aniso,
+    verify_port_bandwidth,
     verify_preassigned_slots,
 )
+from wsesim.network.topology.supermesh_alter import SuperMeshAlter
+from wsesim.network.topology.supermesh_bi import SuperMeshBi
 
 
 MESHES = [(4, 4), (8, 8), (12, 16)]
@@ -155,6 +163,91 @@ def test_alltoall_twophase_aniso_links(rows: int, cols: int) -> None:
     assert result.makespan + hy >= optimal_z_lower_bound_aniso(
         "alltoall", rows, cols, hx=hx, hy=hy
     )
+
+
+HX_CASE, HY_CASE = 4, 8
+ROWS_CASE, COLS_CASE = 8, 8
+
+
+@pytest.mark.parametrize("inject_bw", [1, 2, 4])
+def test_8x8_bounds_invariant_in_inject_bw(inject_bw: int) -> None:
+    """At 8x8 hx=4/hy=8, latency/bisection dominate -> z* flat in b."""
+    expected = {
+        "broadcast": 84,
+        "reduce": 84,
+        "allreduce": 84,
+        "allgather": 84,
+        "gather": 84,
+        "alltoall": 128,
+    }
+    for pattern, z in expected.items():
+        got = optimal_z_lower_bound_bw(
+            pattern, ROWS_CASE, COLS_CASE, hx=HX_CASE, hy=HY_CASE, inject_bw=inject_bw
+        )
+        assert got == z, f"{pattern} b={inject_bw}"
+
+
+def test_8x8_allgather_port_bandwidth_by_scheme() -> None:
+    bidir, _, _ = build_hamilton_ring_allgather_flows_aniso(
+        ROWS_CASE, COLS_CASE, HX_CASE, HY_CASE, orient="row"
+    )
+    ok1, _ = verify_port_bandwidth(bidir, ROWS_CASE, COLS_CASE, 1, HX_CASE, HY_CASE)
+    ok2, _ = verify_port_bandwidth(bidir, ROWS_CASE, COLS_CASE, 2, HX_CASE, HY_CASE)
+    assert not ok1
+    assert ok2
+
+    stag, mk_stag, meta = build_hamilton_ring_allgather_flows_aniso(
+        ROWS_CASE, COLS_CASE, HX_CASE, HY_CASE, orient="row", stagger_ccw=True
+    )
+    ok_stag, _ = verify_port_bandwidth(stag, ROWS_CASE, COLS_CASE, 1, HX_CASE, HY_CASE)
+    assert verify_preassigned_slots(stag).ok
+    assert verify_hop_spacing_aniso(stag, HX_CASE, HY_CASE)
+    assert ok_stag
+    assert mk_stag > 168
+    assert meta["ccw_time_offset"] == optimal_hamilton_makespan(64)
+
+
+def test_8x8_alltoall_twophase_port_and_supermesh() -> None:
+    flows = build_alltoall_twophase_flows(
+        ROWS_CASE, COLS_CASE, hop_latency_x=HX_CASE, hop_latency_y=HY_CASE
+    )
+    assert verify_preassigned_slots(flows).ok
+    assert not verify_port_bandwidth(flows, ROWS_CASE, COLS_CASE, 1, HX_CASE, HY_CASE)[0]
+    assert verify_port_bandwidth(flows, ROWS_CASE, COLS_CASE, 2, HX_CASE, HY_CASE)[0]
+
+    bi = SuperMeshBi(rows=ROWS_CASE, cols=COLS_CASE).enhanced_edges(64)
+    assert optimal_z_lower_bound_bw(
+        "alltoall", ROWS_CASE, COLS_CASE, hx=HX_CASE, hy=HY_CASE,
+        inject_bw=1, enhanced_undirected=bi,
+    ) == 103
+
+    alter = SuperMeshAlter(rows=ROWS_CASE, cols=COLS_CASE).enhanced_edges(64)
+    assert optimal_z_lower_bound_bw(
+        "alltoall", ROWS_CASE, COLS_CASE, hx=HX_CASE, hy=HY_CASE,
+        inject_bw=1, enhanced_undirected=alter,
+    ) == 128
+
+    cap = {e: 2 for e in enhanced_edge_id_set(ROWS_CASE, COLS_CASE, bi)}
+    a2a_bi = build_alltoall_twophase_flows(
+        ROWS_CASE, COLS_CASE, hop_latency_x=HX_CASE, hop_latency_y=HY_CASE,
+        enhanced_undirected=bi,
+    )
+    ok_e, _, peak = verify_edge_capacity(a2a_bi, cap)
+    assert ok_e
+    assert peak == 2
+
+
+def test_compile_case_study_8x8_report() -> None:
+    bi = SuperMeshBi(rows=8, cols=8).enhanced_edges(64)
+    alter = SuperMeshAlter(rows=8, cols=8).enhanced_edges(64)
+    report = compile_case_study_8x8_report(
+        hx=HX_CASE, hy=HY_CASE, enhanced_bi=bi, enhanced_alter=alter
+    )
+    assert report["mesh"]["b1"]["bounds"]["alltoall"] == 128
+    assert report["supermesh_bi"]["bounds_alltoall"] == 103
+    assert report["supermesh_alter"]["bounds_alltoall"] == 128
+    assert report["mesh"]["schemes"]["allgather_bidir"]["port_bw"]["b1"] is False
+    assert report["mesh"]["schemes"]["allgather_stagger_b1"]["port_bw"]["b1"] is True
 
 
 def run_benchmark() -> list[dict]:

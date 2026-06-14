@@ -582,6 +582,63 @@ stride-h 仅付出加性开销 `O(h·(X+Y))`（+9/+21/+39），相对 `z*_4` 的
 
 **结论**：各向异性把「距离 × h」细化为「逐轴加权距离」；达界设计的两条新杠杆是 **(1) 拓扑走向偏置**（环/树尽量走便宜轴——allgather 环换向白拿 1.2–1.6×）与 **(2) 逐轴跨步**（a2a 二相按维分相后每相单一步长，天然适配各向异性）。
 
+### 9.7 案例：8×8 · hx=4 / hy=8 · PE 注入带宽 b ∈ {1,2,4} · SuperMesh
+
+固定 **8×8**（N=64），横向链路 **hx=4** cycle、纵向 **hy=8** cycle（流水线 II=1）。Router↔PE 带宽 **b flit/cycle**，注入与弹出均受限，且有效速率 **`min(b, deg(node))`**（角点 deg=2 时 b≥2 不再放大）。
+
+**下界**（`optimal_z_lower_bound_bw()`，代码验证）——三类项取 max：
+
+| 集合通信 | 距离项 | 端口串行化项 | 链路割项 | **z\***（b=1/2/4 相同） |
+|----------|--------|-------------|---------|------------------------|
+| Broadcast / Reduce | ecc_w=**84** | — | — | **84** |
+| AllReduce | D_w=**84** | — | — | **84** |
+| AllGather | D_w=**84** | ⌈63/min(b,2)⌉ = 63/32/32 | — | **84** |
+| Gather | ecc_w=**84** | ⌈63/deg(r)⌉ | — | **84** |
+| AllToAll | D_w=84 | ⌈63/min(b,2)⌉ | bisection=**128** | **128** |
+
+**要点**：本案例下 **z\* 与 b 无关**——latency（84）与 bisection（128）始终压过端口项。`b` 影响的是**方案能否在严格端口约束下运行**，而非下界数值。
+
+**AllGather 方案**（重点）：
+
+1. **横蛇形 Hamilton 环 + 累积加权时序**（`build_hamilton_ring_allgather_flows_aniso(orient=row)`）：到达 **168**，`peak=1, stall=0`；相对纵蛇形 240 提升 **1.43×**。
+2. **双向同时注入**（CW+CCW @ slot 0）：每 PE 同时注入 2 flit → **`verify_port_bandwidth` 在 b=1 失败，b≥2 通过**。
+3. **b=1 可达方案**：CCW 整体平移 **t\*=32** slot（`stagger_ccw=True`）→ 到达 **200**，b=1 端口验证通过。
+
+```
+AllGather @ 8×8 (hx=4, hy=8)          z*=84 (latency-bound)
+┌─────────────────────────────────────────────────────────┐
+│ 横蛇形环 (cheap hx edges)  →  Z=168  (b≥2 或 stagger)   │
+│ 纵蛇形环 (expensive hy)    →  Z=240                     │
+│ stagger CCW +32 slots      →  Z=200  (b=1 OK)           │
+└─────────────────────────────────────────────────────────┘
+```
+
+**AllToAll stall=0 方案**（重点，二相 + 逐轴跨步）：
+
+```
+Phase X (row, stride hx=4)     Phase Y (col, stride hy=8)
+  s ──4──► ··· ──4──► (dx,sy)      (dx,sy) ──8──► ··· ──8──► d
+         PE relay @ B = Tx + 10
+```
+
+- 每 `(s,d)` 仍走 XY 路径；X 相区间着色检查 `φ, φ+4, …`；Y 相检查 `φ, φ+8, …`。
+- 维度切换：**全局屏障** `B = Tx + PE_INOUT_LATENCY`，PE 中继（唯一缓冲点）。
+- **stall=0**：全部 slot 预分配；`verify_preassigned_slots` + `verify_hop_spacing_aniso` 通过。
+- 实测 **Z=305**（相对 z\*=128 ≈2.4×；两相串行 + 时延尾巴）。
+- **端口**：同一源节点可能在同一 cycle 启动 2 条 X 相消息 → **b=1 严格端口验证失败，b≥2 通过**（下界仍为 128）。
+
+**SuperMesh**（仓库 `SuperMeshBi` / `SuperMeshAlter`：周界链路 **2× 带宽**，时延不变）：
+
+| 拓扑 | AllToAll z\* | 说明 |
+|------|-------------|------|
+| 普通 mesh | **128** | 割容量 8 |
+| SuperMesh **Bi**（全周界 2×） | **103** | 水平/垂直中割容量 8→10 |
+| SuperMesh **Alter**（交替 2×） | **128** | 中割无增强边，界不变 |
+
+已实现 `build_alltoall_twophase_flows(enhanced_undirected=…)` 支持周界 **capacity=2**（`verify_edge_capacity` 通过，`peak=2`）；当前二相日历 **Z 仍为 305**——界降至 103 但调度器尚未利用 2× 割带宽压缩 makespan（开放优化）。
+
+**验证入口**：`compile_case_study_8x8_report()`；测试 `test_8x8_bounds_invariant_in_inject_bw`、`test_8x8_allgather_port_bandwidth_by_scheme`、`test_8x8_alltoall_twophase_port_and_supermesh`。
+
 ---
 
 ## 附录 A：符号表
@@ -593,6 +650,9 @@ stride-h 仅付出加性开销 `O(h·(X+Y))`（+9/+21/+39），相对 `z*_4` 的
 | `𝒢_T` | 时间展开 DAG，makespan 上界 `T` |
 | `T*` | 最优 makespan（AllGather 接收度下界 `⌈(N−1)/2⌉`） |
 | `z*` | inline-reduce 模型下 makespan 下界（§9） |
+| `b` | Router↔PE 注入/弹出带宽（flit/cycle），有效 `min(b,deg)` |
+| `hx, hy` | 横向 / 纵向链路时延（cycle） |
+| `D_w` | 加权直径 `hx(X−1)+hy(Y−1)` |
 | `Z_router` | 一次性 Router 时隙表深度（= 调度 makespan） |
 | `P` | 周期日历帧长 |
 | `L*` | 最大有向边负载（周期下界 `P ≥ L*`） |

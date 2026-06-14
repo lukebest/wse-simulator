@@ -246,6 +246,9 @@ def build_hamilton_ring_allgather_flows_aniso(
     hy: int,
     base_flits: int = 1,
     orient: str = "auto",
+    *,
+    stagger_ccw: bool = False,
+    ccw_time_offset: int | None = None,
 ) -> tuple[list[CollectiveFlow], int, dict[str, int]]:
     """Hamilton-ring allgather under per-axis link latency (hx, hy).
 
@@ -258,6 +261,9 @@ def build_hamilton_ring_allgather_flows_aniso(
     orient: "col" = column-major snake (vertical-heavy), "row" = row-major
     snake (horizontal-heavy), "auto" = pick the smaller weighted makespan.
     Makespan = worst window of ceil((N-1)/2) consecutive edge latencies.
+
+    stagger_ccw: delay CCW direction so each PE injects one direction at a time
+    (needed when inject_bw=1). Default offset = t_star launch slots.
     """
 
     def cycle_for(o: str) -> list[MeshNode]:
@@ -296,6 +302,9 @@ def build_hamilton_ring_allgather_flows_aniso(
     t_star = optimal_hamilton_makespan(n)
     pos = {cycle[i]: i for i in range(n)}
     ring_edges = _ring_edges(cycle)
+    if stagger_ccw and ccw_time_offset is None:
+        ccw_time_offset = t_star
+    ccw_off = ccw_time_offset or 0
     flows: list[CollectiveFlow] = []
     cid = 0
     arrival_makespan = 0
@@ -307,7 +316,7 @@ def build_hamilton_ring_allgather_flows_aniso(
         for direction in ("cw", "ccw"):
             path: list[MeshEdge] = []
             slots: list[int] = []
-            t = 0
+            t = ccw_off if direction == "ccw" else 0
             for hop in range(t_star):
                 if direction == "cw":
                     edge = ring_edges[(pos_src + hop) % n]
@@ -340,6 +349,8 @@ def build_hamilton_ring_allgather_flows_aniso(
         "flow_count": len(flows),
         "orient": orient,
         "arrival_makespan": arrival_makespan,
+        "ccw_time_offset": ccw_off,
+        "stagger_ccw": stagger_ccw,
     }
     return flows, arrival_makespan, meta
 
@@ -806,6 +817,194 @@ def optimal_z_lower_bound_aniso(
     raise ValueError(f"Unknown pattern {pattern}")
 
 
+def effective_pe_io_rate(rows: int, cols: int, node_idx_val: int, inject_bw: int) -> int:
+    """Flits/cycle a PE can inject or eject, capped by mesh degree."""
+    return min(max(1, inject_bw), node_degree(rows, cols, node_idx_val))
+
+
+def min_corner_io_rate(rows: int, cols: int, inject_bw: int) -> int:
+    """Minimum effective I/O rate over all nodes (corners are tightest)."""
+    n = rows * cols
+    return min(effective_pe_io_rate(rows, cols, i, inject_bw) for i in range(n))
+
+
+def _enhanced_pairs(rows: int, cols: int, enhanced_undirected: set[tuple[int, int]]) -> set[tuple[int, int]]:
+    return {(min(u, v), max(u, v)) for u, v in enhanced_undirected}
+
+
+def bisection_alltoall_bound(
+    rows: int,
+    cols: int,
+    *,
+    enhanced_undirected: set[tuple[int, int]] | None = None,
+) -> int:
+    """All-to-all bisection lower bound with optional 2x perimeter links."""
+    n = rows * cols
+    enhanced = enhanced_undirected or set()
+    epairs = _enhanced_pairs(rows, cols, enhanced) if enhanced else set()
+    plain_cap_row = rows
+    plain_cap_col = cols
+    traffic_row = math.ceil(n * rows / 4)
+    traffic_col = math.ceil(n * cols / 4)
+
+    def cut_cap_horizontal(k: int) -> int:
+        cap = 0
+        for x in range(cols):
+            a = node_idx(node(x, k), cols)
+            b = node_idx(node(x, k + 1), cols)
+            cap += 2 if (min(a, b), max(a, b)) in epairs else 1
+        return cap
+
+    def cut_cap_vertical(k: int) -> int:
+        cap = 0
+        for y in range(rows):
+            a = node_idx(node(k, y), cols)
+            b = node_idx(node(k + 1, y), cols)
+            cap += 2 if (min(a, b), max(a, b)) in epairs else 1
+        return cap
+
+    row_bounds = [
+        math.ceil(traffic_row * plain_cap_row / cut_cap_horizontal(k))
+        for k in range(rows - 1)
+    ]
+    col_bounds = [
+        math.ceil(traffic_col * plain_cap_col / cut_cap_vertical(k))
+        for k in range(cols - 1)
+    ]
+    return max(max(row_bounds, default=traffic_row), max(col_bounds, default=traffic_col))
+
+
+def optimal_z_lower_bound_bw(
+    pattern: str,
+    rows: int,
+    cols: int,
+    *,
+    root: int = 0,
+    hx: int = 1,
+    hy: int = 1,
+    inject_bw: int = 1,
+    enhanced_undirected: set[tuple[int, int]] | None = None,
+) -> int:
+    """Makespan lower bound: anisotropic latency + PE I/O cap + SuperMesh bisection."""
+    n = rows * cols
+    pattern = pattern.lower()
+    b_eff_min = min_corner_io_rate(rows, cols, inject_bw)
+    ecc_w = weighted_eccentricity(rows, cols, root, hx, hy)
+    deg_root = node_degree(rows, cols, root)
+    d_w = weighted_diameter(rows, cols, hx, hy)
+    b_root = effective_pe_io_rate(rows, cols, root, inject_bw)
+
+    if pattern in ("broadcast", "reduce"):
+        return ecc_w
+    if pattern == "allreduce":
+        return d_w
+    if pattern == "allgather":
+        recv = math.ceil((n - 1) / b_eff_min)
+        return max(d_w, recv)
+    if pattern == "gather":
+        recv = math.ceil((n - 1) / b_root)
+        return max(ecc_w, recv)
+    if pattern == "alltoall":
+        inject = math.ceil((n - 1) / b_eff_min)
+        bisect = bisection_alltoall_bound(rows, cols, enhanced_undirected=enhanced_undirected)
+        return max(bisect, d_w, inject)
+    raise ValueError(f"Unknown pattern {pattern}")
+
+
+def analyze_case_study_8x8(
+    *,
+    hx: int = 4,
+    hy: int = 8,
+    inject_bw: int = 1,
+    enhanced_undirected: set[tuple[int, int]] | None = None,
+) -> dict:
+    """Verified 8x8 case-study snapshot for docs."""
+    rows, cols = 8, 8
+    patterns = ("broadcast", "reduce", "allreduce", "allgather", "gather", "alltoall")
+    bounds = {
+        p: optimal_z_lower_bound_bw(
+            p, rows, cols, hx=hx, hy=hy, inject_bw=inject_bw,
+            enhanced_undirected=enhanced_undirected,
+        )
+        for p in patterns
+    }
+    return {"rows": rows, "cols": cols, "hx": hx, "hy": hy, "inject_bw": inject_bw, "bounds": bounds}
+
+
+def compile_case_study_8x8_report(
+    *,
+    hx: int = 4,
+    hy: int = 8,
+    enhanced_bi: set[tuple[int, int]] | None = None,
+    enhanced_alter: set[tuple[int, int]] | None = None,
+) -> dict:
+    """Full verified 8x8 tables for documentation (plain mesh + SuperMesh)."""
+    rows, cols = 8, 8
+    out: dict = {"hx": hx, "hy": hy, "mesh": {}, "supermesh_bi": {}, "supermesh_alter": {}}
+
+    for b in (1, 2, 4):
+        out["mesh"][f"b{b}"] = {
+            "bounds": analyze_case_study_8x8(hx=hx, hy=hy, inject_bw=b)["bounds"],
+        }
+
+    ag_bidir, ag_mk, _ = build_hamilton_ring_allgather_flows_aniso(
+        rows, cols, hx, hy, orient="row"
+    )
+    ag_stag, ag_stag_mk, ag_meta = build_hamilton_ring_allgather_flows_aniso(
+        rows, cols, hx, hy, orient="row", stagger_ccw=True
+    )
+    a2a = build_alltoall_twophase_flows(
+        rows, cols, hop_latency_x=hx, hop_latency_y=hy
+    )
+    a2a_sched = verify_preassigned_slots(a2a)
+
+    schemes: dict = {}
+    for label, flows, mk in (
+        ("allgather_bidir", ag_bidir, ag_mk),
+        ("allgather_stagger_b1", ag_stag, ag_stag_mk),
+        ("alltoall_twophase", a2a, a2a_sched.makespan),
+    ):
+        schemes[label] = {
+            "makespan": mk,
+            "conflict_free": verify_preassigned_slots(flows).ok,
+            "hop_spacing": verify_hop_spacing_aniso(flows, hx, hy),
+            "port_bw": {
+                f"b{b}": verify_port_bandwidth(flows, rows, cols, b, hx, hy)[0]
+                for b in (1, 2, 4)
+            },
+        }
+
+    out["mesh"]["schemes"] = schemes
+    out["mesh"]["bounds_b1"] = out["mesh"]["b1"]["bounds"]
+
+    if enhanced_bi is not None:
+        cap = {e: 2 for e in enhanced_edge_id_set(rows, cols, enhanced_bi)}
+        a2a_bi = build_alltoall_twophase_flows(
+            rows, cols, hop_latency_x=hx, hop_latency_y=hy, enhanced_undirected=enhanced_bi
+        )
+        ok_e, _, peak = verify_edge_capacity(a2a_bi, cap)
+        mk_bi = max(f.slots[-1] for f in a2a_bi if f.slots)
+        out["supermesh_bi"] = {
+            "bounds_alltoall": optimal_z_lower_bound_bw(
+                "alltoall", rows, cols, hx=hx, hy=hy, inject_bw=1,
+                enhanced_undirected=enhanced_bi,
+            ),
+            "a2a_twophase_makespan": mk_bi,
+            "edge_capacity_ok": ok_e,
+            "peak": peak,
+        }
+
+    if enhanced_alter is not None:
+        out["supermesh_alter"] = {
+            "bounds_alltoall": optimal_z_lower_bound_bw(
+                "alltoall", rows, cols, hx=hx, hy=hy, inject_bw=1,
+                enhanced_undirected=enhanced_alter,
+            ),
+        }
+
+    return out
+
+
 # ---------------------------------------------------------------------------
 # Flow builders (ported from color_mesh_viz.html)
 # ---------------------------------------------------------------------------
@@ -1236,6 +1435,75 @@ def verify_hop_spacing_aniso(
     return True
 
 
+def enhanced_edge_id_set(
+    rows: int,
+    cols: int,
+    enhanced_undirected: set[tuple[int, int]],
+) -> set[str]:
+    """Directed mesh edge ids with 2x capacity (both orientations)."""
+    out: set[str] = set()
+    for u, v in enhanced_undirected:
+        out.add(eid(idx_to_node(u, cols), idx_to_node(v, cols)))
+        out.add(eid(idx_to_node(v, cols), idx_to_node(u, cols)))
+    return out
+
+
+def verify_port_bandwidth(
+    flows: Iterable[CollectiveFlow],
+    rows: int,
+    cols: int,
+    inject_bw: int,
+    hx: int,
+    hy: int,
+) -> tuple[bool, str | None]:
+    """Each PE inject/eject rate <= min(inject_bw, deg(node)) per cycle."""
+    inject: dict[int, dict[int, int]] = {}
+    eject: dict[int, dict[int, int]] = {}
+    for flow in flows:
+        if not flow.slots or not flow.path:
+            continue
+        src = node_idx(flow.from_node, cols)
+        dst = node_idx(flow.to_node, cols)
+        t0 = flow.slots[0]
+        last = flow.path[-1]
+        t_arr = flow.slots[-1] + edge_hop_latency(last, hx, hy)
+        inject.setdefault(src, {})[t0] = inject.get(src, {}).get(t0, 0) + 1
+        eject.setdefault(dst, {})[t_arr] = eject.get(dst, {}).get(t_arr, 0) + 1
+
+    n = rows * cols
+    for idx in range(n):
+        cap = effective_pe_io_rate(rows, cols, idx, inject_bw)
+        for t, c in inject.get(idx, {}).items():
+            if c > cap:
+                return False, f"inject node {idx} @ {t}: {c}>{cap}"
+        for t, c in eject.get(idx, {}).items():
+            if c > cap:
+                return False, f"eject node {idx} @ {t}: {c}>{cap}"
+    return True, None
+
+
+def verify_edge_capacity(
+    flows: Iterable[CollectiveFlow],
+    edge_capacity: dict[str, int] | None = None,
+    default_capacity: int = 1,
+) -> tuple[bool, str | None, int]:
+    """Peak per (edge, slot) occupancy vs per-edge capacity (SuperMesh 2x)."""
+    cap_map = edge_capacity or {}
+    usage: dict[tuple[str, int], int] = {}
+    peak = 0
+    for flow in flows:
+        if not flow.slots:
+            continue
+        for hop, edge in enumerate(flow.path):
+            key = (edge.id, flow.slots[hop])
+            usage[key] = usage.get(key, 0) + 1
+            peak = max(peak, usage[key])
+            limit = cap_map.get(edge.id, default_capacity)
+            if usage[key] > limit:
+                return False, f"{edge.id}@{flow.slots[hop]} peak {usage[key]}>{limit}", peak
+    return True, None, peak
+
+
 def weighted_eccentricity(rows: int, cols: int, root: int, hx: int, hy: int) -> int:
     rx, ry = root_coords(root, cols)
     farthest = 0
@@ -1256,6 +1524,7 @@ def build_alltoall_twophase_flows(
     hop_latency: int = 1,
     hop_latency_x: int | None = None,
     hop_latency_y: int | None = None,
+    enhanced_undirected: set[tuple[int, int]] | None = None,
 ) -> list[CollectiveFlow]:
     """All-to-all as a preassigned, conflict-free (stall=0) calendar.
 
@@ -1275,15 +1544,23 @@ def build_alltoall_twophase_flows(
     n = rows * cols
     hx = max(1, hop_latency_x if hop_latency_x is not None else hop_latency)
     hy = max(1, hop_latency_y if hop_latency_y is not None else hop_latency)
-    reserved: dict[str, set[int]] = {}
+    cap_map: dict[str, int] = {}
+    if enhanced_undirected:
+        for eid_str in enhanced_edge_id_set(rows, cols, enhanced_undirected):
+            cap_map[eid_str] = 2
+    reserved: dict[str, dict[int, int]] = {}
+
+    def edge_capacity(edge: MeshEdge) -> int:
+        return cap_map.get(edge.id, 1)
+
+    def usage(edge_id: str, slot: int) -> int:
+        return reserved.get(edge_id, {}).get(slot, 0)
 
     def first_free(edges: list[MeshEdge], stride: int, start: int) -> int:
-        # Successive hops of one flit launch `stride` cycles apart (the axis
-        # latency); each link still accepts one new flit per cycle (II=1).
         phi = start
         while True:
             if all(
-                phi + j * stride not in reserved.get(e.id, ())
+                usage(e.id, phi + j * stride) < edge_capacity(e)
                 for j, e in enumerate(edges)
             ):
                 return phi
@@ -1291,7 +1568,9 @@ def build_alltoall_twophase_flows(
 
     def occupy(edges: list[MeshEdge], stride: int, phi: int) -> None:
         for j, e in enumerate(edges):
-            reserved.setdefault(e.id, set()).add(phi + j * stride)
+            slot = phi + j * stride
+            bucket = reserved.setdefault(e.id, {})
+            bucket[slot] = bucket.get(slot, 0) + 1
 
     items = []
     for s in range(n):
