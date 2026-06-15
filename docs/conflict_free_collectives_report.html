@@ -195,6 +195,168 @@
 </section>
 
 <section>
+  <h2>2.5 达界方法详解：AllReduce 维累加 与 AllToAll 二相（4×4 示意）</h2>
+
+  <div class="panel">
+    <h3>2.5.1 AllReduce → 下界 <span class="mono">z* = D = X+Y−2</span>：双向维累加</h3>
+    <p><strong>为什么下界是 D？</strong> AllReduce 中<strong>每个</strong>节点的结果都依赖<strong>所有</strong>节点的输入，包括相距最远的一对角点（曼哈顿距离 = 直径 <span class="mono">D</span>）。一个角点的最终结果必须吸收来自对角点的数据，至少需要 <span class="mono">D</span> 跳，故 <span class="mono">z* ≥ D</span>。</p>
+    <p><strong>构造（<code>build_dimaccum_allreduce_flows</code>）</strong>：把 AllReduce 拆成「先按行规约、再按列规约」两相，每相是各行/各列上<strong>同时进行的一维双向扫描累加</strong>。关键技巧——<strong>东行波携带前缀和、西行波携带后缀和</strong>，两波同拍并行、永不抢占同一条有向边：</p>
+    <figure>
+      <svg viewBox="0 0 560 220" width="560" height="220" aria-label="AllReduce 单行双向累加机制">
+        <defs>
+          <marker id="ab" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 Z" fill="#60a5fa"/></marker>
+          <marker id="ap" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 Z" fill="#a78bfa"/></marker>
+        </defs>
+        <text x="20" y="26" fill="#94a3b8" font-size="12">相 X：某一行的双向维累加（cols=4 ⇒ 3 拍）</text>
+        <!-- baseline + 4 nodes -->
+        <line x1="80" y1="100" x2="440" y2="100" stroke="#334155" stroke-width="1"/>
+        <g fill="#1e293b" stroke="#475569">
+          <circle cx="80" cy="100" r="14"/><circle cx="200" cy="100" r="14"/>
+          <circle cx="320" cy="100" r="14"/><circle cx="440" cy="100" r="14"/>
+        </g>
+        <g fill="#e2e8f0" font-size="11" text-anchor="middle">
+          <text x="80" y="104">0</text><text x="200" y="104">1</text><text x="320" y="104">2</text><text x="440" y="104">3</text>
+        </g>
+        <!-- east prefix arrows (above) -->
+        <line x1="95" y1="78" x2="185" y2="78" stroke="#60a5fa" stroke-width="2.5" marker-end="url(#ab)"/>
+        <line x1="215" y1="78" x2="305" y2="78" stroke="#60a5fa" stroke-width="2.5" marker-end="url(#ab)"/>
+        <line x1="335" y1="78" x2="425" y2="78" stroke="#60a5fa" stroke-width="2.5" marker-end="url(#ab)"/>
+        <g fill="#60a5fa" font-size="10" text-anchor="middle">
+          <text x="140" y="68">s0</text><text x="260" y="68">s1</text><text x="380" y="68">s2</text>
+        </g>
+        <!-- west suffix arrows (below) -->
+        <line x1="425" y1="122" x2="335" y2="122" stroke="#a78bfa" stroke-width="2.5" marker-end="url(#ap)"/>
+        <line x1="305" y1="122" x2="215" y2="122" stroke="#a78bfa" stroke-width="2.5" marker-end="url(#ap)"/>
+        <line x1="185" y1="122" x2="95" y2="122" stroke="#a78bfa" stroke-width="2.5" marker-end="url(#ap)"/>
+        <g fill="#a78bfa" font-size="10" text-anchor="middle">
+          <text x="380" y="138">s0</text><text x="260" y="138">s1</text><text x="140" y="138">s2</text>
+        </g>
+        <text x="20" y="178" fill="#cbd5e1" font-size="11"><tspan fill="#60a5fa">东行波</tspan> = 前缀和：节点 t 收到 [0..t−1] 之和；<tspan fill="#a78bfa">西行波</tspan> = 后缀和：节点 t 收到 [t+1..3] 之和。</text>
+        <text x="20" y="200" fill="#4ade80" font-size="11">每节点 inline-reduce：前缀 + 自身 + 后缀 = 整行和，仅 cols−1=3 拍；两波同拍占不同有向边 ⇒ peak=1。</text>
+      </svg>
+      <figcaption>单行机制：东/西两波同时跑，节点把「西来前缀 + 自身 + 东来后缀」合成整行和。</figcaption>
+    </figure>
+    <figure>
+      <svg viewBox="0 0 560 240" width="560" height="240" aria-label="AllReduce 两相 4x4">
+        <defs>
+          <marker id="g1" markerWidth="7" markerHeight="7" refX="5" refY="2.5" orient="auto"><path d="M0,0 L5,2.5 L0,5 Z" fill="#60a5fa"/></marker>
+          <marker id="g2" markerWidth="7" markerHeight="7" refX="5" refY="2.5" orient="auto"><path d="M0,0 L5,2.5 L0,5 Z" fill="#4ade80"/></marker>
+        </defs>
+        <!-- left grid: X phase -->
+        <text x="20" y="24" fill="#60a5fa" font-size="12">相 X（slot 0–2）：每行并行双向累加 → 各节点得「行和」</text>
+        <g fill="#1e293b" stroke="#475569">
+          <!-- nodes 4x4: cx=40+ x*56 ; cy=60+ y*52 -->
+          <circle cx="40" cy="60" r="9"/><circle cx="96" cy="60" r="9"/><circle cx="152" cy="60" r="9"/><circle cx="208" cy="60" r="9"/>
+          <circle cx="40" cy="112" r="9"/><circle cx="96" cy="112" r="9"/><circle cx="152" cy="112" r="9"/><circle cx="208" cy="112" r="9"/>
+          <circle cx="40" cy="164" r="9"/><circle cx="96" cy="164" r="9"/><circle cx="152" cy="164" r="9"/><circle cx="208" cy="164" r="9"/>
+          <circle cx="40" cy="216" r="9"/><circle cx="96" cy="216" r="9"/><circle cx="152" cy="216" r="9"/><circle cx="208" cy="216" r="9"/>
+        </g>
+        <!-- horizontal bidirectional arrows per row -->
+        <g stroke="#60a5fa" stroke-width="1.6">
+          <line x1="51" y1="56" x2="85" y2="56" marker-end="url(#g1)"/><line x1="107" y1="56" x2="141" y2="56" marker-end="url(#g1)"/><line x1="163" y1="56" x2="197" y2="56" marker-end="url(#g1)"/>
+          <line x1="51" y1="108" x2="85" y2="108" marker-end="url(#g1)"/><line x1="107" y1="108" x2="141" y2="108" marker-end="url(#g1)"/><line x1="163" y1="108" x2="197" y2="108" marker-end="url(#g1)"/>
+          <line x1="51" y1="160" x2="85" y2="160" marker-end="url(#g1)"/><line x1="107" y1="160" x2="141" y2="160" marker-end="url(#g1)"/><line x1="163" y1="160" x2="197" y2="160" marker-end="url(#g1)"/>
+          <line x1="51" y1="212" x2="85" y2="212" marker-end="url(#g1)"/><line x1="107" y1="212" x2="141" y2="212" marker-end="url(#g1)"/><line x1="163" y1="212" x2="197" y2="212" marker-end="url(#g1)"/>
+        </g>
+        <g stroke="#a78bfa" stroke-width="1.6">
+          <line x1="197" y1="64" x2="163" y2="64" marker-end="url(#ap)"/><line x1="141" y1="64" x2="107" y2="64" marker-end="url(#ap)"/><line x1="85" y1="64" x2="51" y2="64" marker-end="url(#ap)"/>
+          <line x1="197" y1="116" x2="163" y2="116" marker-end="url(#ap)"/><line x1="141" y1="116" x2="107" y2="116" marker-end="url(#ap)"/><line x1="85" y1="116" x2="51" y2="116" marker-end="url(#ap)"/>
+          <line x1="197" y1="168" x2="163" y2="168" marker-end="url(#ap)"/><line x1="141" y1="168" x2="107" y2="168" marker-end="url(#ap)"/><line x1="85" y1="168" x2="51" y2="168" marker-end="url(#ap)"/>
+          <line x1="197" y1="220" x2="163" y2="220" marker-end="url(#ap)"/><line x1="141" y1="220" x2="107" y2="220" marker-end="url(#ap)"/><line x1="85" y1="220" x2="51" y2="220" marker-end="url(#ap)"/>
+        </g>
+        <!-- right grid: Y phase -->
+        <text x="320" y="24" fill="#4ade80" font-size="12">相 Y（slot 3–5）：每列并行双向累加 → 全局和</text>
+        <g fill="#1e293b" stroke="#475569">
+          <circle cx="340" cy="60" r="9"/><circle cx="396" cy="60" r="9"/><circle cx="452" cy="60" r="9"/><circle cx="508" cy="60" r="9"/>
+          <circle cx="340" cy="112" r="9"/><circle cx="396" cy="112" r="9"/><circle cx="452" cy="112" r="9"/><circle cx="508" cy="112" r="9"/>
+          <circle cx="340" cy="164" r="9"/><circle cx="396" cy="164" r="9"/><circle cx="452" cy="164" r="9"/><circle cx="508" cy="164" r="9"/>
+          <circle cx="340" cy="216" r="9"/><circle cx="396" cy="216" r="9"/><circle cx="452" cy="216" r="9"/><circle cx="508" cy="216" r="9"/>
+        </g>
+        <!-- vertical bidirectional arrows per column -->
+        <g stroke="#4ade80" stroke-width="1.6">
+          <line x1="336" y1="71" x2="336" y2="101" marker-end="url(#g2)"/><line x1="336" y1="123" x2="336" y2="153" marker-end="url(#g2)"/><line x1="336" y1="175" x2="336" y2="205" marker-end="url(#g2)"/>
+          <line x1="392" y1="71" x2="392" y2="101" marker-end="url(#g2)"/><line x1="392" y1="123" x2="392" y2="153" marker-end="url(#g2)"/><line x1="392" y1="175" x2="392" y2="205" marker-end="url(#g2)"/>
+          <line x1="448" y1="71" x2="448" y2="101" marker-end="url(#g2)"/><line x1="448" y1="123" x2="448" y2="153" marker-end="url(#g2)"/><line x1="448" y1="175" x2="448" y2="205" marker-end="url(#g2)"/>
+          <line x1="504" y1="71" x2="504" y2="101" marker-end="url(#g2)"/><line x1="504" y1="123" x2="504" y2="153" marker-end="url(#g2)"/><line x1="504" y1="175" x2="504" y2="205" marker-end="url(#g2)"/>
+        </g>
+        <g stroke="#a78bfa" stroke-width="1.6">
+          <line x1="348" y1="205" x2="348" y2="175" marker-end="url(#ap)"/><line x1="348" y1="153" x2="348" y2="123" marker-end="url(#ap)"/><line x1="348" y1="101" x2="348" y2="71" marker-end="url(#ap)"/>
+          <line x1="404" y1="205" x2="404" y2="175" marker-end="url(#ap)"/><line x1="404" y1="153" x2="404" y2="123" marker-end="url(#ap)"/><line x1="404" y1="101" x2="404" y2="71" marker-end="url(#ap)"/>
+          <line x1="460" y1="205" x2="460" y2="175" marker-end="url(#ap)"/><line x1="460" y1="153" x2="460" y2="123" marker-end="url(#ap)"/><line x1="460" y1="101" x2="460" y2="71" marker-end="url(#ap)"/>
+          <line x1="516" y1="205" x2="516" y2="175" marker-end="url(#ap)"/><line x1="516" y1="153" x2="516" y2="123" marker-end="url(#ap)"/><line x1="516" y1="101" x2="516" y2="71" marker-end="url(#ap)"/>
+        </g>
+      </svg>
+      <figcaption>4×4：相 X 用 3 拍让每节点持有行和，相 Y 再用 3 拍合成全局和。makespan = (4−1)+(4−1) = <strong>6 = D</strong>，紧贴下界。</figcaption>
+    </figure>
+    <div class="formula mono">
+      Z = (cols−1) + (rows−1) = X+Y−2 = D · peak=1 · stall=0 · P_min=1（转发规则逐拍不变）
+    </div>
+  </div>
+
+  <div class="panel">
+    <h3>2.5.2 AllToAll → 下界 <span class="mono">z* = max(N·cols/4, N·rows/4)</span>：二相维序 + 区间着色</h3>
+    <p><strong>为什么下界是对剖（bisection）负载？</strong> 把 mesh 竖切成左右两半（各 N/2 节点），左半每个节点都要发给右半每个节点，共 <span class="mono">(N/2)²=N²/4</span> 条消息，全部必须穿过那 <span class="mono">rows</span> 条东向切边；故最忙的一条切边至少承载 <span class="mono">N²/4 / rows = N·cols/4</span> 拍。横切同理。任何无冲突日历都不可能短于 <span class="mono">z*</span>。</p>
+    <figure>
+      <svg viewBox="0 0 560 210" width="560" height="210" aria-label="AllToAll 4x4 对剖下界">
+        <text x="20" y="22" fill="#94a3b8" font-size="12">4×4 竖切对剖：左 8 节点 → 右 8 节点 = 64 条消息</text>
+        <g fill="#1e293b" stroke="#475569">
+          <circle cx="60" cy="60" r="10"/><circle cx="120" cy="60" r="10"/><circle cx="180" cy="60" r="10"/><circle cx="240" cy="60" r="10"/>
+          <circle cx="60" cy="104" r="10"/><circle cx="120" cy="104" r="10"/><circle cx="180" cy="104" r="10"/><circle cx="240" cy="104" r="10"/>
+          <circle cx="60" cy="148" r="10"/><circle cx="120" cy="148" r="10"/><circle cx="180" cy="148" r="10"/><circle cx="240" cy="148" r="10"/>
+          <circle cx="60" cy="192" r="10"/><circle cx="120" cy="192" r="10"/><circle cx="180" cy="192" r="10"/><circle cx="240" cy="192" r="10"/>
+        </g>
+        <!-- the 4 crossing edges (col1 -> col2) -->
+        <g stroke="#f59e0b" stroke-width="3">
+          <line x1="131" y1="60" x2="169" y2="60"/><line x1="131" y1="104" x2="169" y2="104"/>
+          <line x1="131" y1="148" x2="169" y2="148"/><line x1="131" y1="192" x2="169" y2="192"/>
+        </g>
+        <line x1="150" y1="38" x2="150" y2="210" stroke="#ef4444" stroke-width="1.5" stroke-dasharray="5 4"/>
+        <text x="156" y="34" fill="#ef4444" font-size="10">cut</text>
+        <text x="300" y="70" fill="#cbd5e1" font-size="12">N²/4 = 64 条消息</text>
+        <text x="300" y="92" fill="#f59e0b" font-size="12">4 条东向切边（每行 1 条）</text>
+        <text x="300" y="114" fill="#cbd5e1" font-size="12">⇒ 64 / 4 = <tspan fill="#4ade80" font-weight="700">16 拍/切边</tspan></text>
+        <text x="300" y="140" fill="#4ade80" font-size="13" font-weight="700">z* = N·cols/4 = 16</text>
+        <text x="300" y="166" fill="#64748b" font-size="10">横切同样给 16 ⇒ z* = max(16,16) = 16</text>
+      </svg>
+      <figcaption>对剖论证：64 条跨切消息 ÷ 4 条切边 = 每边至少 16 拍 ⇒ <span class="mono">z*=16</span>。</figcaption>
+    </figure>
+    <p><strong>构造（<code>build_alltoall_twophase_flows</code>）</strong>：沿 XY 路径把每条消息天然拆成「行段 → 列段」，得两相各自<strong>独立的一维全交换</strong>，再用<strong>区间着色 first-fit</strong> 给出闭式无冲突注入相位（重叠的行/列区间分配不同色层，色数 = 最忙链负载）：</p>
+    <figure>
+      <svg viewBox="0 0 560 220" width="560" height="220" aria-label="AllToAll 4x4 二相流水">
+        <defs>
+          <marker id="aa" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 Z" fill="#64748b"/></marker>
+        </defs>
+        <text x="16" y="22" fill="#94a3b8" font-size="12">二相维序（每条有向边 peak=1，注入全预排 ⇒ stall=0）</text>
+        <rect x="20" y="44" width="150" height="96" rx="6" fill="#1e293b" stroke="#60a5fa"/>
+        <text x="34" y="64" fill="#60a5fa" font-size="11">相 X：行内全交换</text>
+        <text x="34" y="86" fill="#cbd5e1" font-size="10">sx → dx，区间着色</text>
+        <text x="34" y="102" fill="#cbd5e1" font-size="10">φ = 左端点 + 色层 g</text>
+        <text x="34" y="124" fill="#4ade80" font-size="11">Tx ≈ N·cols/4 = 16</text>
+        <rect x="200" y="44" width="120" height="96" rx="6" fill="#2e1065" stroke="#a78bfa"/>
+        <text x="214" y="64" fill="#a78bfa" font-size="11">PE 中继</text>
+        <text x="214" y="88" fill="#cbd5e1" font-size="10">eject → reinject</text>
+        <text x="214" y="104" fill="#cbd5e1" font-size="10">维度切换一次</text>
+        <text x="214" y="126" fill="#f59e0b" font-size="11">+ PE = 10</text>
+        <rect x="350" y="44" width="160" height="96" rx="6" fill="#1e3a2f" stroke="#4ade80"/>
+        <text x="364" y="64" fill="#4ade80" font-size="11">相 Y：列内全交换</text>
+        <text x="364" y="86" fill="#cbd5e1" font-size="10">sy → dy，区间着色</text>
+        <text x="364" y="102" fill="#cbd5e1" font-size="10">φ = 上端点 + 色层 g</text>
+        <text x="364" y="124" fill="#4ade80" font-size="11">Ty ≈ N·rows/4 = 16</text>
+        <line x1="170" y1="92" x2="200" y2="92" stroke="#64748b" marker-end="url(#aa)"/>
+        <line x1="320" y1="92" x2="350" y2="92" stroke="#64748b" marker-end="url(#aa)"/>
+        <text x="16" y="172" fill="#cbd5e1" font-size="11">Z = Tx + PE + Ty ≈ 16 + 10 + 16 = <tspan fill="#4ade80" font-weight="700">44</tspan>（实测，已 verify_preassigned_slots：peak=1, stall=0）</text>
+        <text x="16" y="194" fill="#64748b" font-size="10">即 z* 的 2.75×：小 mesh 被固定 PE=10 拉高；大 mesh（12×16）趋于 2× —— 「零等待 vs 短 makespan」取舍。</text>
+      </svg>
+      <figcaption>两相串行 + 一次 PE 中继；每相区间着色保证每条有向链每拍 ≤1 flit。4×4 实测 Z=44。</figcaption>
+    </figure>
+    <div class="formula mono">
+      Z = Tx + PE_INOUT + Ty ≈ N·cols/4 + N·rows/4 ≤ 2·z* · peak=1 · stall=0
+    </div>
+    <p class="muted">区别于 §4 的贪心 XY 基线（makespan 更接近 z* 但有在线源端 <span class="mono">stall&gt;0</span>）：二相构造把注入<strong>全部预排</strong>，换来严格 <span class="mono">stall=0、peak=1</span>，代价是串行两相的 <span class="mono">Z≈2z*</span>。开放 mesh 上单相精确达 <span class="mono">z*</span> 仍是调度搜索问题（环面可用步进轮转精确达界）。</p>
+  </div>
+</section>
+
+<section>
   <h2>3. Router 时隙表最短大小</h2>
   <div class="panel">
     <h3>3.1 定义</h3>
