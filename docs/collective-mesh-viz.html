@@ -61,7 +61,7 @@ svg text{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
   <strong>Flat butterfly n=2 (pipelined)</strong>：二维 radix-k flattened butterfly（直连单跳 leg、全行/全列参与）；
   在多种 flat-bf 流水实现间取最小 makespan；router 无 stride/轴屏障。
   <br><strong>达界构造</strong>：All-reduce 选 <code>Dim-accum 维累加</code> 可达下界 <code>z*=X+Y−2=D</code>（东行前缀波 + 西行后缀波，两相各 cols−1 / rows−1 拍）；
-  All-to-all 选 <code>Two-phase 二相</code> 为 <code>stall=0、peak=1</code> 的预排日历（行全交换 → PE 中继 → 列全交换，<code>Z≈2·z*</code>），对照 <code>XY 刚性</code> 基线可见冲突（Max edge sharing &gt; 1）。详见 <code>conflict_free_collectives_report.html</code> §2.5。
+  All-to-all 默认 <code>Single-phase 单相 rigid-XY</code>：<strong>无 stage、无 PE 中继</strong>，单一注入相位 φ（第 h 跳占 slot φ+h，转角 in-router）即 <code>stall=0、peak=1</code>，<code>Z≈z*</code>（实测 17/134/791 @ 4×4/8×8/12×16，优于二相 ~2.75×）；可切 <code>Two-phase 二相</code>（<code>Z≈2z*</code>）或 <code>XY 刚性</code> 基线（Max edge sharing &gt; 1）对照。详见 <code>conflict_free_collectives_report.html</code> §2.5 / §5.1。
 </div>
 
 <div class="controls">
@@ -126,7 +126,8 @@ const ALG_NAMES={
   "ring-xy":"XY ring (pipelined)",
   "ring-snake":"Snake ring (baseline)",
   "dimaccum":"Dim-accum 维累加 (z*=D)",
-  "a2a-twophase":"Two-phase 二相 (stall=0)",
+  "a2a-singlephase":"Single-phase 单相 rigid-XY (≈z*)",
+  "a2a-twophase":"Two-phase 二相 (stall=0, ≈2z*)",
   "a2a-xy":"XY 刚性 (baseline, 有冲突)",
 };
 const ALG_NOTES={
@@ -136,8 +137,9 @@ const ALG_NOTES={
   "ring-xy":"XY ring 先做行内并行 ring/chain 阶段，再做列内并行阶段；gather/reduce 反向聚合，all-reduce 近似为 reduce+broadcast。",
   "ring-snake":"Snake ring 是 legacy baseline：把 2D mesh 拉平成一条 snake 逻辑环/链。",
   "dimaccum":"双向维累加：相 X 每行同拍跑「东行前缀波 + 西行后缀波」(cols−1 拍)，相 Y 每列同理 (rows−1 拍)；每节点 inline-reduce 合成全局和。makespan = X+Y−2 = D，紧贴下界，peak=1。",
+  "a2a-singlephase":"单相 rigid-XY（无 stage / 无 PE 中继）：水平边只载 X 段、垂直边只载 Y 段，资源互不相交 ⇒ 转角 in-router 刚性直转，每条消息单一注入相位 φ（第 h 跳占 slot φ+h）。最长路径优先 first-fit 预分配 ⇒ peak=1, stall=0；Z≈z*（实测 ≈1.03–1.06×），优于二相 ~2.75×。",
   "a2a-twophase":"二相维序 + 区间着色：相 X 行内全交换 → PE 中继 → 相 Y 列内全交换。注入全预排 ⇒ stall=0、每条有向边 peak=1；Z≈2·z*（z*=对剖负载）。",
-  "a2a-xy":"刚性 XY 基线：所有消息同时按 XY 路径直发，演示链路冲突（Max edge sharing≫1），凸显为何需要二相预排。",
+  "a2a-xy":"刚性 XY 基线：所有消息同时按 XY 路径直发，演示链路冲突（Max edge sharing≫1），凸显为何需要预排。",
 };
 let current=null;
 
@@ -1191,21 +1193,47 @@ function scheduleAllToAllXY(rows,cols,base){
   }
   return scheduleFromResolvedFlows(flows,"all-to-all XY 刚性 (有冲突)");
 }
+function scheduleAllToAllSinglePhase(rows,cols,base){
+  // No X->Y stage / no PE relay: horizontal edges carry only X-segments, vertical only Y-segments,
+  // so a single injection phase phi per message (rigid +1/hop, in-router corner turn) suffices.
+  // Longest-first decreasing first-fit packs the congested bisection edges tightly -> Z ~= z*.
+  const n=rows*cols, reserved=new Map();
+  const free=(e,t)=>!(reserved.get(e)&&reserved.get(e).has(t));
+  const items=[];
+  for(let s=0;s<n;s++) for(let d=0;d<n;d++){ if(s===d) continue;
+    items.push({s,d,p:path(node(s%cols,Math.floor(s/cols)),node(d%cols,Math.floor(d/cols)))});
+  }
+  items.sort((a,b)=>b.p.length-a.p.length||a.s-b.s||a.d-b.d);
+  const flows=[]; let cid=0;
+  for(const it of items){
+    let phi=0;
+    // reserve base consecutive slots per edge (flit pipeline at +1) so peak=1 holds for flits>1.
+    for(;;){ let ok=true; for(let h=0;h<it.p.length&&ok;h++) for(let i=0;i<base;i++){ if(!free(it.p[h].id,phi+h+i)){ok=false;break;} } if(ok) break; phi++; }
+    for(let h=0;h<it.p.length;h++){ let set=reserved.get(it.p[h].id); if(!set){set=new Set();reserved.set(it.p[h].id,set);} for(let i=0;i<base;i++) set.add(phi+h+i); }
+    const f=flow(`a2a1p${cid}`,node(it.s%cols,Math.floor(it.s/cols)),node(it.d%cols,Math.floor(it.d/cols)),base,`${it.s}->${it.d}`,cid,"单相 rigid-XY (φ+h)");
+    f.period=1; f.hopCycles=[];
+    for(let i=0;i<base;i++) f.hopCycles[i]=it.p.map((_,h)=>phi+h+i);
+    flows.push(f); cid++;
+  }
+  const duration=durationFromFlows(flows);
+  return {flows,period:1,duration,label:"all-to-all 单相 rigid-XY",stages:[{label:"单相 rigid-XY (φ+h)",flows,period:1,duration}],peak:peakEdgeOccupancy({flows,period:1,duration})};
+}
 function algorithmsFor(op){
-  if(op==="alltoall") return ["a2a-twophase","a2a-xy"];
+  if(op==="alltoall") return ["a2a-singlephase","a2a-twophase","a2a-xy"];
   if(op==="allreduce") return ["dimaccum","butterfly-pipelined","tree-pipelined","ring-xy","butterfly-basic","ring-snake"];
   return ["butterfly-basic","butterfly-pipelined","tree-pipelined","ring-xy","ring-snake"];
 }
 function buildSchedule(rows,cols,op,alg,base){
   if(op==="alltoall"){
     if(alg==="a2a-xy") return scheduleAllToAllXY(rows,cols,base);
-    return scheduleAllToAllTwoPhase(rows,cols,base);
+    if(alg==="a2a-twophase") return scheduleAllToAllTwoPhase(rows,cols,base);
+    return scheduleAllToAllSinglePhase(rows,cols,base);
   }
   if(alg==="dimaccum"){
     if(op==="allreduce") return scheduleDimAccumAllreduce(rows,cols,base);
     return scheduleDimwise(rows,cols,op,base);
   }
-  if(alg==="a2a-twophase"||alg==="a2a-xy") return scheduleDimwise(rows,cols,op,base);
+  if(alg==="a2a-singlephase"||alg==="a2a-twophase"||alg==="a2a-xy") return scheduleDimwise(rows,cols,op,base);
   if(alg==="butterfly-basic") return scheduleButterflyBasic(rows,cols,op,base);
   if(alg==="butterfly-pipelined") return scheduleButterflyPipelined(rows,cols,op,base);
   if(alg==="tree-pipelined") return scheduleTree(rows,cols,op,base);

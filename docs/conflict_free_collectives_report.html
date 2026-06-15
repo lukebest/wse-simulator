@@ -536,11 +536,42 @@
       <figcaption>区间着色让每相每条有向链 peak=1、注入预排无源端 stall；维度切换用一次 PE 中继。Z ≈ N(cols+rows)/4 ≤ 2·z*。</figcaption>
     </figure>
 
+    <h4>更短的达界构造：单相 rigid-XY（无 stage / 无 PE 中继，Z≈z*）</h4>
+    <p>二相的 <span class="mono">≈2·z*</span> <strong>不是 all-to-all 的固有代价，而是分 stage（X→Y 屏障 + PE 中继）的代价</strong>。关键观察：<u>水平边只承载 X 段、垂直边只承载 Y 段</u>（两类资源互不相交），因此一条消息可在转角 router 内<strong>刚性直转</strong>（每跳 +1，不弹出 PE、不设屏障）——XY 维序网络天然支持。于是<strong>每条消息只需单一注入相位 φ</strong>：整条 L 形路径第 <span class="mono">h</span> 跳占用 slot <span class="mono">φ+h</span>。按<strong>最长路径优先 decreasing first-fit（LPT）</strong>放置——角到角的长路径恰好穿过最拥塞的对剖边，先排满、短路径填空隙——即得无冲突日历。</p>
+    <figure>
+      <svg viewBox="0 0 560 180" width="560" height="180" aria-label="单相 rigid-XY all-to-all">
+        <defs>
+          <marker id="aa1pb" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 Z" fill="#60a5fa"/></marker>
+          <marker id="aa1pg" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 Z" fill="#4ade80"/></marker>
+        </defs>
+        <text x="16" y="24" fill="#94a3b8" font-size="12">单相：单一注入相位 φ，整条 XY 路径刚性 +1/跳，转角 in-router（无 PE、无屏障）</text>
+        <g fill="#1e293b" stroke="#475569">
+          <circle cx="70" cy="110" r="12"/><circle cx="150" cy="110" r="12"/><circle cx="230" cy="110" r="12"/><circle cx="230" cy="64" r="12"/>
+        </g>
+        <g stroke="#60a5fa" stroke-width="2.5">
+          <line x1="83" y1="110" x2="137" y2="110" marker-end="url(#aa1pb)"/>
+          <line x1="163" y1="110" x2="217" y2="110" marker-end="url(#aa1pb)"/>
+        </g>
+        <line x1="230" y1="98" x2="230" y2="78" stroke="#4ade80" stroke-width="2.5" marker-end="url(#aa1pg)"/>
+        <g font-size="11" text-anchor="middle">
+          <text x="110" y="100" fill="#60a5fa">slot φ</text><text x="190" y="100" fill="#60a5fa">φ+1</text>
+          <text x="262" y="86" fill="#4ade80">φ+2</text><text x="232" y="140" fill="#a78bfa" font-size="10">转角 in-router</text>
+        </g>
+        <text x="320" y="70" fill="#cbd5e1" font-size="12">水平边 ⟸ 仅 X 段</text>
+        <text x="320" y="90" fill="#cbd5e1" font-size="12">垂直边 ⟸ 仅 Y 段（资源不相交）</text>
+        <text x="320" y="116" fill="#4ade80" font-size="13" font-weight="700">Z = 17 / 134 / 791</text>
+        <text x="320" y="136" fill="#64748b" font-size="10">4×4 / 8×8 / 12×16 ≈ 1.06× / 1.05× / 1.03× z*</text>
+        <text x="320" y="156" fill="#64748b" font-size="10">（vs 二相 44 / 272 / 1366 ≈ 2.75× / 2.13× / 1.78×）</text>
+      </svg>
+      <figcaption>单相 rigid-XY：去掉 stage 屏障与 PE 中继，单一相位即无冲突（peak=1, stall=0），makespan 逼近对剖下界。</figcaption>
+    </figure>
+    <p class="muted"><strong>为什么树 / 环不行：</strong>对剖下界 <span class="mono">z*</span> 对任何方法都成立（<span class="mono">N²/4</span> 条消息必过切边），达界须<strong>用满所有切边</strong>。基于单树 / 单 Hamilton 环的 all-to-all 把流量挤到少数链路、填不满对剖带宽，反而更慢（树 / 环适合 broadcast/reduce 的一对多）。真正的杠杆不是换拓扑，而是<strong>去掉 stage 串行化</strong>——单相 rigid-XY 在维序网络上同时跑满横、纵两类边。<strong>代价</strong>：φ 无闭式（离线贪心 first-fit，多项式确定性），二相则有闭式区间着色。</p>
+
     <h4>权衡与现状</h4>
     <ul>
-      <li><strong>stall=0 vs makespan</strong>：二相构造保证 <span class="mono">stall=0、peak=1</span>，代价是 <span class="mono">Z≈2·z*</span>（串行两相）；§4 的贪心 XY makespan 更接近 z*，但有在线源端 stall。两者是<strong>「零等待 vs 短 makespan」</strong>的取舍。</li>
-      <li><strong>逼近 z*</strong>：环面（torus）可用「步进轮转」单相日历精确达 <span class="mono">z*</span>；开放 mesh 单相精确 <span class="mono">z*</span> 无简单闭式，属调度搜索问题。</li>
-      <li><strong>实现状态</strong>：二相 stall=0 调度器已实现（<code>collective_patterns.build_alltoall_twophase_flows</code>），§4 表含其实测行；贪心基线行并列对照。可视化见 <a href="color_mesh_viz.html">color_mesh_viz.html</a> 的 all-to-all <span class="mono">variant=「二相 stall=0」</span>。</li>
+      <li><strong>单相优先</strong>：单相 rigid-XY 同时给出 <span class="mono">stall=0、peak=1</span> 且 <span class="mono">Z≈z*</span>（≈1.03–1.06×），是目前最佳；二相 <span class="mono">Z≈2·z*</span> 仅在需要<strong>闭式区间着色 / 显式维度分相</strong>时才更合适；§4 的贪心 XY makespan 也接近 z* 但有在线源端 stall。</li>
+      <li><strong>逼近 z*</strong>：环面（torus）可用「步进轮转」单相日历精确达 <span class="mono">z*</span>；开放 mesh 单相 first-fit（LPT）实测 <span class="mono">Z/z* ≈ 1.03–1.06</span>，精确最优无简单闭式（属调度搜索问题），但贪心已足够紧。</li>
+      <li><strong>实现状态</strong>：二相 stall=0 调度器已实现（<code>collective_patterns.build_alltoall_twophase_flows</code>），§4 表含其实测行。可视化见 <a href="color_mesh_viz.html">color_mesh_viz.html</a>（默认 <span class="mono">variant=「单相 rigid-XY」</span>，另含二相 / 贪心 XY 对照）与 <a href="collective-mesh-viz.html">collective-mesh-viz.html</a>（all-to-all 三档 <span class="mono">单相 / 二相 / XY 刚性</span>）。</li>
     </ul>
   </div>
 </section>
