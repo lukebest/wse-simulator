@@ -60,6 +60,8 @@ svg text{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
   调度模型按 flit 建立依赖：沿路径传播时，某个 flit 到达下一节点后的下一 cycle 即可继续转发，不等待同一 block 的全部 flit。
   <strong>Flat butterfly n=2 (pipelined)</strong>：二维 radix-k flattened butterfly（直连单跳 leg、全行/全列参与）；
   在多种 flat-bf 流水实现间取最小 makespan；router 无 stride/轴屏障。
+  <br><strong>达界构造</strong>：All-reduce 选 <code>Dim-accum 维累加</code> 可达下界 <code>z*=X+Y−2=D</code>（东行前缀波 + 西行后缀波，两相各 cols−1 / rows−1 拍）；
+  All-to-all 默认 <code>Single-phase 单相 rigid-XY</code>：<strong>无 stage、无 PE 中继</strong>，单一注入相位 φ（第 h 跳占 slot φ+h，转角 in-router）即 <code>stall=0、peak=1</code>，<code>Z≈z*</code>（实测 17/134/791 @ 4×4/8×8/12×16，优于二相 ~2.75×）；可切 <code>Two-phase 二相</code>（<code>Z≈2z*</code>）或 <code>XY 刚性</code> 基线（Max edge sharing &gt; 1）对照。详见 <code>conflict_free_collectives_report.html</code> §2.5 / §5.1。
 </div>
 
 <div class="controls">
@@ -72,16 +74,11 @@ svg text{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
       <option value="reduce">Reduce</option>
       <option value="allreduce">All-reduce</option>
       <option value="allgather">All-gather</option>
+      <option value="alltoall">All-to-all</option>
     </select>
   </label>
   <label>Algorithm
-    <select id="alg">
-      <option value="butterfly-basic">Flat butterfly n=2 (basic)</option>
-      <option value="butterfly-pipelined">Flat butterfly n=2 (pipelined)</option>
-      <option value="tree-pipelined">2D tree (pipelined)</option>
-      <option value="ring-xy">XY ring (pipelined)</option>
-      <option value="ring-snake">Snake ring (baseline)</option>
-    </select>
+    <select id="alg"></select>
   </label>
   <label>Flits per block <input id="flits" type="number" min="1" max="24" value="3"></label>
   <label>Cycle <input id="cycle" type="number" min="0" value="0"></label>
@@ -128,6 +125,10 @@ const ALG_NAMES={
   "tree-pipelined":"2D tree (pipelined)",
   "ring-xy":"XY ring (pipelined)",
   "ring-snake":"Snake ring (baseline)",
+  "dimaccum":"Dim-accum 维累加 (z*=D)",
+  "a2a-singlephase":"Single-phase 单相 rigid-XY (≈z*)",
+  "a2a-twophase":"Two-phase 二相 (stall=0, ≈2z*)",
+  "a2a-xy":"XY 刚性 (baseline, 有冲突)",
 };
 const ALG_NOTES={
   "butterfly-basic":"n=2 flattened butterfly（直连 leg、全行/全列），保留 X/Y stage 屏障。",
@@ -135,6 +136,10 @@ const ALG_NOTES={
   "tree-pipelined":"2D tree 使用行/列链式树，按 flit 在相邻 mesh edge 上流水转发。",
   "ring-xy":"XY ring 先做行内并行 ring/chain 阶段，再做列内并行阶段；gather/reduce 反向聚合，all-reduce 近似为 reduce+broadcast。",
   "ring-snake":"Snake ring 是 legacy baseline：把 2D mesh 拉平成一条 snake 逻辑环/链。",
+  "dimaccum":"双向维累加：相 X 每行同拍跑「东行前缀波 + 西行后缀波」(cols−1 拍)，相 Y 每列同理 (rows−1 拍)；每节点 inline-reduce 合成全局和。makespan = X+Y−2 = D，紧贴下界，peak=1。",
+  "a2a-singlephase":"单相 rigid-XY（无 stage / 无 PE 中继）：水平边只载 X 段、垂直边只载 Y 段，资源互不相交 ⇒ 转角 in-router 刚性直转，每条消息单一注入相位 φ（第 h 跳占 slot φ+h）。最长路径优先 first-fit 预分配 ⇒ peak=1, stall=0；Z≈z*（实测 ≈1.03–1.06×），优于二相 ~2.75×。",
+  "a2a-twophase":"二相维序 + 区间着色：相 X 行内全交换 → PE 中继 → 相 Y 列内全交换。注入全预排 ⇒ stall=0、每条有向边 peak=1；Z≈2·z*（z*=对剖负载）。",
+  "a2a-xy":"刚性 XY 基线：所有消息同时按 XY 路径直发，演示链路冲突（Max edge sharing≫1），凸显为何需要预排。",
 };
 let current=null;
 
@@ -1099,7 +1104,136 @@ function scheduleButterflyPipelined(rows,cols,op,base){
   }
   return scheduleButterflyRouter(rows,cols,base,op);
 }
+const PE_INOUT_LATENCY=10;
+function zStar(op,rows,cols){
+  const n=rows*cols, D=rows+cols-2;
+  if(op==="broadcast"||op==="reduce"||op==="allreduce") return D;
+  if(op==="allgather"||op==="gather") return Math.ceil((n-1)/2);
+  if(op==="alltoall") return Math.max(Math.ceil(n*cols/4),Math.ceil(n*rows/4));
+  return 0;
+}
+function scheduleDimAccumAllreduce(rows,cols,base){
+  const flows=[]; let idx=0,cid=0;
+  for(let y=0;y<rows;y++){
+    for(let t=0;t<cols-1;t++){
+      flows.push(setTiming(flow(`ARxe${idx++}`,node(t,y),node(t+1,y),base,"prefix sum",cid++,"X 维累加 (东:前缀波)"),t,1,"X 维累加 (东:前缀波)"));
+      const wx=cols-2-t;
+      flows.push(setTiming(flow(`ARxw${idx++}`,node(wx+1,y),node(wx,y),base,"suffix sum",cid++,"X 维累加 (西:后缀波)"),t,1,"X 维累加 (西:后缀波)"));
+    }
+  }
+  const xPhase=cols-1;
+  for(let x=0;x<cols;x++){
+    for(let t=0;t<rows-1;t++){
+      const slot=xPhase+t;
+      flows.push(setTiming(flow(`ARys${idx++}`,node(x,t),node(x,t+1),base,"prefix sum",cid++,"Y 维累加 (南:前缀波)"),slot,1,"Y 维累加 (南:前缀波)"));
+      const wy=rows-2-t;
+      flows.push(setTiming(flow(`ARyn${idx++}`,node(x,wy+1),node(x,wy),base,"suffix sum",cid++,"Y 维累加 (北:后缀波)"),slot,1,"Y 维累加 (北:后缀波)"));
+    }
+  }
+  return scheduleFromResolvedFlows(flows,"dim-accum all-reduce (z*=D)");
+}
+function scheduleAllToAllTwoPhase(rows,cols,base){
+  const n=rows*cols, reserved=new Map();
+  const free=(eid,slot)=>!(reserved.get(eid)&&reserved.get(eid).has(slot));
+  function firstFree(edges,start){
+    let phi=start;
+    while(true){
+      let ok=true;
+      for(let j=0;j<edges.length;j++) for(let i=0;i<base;i++){ if(!free(edges[j].id,phi+j+i)){ok=false;break;} }
+      if(ok) return phi; phi++;
+    }
+  }
+  function occupy(edges,phi){
+    for(let j=0;j<edges.length;j++){
+      const e=edges[j]; let s=reserved.get(e.id); if(!s){s=new Set();reserved.set(e.id,s);}
+      for(let i=0;i<base;i++) s.add(phi+j+i);
+    }
+  }
+  const items=[];
+  for(let s=0;s<n;s++){ const sx=s%cols,sy=Math.floor(s/cols);
+    for(let d=0;d<n;d++){ if(s===d) continue; const dx=d%cols,dy=Math.floor(d/cols);
+      const p=path(node(sx,sy),node(dx,dy)), nx=Math.abs(dx-sx);
+      items.push({s,d,sx,sy,dx,dy,p,nx});
+    }
+  }
+  const xItems=items.filter(it=>it.nx>0).slice().sort((a,b)=>(Math.min(a.sx,a.dx)-Math.min(b.sx,b.dx))||(Math.abs(a.dx-a.sx)-Math.abs(b.dx-b.sx)));
+  let tx=0;
+  for(const it of xItems){
+    const xe=it.p.slice(0,it.nx), phi=firstFree(xe,0);
+    occupy(xe,phi); it.xphi=phi; tx=Math.max(tx,phi+it.nx-1+base);
+  }
+  const barrier=tx+PE_INOUT_LATENCY;
+  const yItems=items.filter(it=>it.p.length-it.nx>0).slice().sort((a,b)=>(Math.min(a.sy,a.dy)-Math.min(b.sy,b.dy))||(Math.abs(a.dy-a.sy)-Math.abs(b.dy-b.sy)));
+  for(const it of yItems){
+    const ye=it.p.slice(it.nx), phi=firstFree(ye,barrier);
+    occupy(ye,phi); it.yphi=phi;
+  }
+  const flows=[]; let cid=0;
+  for(const it of items){
+    const f=flow(`a2a${cid}`,node(it.sx,it.sy),node(it.dx,it.dy),base,`${it.s}->${it.d}`,cid,"二相 (X→PE→Y)");
+    f.period=1; f.hopCycles=[];
+    for(let i=0;i<base;i++){
+      const hc=[];
+      for(let j=0;j<it.nx;j++) hc[j]=it.xphi+j+i;
+      for(let k=0;k<it.p.length-it.nx;k++) hc[it.nx+k]=it.yphi+k+i;
+      f.hopCycles[i]=hc;
+    }
+    flows.push(f); cid++;
+  }
+  const duration=durationFromFlows(flows);
+  return {flows,period:1,duration,label:"all-to-all 二相 stall=0",stages:[{label:"二相 (X→PE→Y)",flows,period:1,duration}],peak:peakEdgeOccupancy({flows,period:1,duration})};
+}
+function scheduleAllToAllXY(rows,cols,base){
+  const n=rows*cols, flows=[]; let cid=0;
+  for(let s=0;s<n;s++){ const a=node(s%cols,Math.floor(s/cols));
+    for(let d=0;d<n;d++){ if(s===d) continue; const b=node(d%cols,Math.floor(d/cols));
+      flows.push(setTiming(flow(`xy${cid}`,a,b,base,`${s}->${d}`,cid,"XY 刚性 (start=0)"),0,1,"XY 刚性 (start=0)"));
+      cid++;
+    }
+  }
+  return scheduleFromResolvedFlows(flows,"all-to-all XY 刚性 (有冲突)");
+}
+function scheduleAllToAllSinglePhase(rows,cols,base){
+  // No X->Y stage / no PE relay: horizontal edges carry only X-segments, vertical only Y-segments,
+  // so a single injection phase phi per message (rigid +1/hop, in-router corner turn) suffices.
+  // Longest-first decreasing first-fit packs the congested bisection edges tightly -> Z ~= z*.
+  const n=rows*cols, reserved=new Map();
+  const free=(e,t)=>!(reserved.get(e)&&reserved.get(e).has(t));
+  const items=[];
+  for(let s=0;s<n;s++) for(let d=0;d<n;d++){ if(s===d) continue;
+    items.push({s,d,p:path(node(s%cols,Math.floor(s/cols)),node(d%cols,Math.floor(d/cols)))});
+  }
+  items.sort((a,b)=>b.p.length-a.p.length||a.s-b.s||a.d-b.d);
+  const flows=[]; let cid=0;
+  for(const it of items){
+    let phi=0;
+    // reserve base consecutive slots per edge (flit pipeline at +1) so peak=1 holds for flits>1.
+    for(;;){ let ok=true; for(let h=0;h<it.p.length&&ok;h++) for(let i=0;i<base;i++){ if(!free(it.p[h].id,phi+h+i)){ok=false;break;} } if(ok) break; phi++; }
+    for(let h=0;h<it.p.length;h++){ let set=reserved.get(it.p[h].id); if(!set){set=new Set();reserved.set(it.p[h].id,set);} for(let i=0;i<base;i++) set.add(phi+h+i); }
+    const f=flow(`a2a1p${cid}`,node(it.s%cols,Math.floor(it.s/cols)),node(it.d%cols,Math.floor(it.d/cols)),base,`${it.s}->${it.d}`,cid,"单相 rigid-XY (φ+h)");
+    f.period=1; f.hopCycles=[];
+    for(let i=0;i<base;i++) f.hopCycles[i]=it.p.map((_,h)=>phi+h+i);
+    flows.push(f); cid++;
+  }
+  const duration=durationFromFlows(flows);
+  return {flows,period:1,duration,label:"all-to-all 单相 rigid-XY",stages:[{label:"单相 rigid-XY (φ+h)",flows,period:1,duration}],peak:peakEdgeOccupancy({flows,period:1,duration})};
+}
+function algorithmsFor(op){
+  if(op==="alltoall") return ["a2a-singlephase","a2a-twophase","a2a-xy"];
+  if(op==="allreduce") return ["dimaccum","butterfly-pipelined","tree-pipelined","ring-xy","butterfly-basic","ring-snake"];
+  return ["butterfly-basic","butterfly-pipelined","tree-pipelined","ring-xy","ring-snake"];
+}
 function buildSchedule(rows,cols,op,alg,base){
+  if(op==="alltoall"){
+    if(alg==="a2a-xy") return scheduleAllToAllXY(rows,cols,base);
+    if(alg==="a2a-twophase") return scheduleAllToAllTwoPhase(rows,cols,base);
+    return scheduleAllToAllSinglePhase(rows,cols,base);
+  }
+  if(alg==="dimaccum"){
+    if(op==="allreduce") return scheduleDimAccumAllreduce(rows,cols,base);
+    return scheduleDimwise(rows,cols,op,base);
+  }
+  if(alg==="a2a-singlephase"||alg==="a2a-twophase"||alg==="a2a-xy") return scheduleDimwise(rows,cols,op,base);
   if(alg==="butterfly-basic") return scheduleButterflyBasic(rows,cols,op,base);
   if(alg==="butterfly-pipelined") return scheduleButterflyPipelined(rows,cols,op,base);
   if(alg==="tree-pipelined") return scheduleTree(rows,cols,op,base);
@@ -1108,7 +1242,7 @@ function buildSchedule(rows,cols,op,alg,base){
   return scheduleDimwise(rows,cols,op,base);
 }
 function summarize(rows,cols,op,base){
-  return ["butterfly-basic","butterfly-pipelined","tree-pipelined","ring-xy","ring-snake"].map(alg=>{
+  return algorithmsFor(op).map(alg=>{
     const s=buildSchedule(rows,cols,op,alg,base);
     return {alg:ALG_NAMES[alg],duration:s.duration,peak:s.peak ?? peakEdgeOccupancy(s),flows:s.flows.length,stages:s.stages.length};
   });
@@ -1202,11 +1336,13 @@ function render(){
   const cycleInput=document.getElementById("cycle"); cycleInput.max=Math.max(0,schedule.duration);
   let cycle=Math.max(0,Math.min(+cycleInput.value||0,schedule.duration)); cycleInput.value=cycle;
   const evs=allEvents(schedule,cycle);
+  const zs=zStar(op,rows,cols);
   document.getElementById("metrics").innerHTML=[
     ["Mesh",`${rows}×${cols}`,`${rows*cols} nodes`],
     ["当前选择",ALG_NAMES[alg]||alg,op],
     ["延迟",`${schedule.duration} cycles`,`${schedule.stages.length} logical stages`],
     ["Max edge sharing",`${schedule.peak ?? peakEdgeOccupancy(schedule)}`,`当前在飞 flits: ${evs.length}`],
+    ...(zs?[["下界 z*",`${zs}`,base===1?`Z/z* = ${(schedule.duration/zs).toFixed(2)}×`:`1 flit/block 基线 (×flits 带宽项)`]]:[]),
     ...(schedule.colorCount?[["Colors",`${schedule.colorCount}`,`router 仅调度有数据的 color`]]:[]),
   ].map(m=>`<div class="metric"><div class="name">${m[0]}</div><div class="value">${m[1]}</div><div class="sub">${m[2]}</div></div>`).join("");
   document.getElementById("algNote").textContent=ALG_NOTES[alg]||"";
@@ -1230,10 +1366,19 @@ function render(){
     const f=schedule.flows.find(x=>x.id===fid), e=f?eventAt(f,cy,schedule.period):null; return e?{text:elabel(e.edge),color:f.color}:{text:""};
   });
 }
+function populateAlgOptions(preferred){
+  const op=document.getElementById("op").value, sel=document.getElementById("alg");
+  const algs=algorithmsFor(op);
+  const keep=(preferred&&algs.includes(preferred))?preferred:(algs.includes(sel.value)?sel.value:algs[0]);
+  sel.innerHTML=algs.map(a=>`<option value="${a}">${ALG_NAMES[a]}</option>`).join("");
+  sel.value=keep;
+}
 document.getElementById("apply").onclick=render;
+document.getElementById("op").onchange=()=>{populateAlgOptions();render();};
 document.getElementById("prev").onclick=()=>{const c=document.getElementById("cycle");c.value=Math.max(0,(+c.value||0)-1);render();};
 document.getElementById("next").onclick=()=>{const c=document.getElementById("cycle");c.value=(+c.value||0)+1;render();};
 document.getElementById("cycle").onchange=render;
+populateAlgOptions("butterfly-basic");
 render();
 </script>
 </body>

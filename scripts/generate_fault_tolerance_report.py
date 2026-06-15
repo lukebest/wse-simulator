@@ -29,9 +29,13 @@ PATTERN_LABELS = {
 
 FAULT_LABELS = {
     "pe_point": "PE 坏点",
-    "link_point": "链路坏",
+    "pe_block_1x2": "PE 坏块 (1×2)",
     "pe_block": "PE 坏块 (2×2)",
+    "link_point": "链路坏",
 }
+
+# Single PE → 1×2 block → 2×2 block → link, so node-block sizes read in order.
+FAULT_TYPES_ORDERED = ("pe_point", "pe_block_1x2", "pe_block", "link_point")
 
 REGION_LABELS = {
     "corner": "角",
@@ -41,7 +45,7 @@ REGION_LABELS = {
 
 
 def run_analysis() -> list[dict]:
-    return analyze_fault_matrix(MESHES)
+    return analyze_fault_matrix(MESHES, fault_types=FAULT_TYPES_ORDERED)
 
 
 def _ratio_cell(ratio: float | None) -> str:

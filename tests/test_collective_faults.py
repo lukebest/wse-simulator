@@ -10,6 +10,7 @@ from wsesim.network.collective_faults import (
     analyze_fault_matrix,
     analyze_fault_matrix_topology,
     bfs_path,
+    bipartite_survivor_counts,
     build_hamilton_on_punctured,
     compile_fault_study_8x8,
     hamilton_cycle_possible,
@@ -112,6 +113,24 @@ def test_fault_matrix_count():
     results = analyze_fault_matrix([(4, 4)])
     # 6 patterns × 3 fault types × 3 regions = 54
     assert len(results) == 54
+
+
+def test_block1x2_removes_two_adjacent_and_keeps_parity():
+    fault = make_scenario_fault(8, 8, "pe_block_1x2", "corner")
+    assert fault.bad_nodes == frozenset({(0, 0), (1, 0)})
+    # 1×2 removes one even + one odd node → survivor color classes stay balanced
+    even, odd = bipartite_survivor_counts(8, 8, fault)
+    assert even == odd
+
+
+def test_block1x2_alltoall_between_point_and_2x2():
+    point = analyze_collective_faulty(
+        "alltoall", 8, 8, make_scenario_fault(8, 8, "pe_point", "center")
+    )["ratio"]
+    b1x2 = analyze_collective_faulty(
+        "alltoall", 8, 8, make_scenario_fault(8, 8, "pe_block_1x2", "center")
+    )["ratio"]
+    assert b1x2 >= point
 
 
 def test_schedule_collective_flows_ok_on_healthy():
