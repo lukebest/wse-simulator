@@ -78,7 +78,7 @@ svg text{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
   每个 router 具备 <strong>多播</strong>：calendar 用 <strong>源端口→目的端口</strong>（E/W/S/N 为 router 四向端口，非行进方向）表示连接（如 <code>W→E</code> 西口入东口出、<code>W→E+S</code> 西口入东/南口出、<code>PE→E</code> 本地注入东口）；等待仅在源端以 <code>PE:wait</code> 表示。每 hop 占 1 cycle，<strong>每个节点每个 cycle</strong> 更新四向端口状态。
   集合通信前为各 router 预配置 <strong>color calendar</strong>；全局调度保证同一 cycle 同一物理 edge 至多一个 flit。
   <strong>Broadcast</strong> 用行/列多播树（共享 color bus）；<strong>Gather</strong> 为每 PE 向 root 的 XY 流；<strong>Reduce</strong> 为 2D 树：先列内逐级归约到 root 行，再行内到 root（每跳单周期，中间节点本地 reduce，非全量汇聚到 root）；  <strong>All-reduce</strong> 为维度序 RHD：先横向（X）再纵向（Y）递归减半/加倍交换（与 <code>collective-mesh-viz</code> dim-wise exchange 一致），非树归约+多播。
-  <strong>All-gather</strong> 为维度序 RHD（X/Y stride 从大到小），每阶段 flit 数随已收集块数倍增，使每 PE 最终持有全体 <code>rows×cols</code> 份数据块。
+  <strong>All-gather</strong> 为 <strong>Algorithm B</strong>：每 PE 向其余 <code>N−1</code> 个 PE 各发一条 XY 最短路径 unicast，按加权距离从远到近<strong>反向 JIT</strong> 预分配 edge calendar，使最远 flit 在 <code>T*</code> 到达（<code>T* = max(hx·(cols−1)+hy·(rows−1), ⌈(N−1)/2⌉)</code>，默认 <code>hx=hy=4</code> 即链路延迟 L=4）。
   <strong>All-to-all</strong> 为全置换：每个 PE 向其余每个 PE 各发一条独立消息（共 <code>N×(N-1)</code> 条 VN 流，XY 路由），是对分对剖带宽压力最大的模式。
   调度基线为 <strong>T=1（无 router 缓冲）</strong>：任意 router 在 cycle t 入口的数据必须在 t+1 从出口发出，中间 router 不缓冲。
   新增约束：<strong>数据进出 PE 需 10 cycle</strong>。三种 <strong>Relay 策略</strong>：<code>noc</code>（阻塞时仅在<strong>源端 home PE 等待注入</strong> <code>PE:wait</code>，永不付进出惩罚）；<code>pe</code>（阻塞时<strong>落入当前 PE 暂存</strong> <code>→PE</code>/<code>PE:buf</code>，付 +10 cycle 进出代价后再注入）；<code>defl</code>（<strong>NoC 偏转/hot-potato</strong>：不进 PE，被阻塞时改走其它空闲口绕行，多走 hop 但无进出惩罚）。
@@ -145,7 +145,7 @@ svg text{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
     <li><strong>pe（PE 暂存）</strong>：贪心地优先走 <code>+1</code> 刚性中继；当下一跳边在 <code>t+1</code> 被占用时，把 flit <strong>落入当前节点 PE</strong>（<code>→PE</code>），保持 <code>PE:buf</code> 至少 10 cycle，再在 <code>≥ 到达+10</code> 的最早空闲 slot 重新注入下一跳。<em>优点</em>：化解 NoC 边冲突、降低源端反压；<em>代价</em>：每次暂存 +10 cycle 端到端延迟。</li>
     <li><strong>defl（NoC 偏转 / hot-potato）</strong>：flit <strong>从不因中途拥塞而落入 PE</strong>，每个 cycle 必须离开 router。优先选一条空闲且<strong>缩短曼哈顿距离</strong>的边（productive），若都被占用则<strong>偏转</strong>到任一空闲边（misroute，尽量不立刻折返），停留在 NoC 上绕行；之后从新节点重新朝目的地路由。<em>优点</em>：<strong>中途无 10-cycle 进出惩罚</strong>（<code>PE:buf=0</code>）、源端反压小；<em>代价</em>：路径不再是最短 XY，<strong>额外 hop</strong> 增加端到端延迟，重载下可能游走。若某 cycle 四向出口全被占用（罕见死点），则推迟注入重试。</li>
   </ul>
-  <p class="small"><strong>注意 defl 的边界</strong>：<code>defl</code> 只消除“<strong>中途遇阻落 PE</strong>”这一项（中途 <code>PE:buf</code> 恒为 0）。它<strong>不</strong>消除两类与路由策略无关的 PE 驻留：(1) <strong>源端等待</strong> <code>PE:wait</code>（注入前数据停在 home PE，不计进出惩罚，所有策略都有）；(2) <strong>X→Y 维度切换的 10-cycle 进出</strong>——All-gather/All-reduce 的换维累积本就发生在 PE 内（X 收完落 PE、Y 再从 PE 发出），属于集合算法本身，对 <code>noc/pe/defl</code> 三种策略一律生效。因此选 <code>defl</code> 时，allgather 仍会在 X→Y 处看到一次 PE 进出（这不是中途暂存）。</p>
+  <p class="small"><strong>注意 defl 的边界</strong>：<code>defl</code> 只消除“<strong>中途遇阻落 PE</strong>”这一项（中途 <code>PE:buf</code> 恒为 0）。它<strong>不</strong>消除两类与路由策略无关的 PE 驻留：(1) <strong>源端等待</strong> <code>PE:wait</code>（注入前数据停在 home PE，不计进出惩罚，所有策略都有）；(2) <strong>X→Y 维度切换的 10-cycle 进出</strong>——<strong>All-reduce</strong> 的换维累积发生在 PE 内（X 收完落 PE、Y 再从 PE 发出），属于集合算法本身，对 <code>noc/pe/defl</code> 三种策略一律生效。<strong>All-gather</strong> 已改用 Algorithm B 预分配日历（非 dim-wise RHD），不走换维 PE 进出模型。</p>
 
   <h3>3. 调度流程（一次性日历）</h3>
   <ol>
@@ -164,8 +164,8 @@ svg text{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
     <li><strong>Gather</strong>：每个 PE 沿 XY 把数据汇聚到 root（incast），root 邻边为瓶颈（L* 偏大）。</li>
     <li><strong>Reduce</strong>：2D 归约树——先列内逐级归约到 root 所在行，再行内归约到 root；中间节点本地做 reduce，非全量汇聚。</li>
     <li><strong>All-reduce</strong>：维度序递归减半/加倍（RHD），先 X 后 Y 逐维交换，等价 reduce-scatter + all-gather，无单点 incast。</li>
-    <li><strong>All-gather</strong>：维度序 RHD（stride 由大到小），每阶段 flit 数随已收集块数倍增，最终每 PE 持有全部 <code>rows×cols</code> 块。</li>
-    <li><strong>维度切换的 PE 进出惩罚</strong>：All-reduce / All-gather 的 X 阶段与 Y 阶段是<strong>各自独立的 VN 流</strong>，仅在物理 PE 处相接——X 阶段的数据<strong>到达后进入该 PE 暂存</strong>，再由 Y 阶段<strong>从同一 PE 重新注入</strong>，这正是一次“进 PE 再出 PE”。因此在 <code>X→Y 维度切换处</code>，Y 阶段的 <code>release</code> 额外 <code>+PE_INOUT_LATENCY (10)</code> cycle。<strong>同维度内</strong>连续 stride 的过渡只算传输时间（假设可在 router 内流水、不重新完整进出 PE），不计该惩罚。</li>
+    <li><strong>All-gather（Algorithm B）</strong>：生成 <code>N×(N−1)</code> 条 XY 最短路径 unicast；按加权曼哈顿距离降序，从 deadline <code>T*</code> 反向为每跳分配 slot，边冲突则向前 retime。水平 hop 延迟 <code>hx</code>、垂直 <code>hy</code>（本页默认 4）。到达 makespan 达到 §2.2 异构下界；大 mesh 上最早注入可能早于 cycle 0，可视化时平移时间轴使首注入落在 c0。</li>
+    <li><strong>维度切换的 PE 进出惩罚</strong>：All-reduce 的 X/Y 阶段是<strong>各自独立的 VN 流</strong>，仅在物理 PE 处相接——X 阶段的数据<strong>到达后进入该 PE 暂存</strong>，再由 Y 阶段<strong>从同一 PE 重新注入</strong>，这正是一次“进 PE 再出 PE”。因此在 <code>X→Y 维度切换处</code>，Y 阶段的 <code>release</code> 额外 <code>+PE_INOUT_LATENCY (10)</code> cycle。</li>
     <li><strong>All-to-all</strong>：全置换，<code>N×(N-1)</code> 条独立 VN 流（每个有序 (src,dst) 一条），XY 路由。这是<strong>对分带宽压力最大</strong>的模式：中央列/行边被大量流穿越，L* 最高。<br>
       在 <code>noc</code> 下表现为大量源端等待错峰注入；<code>pe</code> 用中间 PE 暂存吸收边冲突、缩短源端反压，但累计 10-cycle 进出惩罚；<code>defl</code> 则让被阻塞的 flit 在 NoC 上偏转绕行、用额外 hop 换取更小的源端等待与零进出惩罚——三种策略的 makespan/延迟权衡在对比表中一目了然。周期模式对 all-to-all 无刚性 T=1 解，故流数超阈值时跳过相位回溯。</li>
   </ul>
@@ -219,7 +219,7 @@ svg text{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
 
 <script>
 /** Page version — date of last substantive update (YYYY-MM-DD). */
-const APP_VERSION = "2026-06-08";
+const APP_VERSION = "2026-06-16";
 
 const MAX_COLORS = 256;
 const COLOR_PALETTE = Array.from({length: MAX_COLORS}, (_, i) =>
@@ -481,48 +481,115 @@ function buildAllToAllFlows(rows, cols, flits) {
   return packetsToFlows(packets, cols, flits);
 }
 
-/** All-gather: dim-wise RHD with reverse strides; flits per stage scale with blocks held (butterflyExchangeFlows). */
-function buildDimwiseAllgatherFlows(rows, cols, baseFlits) {
+/** Default link latency for Algorithm B all-gather (L=4 anisotropic mesh). */
+const ALLGATHER_HOP_LATENCY_X = 4;
+const ALLGATHER_HOP_LATENCY_Y = 4;
+
+function edgeHopLatency(edge, hx, hy) {
+  return edge.from.y === edge.to.y ? hx : hy;
+}
+
+function weightedDiameter(rows, cols, hx, hy) {
+  return hx * (cols - 1) + hy * (rows - 1);
+}
+
+function optimalZLowerBoundAniso(pattern, rows, cols, hx, hy) {
+  const n = rows * cols;
+  const dW = weightedDiameter(rows, cols, hx, hy);
+  if (pattern === "allgather") return Math.max(dW, Math.ceil((n - 1) / 2));
+  throw new Error(`optimalZLowerBoundAniso: unsupported pattern ${pattern}`);
+}
+
+function calendarArrivalMakespanAniso(flows, hx, hy) {
+  let makespan = 0;
+  for (const flow of flows) {
+    if (!flow.slots?.length || !flow.path?.length) continue;
+    const last = flow.path[flow.path.length - 1];
+    makespan = Math.max(makespan, flow.slots[flow.slots.length - 1] + edgeHopLatency(last, hx, hy));
+  }
+  return makespan;
+}
+
+/**
+ * Algorithm B: XY shortest-path all-gather with backward JIT slot calendar.
+ * Matches wsesim.network.collective_patterns.build_shortest_path_calendar_allgather_flows.
+ */
+function buildShortestPathCalendarAllgatherFlows(rows, cols, baseFlits, opts = {}) {
+  const hx = Math.max(1, opts.hopLatencyX != null ? opts.hopLatencyX : ALLGATHER_HOP_LATENCY_X);
+  const hy = Math.max(1, opts.hopLatencyY != null ? opts.hopLatencyY : ALLGATHER_HOP_LATENCY_Y);
+  const tStar = opts.deadline != null ? opts.deadline : optimalZLowerBoundAniso("allgather", rows, cols, hx, hy);
+  const n = rows * cols;
+  const reserved = new Set();
   const flows = [];
-  const cidRef = {v: 0};
-  const payload = "allgather";
-  let release = 0;
-  let blocks = 1;
-  [...pow2Strides(cols)].reverse().forEach(s => {
-    const flits = baseFlits * blocks;
-    const tag = `X AG s=${s} ×${blocks}blk`;
-    for (let y = 0; y < rows; y++) {
-      for (let x = 0; x < cols; x += 2 * s) {
-        for (let d = 0; d < s; d++) {
-          if (x + d + s < cols) {
-            addDimExchangePair(flows, cidRef, "x", x + d, y, s, flits, release, payload, "ag", tag);
-          }
-        }
-      }
+  const items = [];
+
+  for (let s = 0; s < n; s++) {
+    const sx = s % cols, sy = Math.floor(s / cols);
+    for (let d = 0; d < n; d++) {
+      if (s === d) continue;
+      const from = idxToNode(s, cols);
+      const to = idxToNode(d, cols);
+      const p = path(from, to);
+      const dx = d % cols, dy = Math.floor(d / cols);
+      const dist = hx * Math.abs(dx - sx) + hy * Math.abs(dy - sy);
+      if (dist > tStar) throw new Error(`deadline ${tStar} < weighted distance ${dist} for ${s}->${d}`);
+      items.push({dist, plen: p.length, s, d, path: p});
     }
-    release += dimExchangeStageCycles(s, flits);
-    blocks *= 2;
-  });
-  // X→Y dimension switch: each PE ejects the X-gathered blocks into its PE core and re-injects
-  // them along Y, paying one enter+exit PE penalty (same-dimension strides pipeline in-router).
-  if (cols > 1 && rows > 1) release += PE_INOUT_LATENCY;
-  blocks = cols;
-  [...pow2Strides(rows)].reverse().forEach(s => {
-    const flits = baseFlits * blocks;
-    const tag = `Y AG s=${s} ×${blocks}blk`;
-    for (let x = 0; x < cols; x++) {
-      for (let y = 0; y < rows; y += 2 * s) {
-        for (let d = 0; d < s; d++) {
-          if (y + d + s < rows) {
-            addDimExchangePair(flows, cidRef, "y", x, y + d, s, flits, release, payload, "ag", tag);
-          }
-        }
-      }
+  }
+  items.sort((a, b) => b.dist - a.dist || b.plen - a.plen || a.s - b.s || a.d - b.d);
+
+  let cid = 0;
+  for (const {s, d, path: p} of items) {
+    const slots = new Array(p.length).fill(0);
+    const lastLat = edgeHopLatency(p[p.length - 1], hx, hy);
+    let t = tStar - lastLat;
+    for (let hop = p.length - 1; hop >= 0; hop--) {
+      const edge = p[hop];
+      while (reserved.has(edgeKey(t, edge.id))) t -= 1;
+      slots[hop] = t;
+      reserved.add(edgeKey(t, edge.id));
+      if (hop > 0) t = slots[hop] - edgeHopLatency(p[hop - 1], hx, hy);
     }
-    release += dimExchangeStageCycles(s, flits);
-    blocks *= 2;
-  });
-  return flows;
+    const from = idxToNode(s, cols);
+    const to = idxToNode(d, cols);
+    flows.push({
+      id: `cal_${s}_${d}`,
+      label: `cal ${s}->${d}`,
+      from, to,
+      srcIdx: s, dstIdx: d,
+      colorId: cid,
+      colorName: `vn${cid}`,
+      flits: baseFlits,
+      payload: "allgather_calendar",
+      path: p,
+      color: COLOR_PALETTE[cid % MAX_COLORS],
+      release: 0,
+      stage: "allgather_calendar",
+      slots,
+    });
+    cid += 1;
+  }
+
+  let minSlot = Infinity;
+  for (const flow of flows) {
+    for (const slot of flow.slots) minSlot = Math.min(minSlot, slot);
+  }
+  const arrival = calendarArrivalMakespanAniso(flows, hx, hy);
+  const meta = {
+    tStar,
+    arrivalMakespan: arrival,
+    minSlot: minSlot === Infinity ? 0 : minSlot,
+    span: arrival - (minSlot === Infinity ? 0 : minSlot),
+    flowCount: flows.length,
+    hx,
+    hy,
+  };
+  return {flows, meta};
+}
+
+/** All-gather entry: Algorithm B calendar flows (replaces dim-wise RHD). */
+function buildCalendarAllgatherFlows(rows, cols, baseFlits) {
+  return buildShortestPathCalendarAllgatherFlows(rows, cols, baseFlits).flows;
 }
 
 function generateCollectiveFlows(pattern, rows, cols, flitsPerBlock, root) {
@@ -531,7 +598,7 @@ function generateCollectiveFlows(pattern, rows, cols, flitsPerBlock, root) {
   if (pattern === "broadcast") return buildMulticastBroadcastFlows(rows, cols, root, flits);
   if (pattern === "gather") return buildGatherToRootFlows(rows, cols, root, flits, pattern);
   if (pattern === "reduce") return buildTreeReduceFlows(rows, cols, root, flits, pattern);
-  if (pattern === "allgather") return buildDimwiseAllgatherFlows(rows, cols, flits);
+  if (pattern === "allgather") return buildCalendarAllgatherFlows(rows, cols, flits);
   if (pattern === "allreduce") return buildDimwiseAllreduceFlows(rows, cols, flits);
   if (pattern === "alltoall") return buildAllToAllFlows(rows, cols, flits);
   throw new Error(`Unknown pattern ${pattern}`);
@@ -961,6 +1028,109 @@ function buildCalendarSchedule(flows, cols, nodeCount, opts = {}) {
     colorsUsed: flows.length,
     T: 1,
     label: `calendar/${policy}`,
+  };
+}
+
+/**
+ * Render flows with preassigned per-hop slots (Algorithm B all-gather).
+ * Uses anisotropic hop latency hx/hy between consecutive hops; shifts timeline so
+ * the earliest injection appears at cycle 0 when min_slot < 0.
+ */
+function buildPreassignedCalendarSchedule(flows, cols, nodeCount, opts = {}) {
+  const hx = Math.max(1, opts.hx != null ? opts.hx : ALLGATHER_HOP_LATENCY_X);
+  const hy = Math.max(1, opts.hy != null ? opts.hy : ALLGATHER_HOP_LATENCY_Y);
+  const meta = opts.meta || {};
+  let minSlot = meta.minSlot;
+  if (minSlot == null) {
+    minSlot = Infinity;
+    for (const flow of flows) {
+      if (!flow.slots) continue;
+      for (const slot of flow.slots) minSlot = Math.min(minSlot, slot);
+    }
+    if (minSlot === Infinity) minSlot = 0;
+  }
+  const vizOffset = minSlot < 0 ? -minSlot : 0;
+  const arrivalMakespan = meta.arrivalMakespan != null
+    ? meta.arrivalMakespan
+    : calendarArrivalMakespanAniso(flows, hx, hy);
+
+  const events = [];
+  const calendar = new Map();
+  const reserved = new Set();
+
+  for (const flow of flows) {
+    if (!flow.slots?.length || !flow.path?.length) continue;
+    for (let flit = 0; flit < flow.flits; flit++) {
+      const releaseAt = (flow.release || 0) + flit;
+      const srcIdx2 = nodeIdx(flow.from, cols);
+      for (let h = 0; h < flow.path.length; h++) {
+        const edge = flow.path[h];
+        const t = flow.slots[h] + vizOffset + flit;
+        const hopLat = edgeHopLatency(edge, hx, hy);
+        reserved.add(edgeKey(t, edge.id));
+        events.push({
+          cycle: t, flow, flit, hop: h, edge, dwell: 0, hopLat,
+          label: `${flow.id}.f${flit}`,
+        });
+
+        if (h === 0) {
+          for (let b = releaseAt; b < t; b++) {
+            recordRouterSwitch(calendar, srcIdx2, flow.colorId, b, "wait", null, flow.color, true);
+          }
+          recordRouterSwitch(calendar, srcIdx2, flow.colorId, t, "inj", portDir(edge.from, edge.to), flow.color, false);
+        } else {
+          const rNode = flow.path[h - 1].to;
+          const rIdx = nodeIdx(rNode, cols);
+          const inD = portDir(flow.path[h - 1].from, rNode);
+          const outD = portDir(edge.from, edge.to);
+          recordRouterSwitch(calendar, rIdx, flow.colorId, t, inD, outD, flow.color, false);
+        }
+      }
+    }
+  }
+
+  const eventsByCycle = new Map();
+  for (const ev of events) {
+    if (!eventsByCycle.has(ev.cycle)) eventsByCycle.set(ev.cycle, []);
+    eventsByCycle.get(ev.cycle).push(ev);
+  }
+
+  const routerRot = buildRouterRotationStates(calendar);
+  const {makespan, firstInject, lastArrival} = computeMakespanFromEvents(events);
+  const duration = lastArrival;
+  const nodeConn = buildNodeConnTimeline(calendar, nodeCount, duration);
+
+  return {
+    flows,
+    events,
+    eventsByCycle,
+    calendar,
+    nodeConn,
+    routerRot,
+    duration,
+    makespan,
+    firstInject,
+    lastArrival,
+    period: 1,
+    peak: 1,
+    maxDwell: 0,
+    totalStall: 0,
+    peBufCount: 0,
+    pePenalty: 0,
+    deflectExtra: 0,
+    peLatency: PE_INOUT_LATENCY,
+    policy: "calendar",
+    colorsUsed: flows.length,
+    T: 1,
+    label: "calendar/allgather-B",
+    preassigned: true,
+    hx,
+    hy,
+    tStar: meta.tStar != null ? meta.tStar : arrivalMakespan,
+    arrivalMakespan,
+    minSlot,
+    wallSpan: meta.span != null ? meta.span : makespan,
+    vizOffset,
   };
 }
 
@@ -1450,7 +1620,10 @@ function computeMakespanFromEvents(events) {
     }
   }
   let lastArrival = 0;
-  for (const ev of flitLast.values()) lastArrival = Math.max(lastArrival, ev.cycle + 1);
+  for (const ev of flitLast.values()) {
+    const lat = ev.hopLat != null ? ev.hopLat : 1;
+    lastArrival = Math.max(lastArrival, ev.cycle + lat);
+  }
   if (firstInject === Infinity) firstInject = 0;
   return {makespan: lastArrival - firstInject, firstInject, lastArrival};
 }
@@ -1462,7 +1635,10 @@ function computeFlowStats(schedule) {
     let s = acc.get(ev.flow);
     if (!s) { s = {inject: Infinity, arrival: -1, peBuf: 0, peBufCount: 0, evCount: 0}; acc.set(ev.flow, s); }
     if (ev.hop === 0 && ev.cycle < s.inject) s.inject = ev.cycle;
-    if (ev.cycle + 1 > s.arrival) s.arrival = ev.cycle + 1;
+    if (ev.hop === ev.flow.path.length - 1) {
+      const lat = ev.hopLat != null ? ev.hopLat : 1;
+      if (ev.cycle + lat > s.arrival) s.arrival = ev.cycle + lat;
+    }
     if (ev.dwell > 0) { s.peBuf += ev.dwell; s.peBufCount++; }
     s.evCount++;
   }
@@ -1500,14 +1676,18 @@ function renderResultSummary(schedule, rows, cols, op) {
     noc: "NoC 无缓冲（仅源端等待）",
     pe: `PE 暂存（进出 +${schedule.peLatency} cycle）`,
     defl: "NoC 偏转（hot-potato 绕行）",
+    calendar: `Algorithm B 预分配日历（hx=${schedule.hx || ALLGATHER_HOP_LATENCY_X} hy=${schedule.hy || ALLGATHER_HOP_LATENCY_Y}）`,
   }[schedule.policy] || schedule.policy;
+  const makespanRow = schedule.preassigned
+    ? ["Makespan", `${schedule.arrivalMakespan} (T*)`, `到达下界 · viz 墙钟 ${schedule.makespan} c${schedule.firstInject}→c${schedule.lastArrival}`]
+    : ["Makespan", `${schedule.makespan} cycles`, `首包发出 c${schedule.firstInject} → 末包到达 c${schedule.lastArrival}`];
   renderTable(document.getElementById("resultSummary"),
     ["指标", "值", "说明"],
     [
       ["集合操作", opName, `${rows}×${cols} mesh · ${rows * cols} PE`],
-      ["Relay 策略", polName, "noc：永不进 PE；pe：阻塞落 PE 付进出代价；defl：NoC 偏转绕行"],
-      ["VN 流数 / 总 flit", `${n} / ${totalFlits}`, "每条 (src,dst) 一条 color VN"],
-      ["Makespan", `${schedule.makespan} cycles`, `首包发出 c${schedule.firstInject} → 末包到达 c${schedule.lastArrival}`],
+      ["Relay 策略", polName, schedule.preassigned ? "反向 JIT 最短路径日历" : "noc：永不进 PE；pe：阻塞落 PE 付进出代价；defl：NoC 偏转绕行"],
+      ["VN 流数 / 总 flit", `${n} / ${totalFlits}`, schedule.preassigned ? "N×(N−1) XY unicast" : "每条 (src,dst) 一条 color VN"],
+      makespanRow,
       ["端到端延迟 avg / max", `${avgLat.toFixed(1)} / ${max("latency")}`, "到达 − release（含暂存/绕行）"],
       ["XY 跳数 avg / max", `${avgHops.toFixed(1)} / ${max("hops")}`, "标称 XY 维序 hop 数"],
       ["源端等待总量", `${schedule.totalStall} cycles`, "数据滞留 home PE，不计进出惩罚"],
@@ -1595,7 +1775,14 @@ function render() {
   const rpVal = document.getElementById("relayPolicy").value;
   const relayPolicy = rpVal === "pe" ? "pe" : rpVal === "defl" ? "defl" : "noc";
 
-  const flows = generateCollectiveFlows(op, rows, cols, base, root);
+  let flows, allgatherMeta = null;
+  if (op === "allgather") {
+    const built = buildShortestPathCalendarAllgatherFlows(rows, cols, base);
+    flows = built.flows;
+    allgatherMeta = built.meta;
+  } else {
+    flows = generateCollectiveFlows(op, rows, cols, base, root);
+  }
 
   // Phase-backtracking is exponential; skip it for large stream counts (e.g. all-to-all)
   // so the UI never freezes. all-to-all has no rigid periodic T=1 solution anyway.
@@ -1618,10 +1805,16 @@ function render() {
       schedule = buildPeriodicSchedule(flows, P, cols, rows * cols, {assign: new Map()});
       periodicInfo.empty = true;
     }
+  } else if (op === "allgather") {
+    schedule = buildPreassignedCalendarSchedule(flows, cols, rows * cols, {
+      hx: allgatherMeta.hx,
+      hy: allgatherMeta.hy,
+      meta: allgatherMeta,
+    });
   } else {
     schedule = buildCalendarSchedule(flows, cols, rows * cols, {policy: relayPolicy});
   }
-  current = {rows, cols, op, T, root, base, schedule, flows, periodic, periodicInfo, relayPolicy};
+  current = {rows, cols, op, T, root, base, schedule, flows, periodic, periodicInfo, relayPolicy, allgatherMeta};
 
   updateColorFilterOptions(schedule.flows);
   updateCalRouterOptions(rows, cols, root);
@@ -1671,6 +1864,27 @@ function render() {
         ["T=1 @ P=L*", comp.t1.ok ? "可行" : (comp.t1.exhausted ? "搜索超限" : "不可行"), "每跳 +1，router 无缓冲，源端可 PE:wait"],
         ["min P @ T=1", comp.minP.P !== null ? `${comp.minP.P}` : "搜索超限", comp.minP.P === comp.L ? "= L*（最优）" : "> L*"],
       ]);
+  } else if (op === "allgather" && schedule.preassigned) {
+    const offNote = schedule.minSlot < 0
+      ? `原始 min_slot=${schedule.minSlot}，可视化 +${schedule.vizOffset}`
+      : "首注入在 c0";
+    document.getElementById("metrics").innerHTML = [
+      ["Mesh", `${rows}×${cols}`, `${rows * cols} PEs · ${schedule.flows.length} VN · Algorithm B`],
+      ["T* 到达下界", `${schedule.tStar}`, `max(hx·(cols−1)+hy·(rows−1), ⌈(N−1)/2⌉)`, true],
+      ["到达 makespan", `${schedule.arrivalMakespan}`, `最远 flit 完成 = T* · hx=${schedule.hx} hy=${schedule.hy}`, schedule.arrivalMakespan === schedule.tStar],
+      ["墙钟跨度 (viz)", `${schedule.makespan}`, `c${schedule.firstInject}→c${schedule.lastArrival} · ${offNote}`],
+      ["Peak edge sharing", `${schedule.peak}`, `conflict-free`, true],
+    ].map(m => `<div class="metric"><div class="name">${m[0]}</div><div class="value${m[3] ? " good" : ""}">${m[1]}</div><div class="sub">${m[2]}</div></div>`).join("");
+
+    renderTable(document.getElementById("compare"),
+      ["维度", "结果", "说明"],
+      [
+        ["Algorithm B", "最短路径反向 JIT 日历", "N×(N−1) XY unicast，预分配 edge slot"],
+        ["T* / 到达 makespan", `${schedule.tStar} / ${schedule.arrivalMakespan}`, schedule.arrivalMakespan === schedule.tStar ? "达到异构下界" : "未达下界"],
+        ["链路延迟 hx / hy", `${schedule.hx} / ${schedule.hy}`, "水平 / 垂直 hop 延迟（默认 L=4）"],
+        ["VN 流数", `${schedule.flows.length}`, `N×(N−1) = ${rows * cols}×${rows * cols - 1}`],
+        ["墙钟跨度 (可视化)", `${schedule.makespan}`, schedule.minSlot < 0 ? `含时间平移 +${schedule.vizOffset}` : "无负 slot"],
+      ]);
   } else {
     const polName = {noc: "NoC 无缓冲", pe: "PE 暂存 (+10/次)", defl: "NoC 偏转 (绕行)"}[relayPolicy];
     document.getElementById("metrics").innerHTML = [
@@ -1682,7 +1896,6 @@ function render() {
       ["NoC 偏转额外 hop", `${schedule.deflectExtra}`, `绕行多走的 NoC 跳数（仅偏转策略）`, schedule.deflectExtra === 0],
     ].map(m => `<div class="metric"><div class="name">${m[0]}</div><div class="value${m[3] ? " good" : ""}">${m[1]}</div><div class="sub">${m[2]}</div></div>`).join("");
 
-    // Compare all three relay policies side-by-side so every trade-off is explicit.
     const schedFor = (p) => p === relayPolicy ? schedule : buildCalendarSchedule(flows, cols, rows * cols, {policy: p});
     const rowFor = (label, p) => {
       const s = schedFor(p);
