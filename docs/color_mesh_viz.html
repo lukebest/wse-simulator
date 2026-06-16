@@ -74,16 +74,14 @@ svg text{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
 <div class="intro">
   本页展示 <strong>Color 虚拟网络（VN）</strong> 机制下的 2D Mesh 集合通信调度，与
   <code>collective-mesh-viz.html</code> 的逻辑 butterfly / tree / ring 算法视图互补。
-  理论背景见 <a href="time-expanded%20graph.md">time-expanded graph.md</a> §9 与
-  <a href="conflict_free_collectives_report.html">无冲突集合通信综合报告</a>。
-  每条端到端流分配独立 color（时分虚拟网）。节点 router 同时具备 <strong>多播 / fan-out</strong>（一入边复制到多出边）与 <strong>inline-reduce / fan-in</strong>（多入边归约后转发），边-时隙仍无冲突（每有向边每 slot ≤1 flit）。
-  默认构造：<strong>Broadcast/Reduce</strong> 行列多播树（<span class="mono">Z=ecc(r)</span>）；
-  <strong>AllReduce</strong> 双向维累加（<span class="mono">Z=D=X+Y−2</span>）；
-  <strong>AllGather/Gather</strong> Hamilton 环（偶数列 mesh，<span class="mono">Z=⌈(N−1)/2⌉, stall=0</span>）；
-  可选 Dim-wise XY/RHD 对照。
-  三种时隙表尺度需区分：<strong>静态转发规则周期 <span class="mono">P_min=1</span></strong>（环/树/维扫规则逐拍不变）、一次性 makespan <span class="mono">Z</span>、每边色重数 <span class="mono">L*</span>（≠周期）。
-  calendar 用 <strong>源端口→目的端口</strong> 表示连接。
-  调度基线为 <strong>T=1（无 router 缓冲）</strong>；预分配时隙构造（Hamilton / 维累加）可直接零 stall 验证。
+  每条端到端流分配独立 color（时分虚拟网，数量不限）；路径为固定 XY 维序路由。
+  每个 router 具备 <strong>多播</strong>：calendar 用 <strong>源端口→目的端口</strong>（E/W/S/N 为 router 四向端口，非行进方向）表示连接（如 <code>W→E</code> 西口入东口出、<code>W→E+S</code> 西口入东/南口出、<code>PE→E</code> 本地注入东口）；等待仅在源端以 <code>PE:wait</code> 表示。每 hop 占 1 cycle，<strong>每个节点每个 cycle</strong> 更新四向端口状态。
+  集合通信前为各 router 预配置 <strong>color calendar</strong>；全局调度保证同一 cycle 同一物理 edge 至多一个 flit。
+  <strong>Broadcast</strong> 用行/列多播树（共享 color bus）；<strong>Gather</strong> 为每 PE 向 root 的 XY 流；<strong>Reduce</strong> 为 2D 树：先列内逐级归约到 root 行，再行内到 root（每跳单周期，中间节点本地 reduce，非全量汇聚到 root）；  <strong>All-reduce</strong> 为维度序 RHD：先横向（X）再纵向（Y）递归减半/加倍交换（与 <code>collective-mesh-viz</code> dim-wise exchange 一致），非树归约+多播。
+  <strong>All-gather</strong> 为维度序 RHD（X/Y stride 从大到小），每阶段 flit 数随已收集块数倍增，使每 PE 最终持有全体 <code>rows×cols</code> 份数据块。
+  <strong>All-to-all</strong> 为全置换：每个 PE 向其余每个 PE 各发一条独立消息（共 <code>N×(N-1)</code> 条 VN 流，XY 路由），是对分对剖带宽压力最大的模式。
+  调度基线为 <strong>T=1（无 router 缓冲）</strong>：任意 router 在 cycle t 入口的数据必须在 t+1 从出口发出，中间 router 不缓冲。
+  新增约束：<strong>数据进出 PE 需 10 cycle</strong>。三种 <strong>Relay 策略</strong>：<code>noc</code>（阻塞时仅在<strong>源端 home PE 等待注入</strong> <code>PE:wait</code>，永不付进出惩罚）；<code>pe</code>（阻塞时<strong>落入当前 PE 暂存</strong> <code>→PE</code>/<code>PE:buf</code>，付 +10 cycle 进出代价后再注入）；<code>defl</code>（<strong>NoC 偏转/hot-potato</strong>：不进 PE，被阻塞时改走其它空闲口绕行，多走 hop 但无进出惩罚）。
   节点 index：<code>node = row×cols + col</code>，显示 <code>(x,y)</code> 为列、行。
 </div>
 
@@ -98,12 +96,6 @@ svg text{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
       <option value="allreduce">All-reduce</option>
       <option value="allgather">All-gather</option>
       <option value="alltoall">All-to-all</option>
-    </select>
-  </label>
-  <label>构造 variant
-    <select id="variant" title="optimal：报告推荐的无冲突闭式构造；dimwise：Dim-wise XY/RHD 对照">
-      <option value="optimal">最优无冲突（默认）</option>
-      <option value="dimwise">Dim-wise XY / RHD</option>
     </select>
   </label>
   <label>Hop advance (T=1 固定)
@@ -166,19 +158,16 @@ svg text{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
     <li>统计 makespan（首包注入 → 末包到达）、源端等待、PE 暂存次数与进出惩罚，并与三种 relay 策略并排对比。</li>
   </ol>
 
-  <h3>4. 各集合通信的生成思路（与综合报告一致）</h3>
+  <h3>4. 各集合通信的生成思路</h3>
   <ul>
-    <li><strong>Broadcast / Reduce</strong>：行列多播树（fan-out / inline-reduce），<span class="mono">z*=ecc(r)</span>（root 离心率 = 到最远节点曼哈顿跳数），预分配 <span class="mono">stall=0</span>；静态转发规则 <span class="mono">P_min=1</span>，一次性 <span class="mono">Z=ecc</span>。</li>
-    <li><strong>AllReduce（默认：维累加）</strong>：X/Y 双向扫边，每 slot 全 mesh 并行，<span class="mono">Z=D=X+Y−2</span>，规则 <span class="mono">P_min=1</span>，无 PE 换维惩罚。可选 Dim-wise RHD 对照（含 X→Y +10 cycle）。</li>
-    <li><strong>AllGather（默认：Hamilton 环）</strong>：偶数列 mesh 上 snake 哈密顿环 + CW/CCW 双向流水线，<span class="mono">Z=⌈(N−1)/2⌉</span>，<span class="mono">stall=0</span>；作为色无关静态环转发规则 <span class="mono">P_min=1</span>，而 <span class="mono">L*=⌈(N−1)/2⌉</span> 是色表深度=makespan（≠规则周期）。可选 Dim-wise RHD。</li>
-    <li><strong>Gather（默认：Hamilton→根）</strong>：环上每源选短弧到 root，<span class="mono">Z=⌈(N−1)/2⌉</span>，下界 <span class="mono">⌈(N−1)/deg(r)⌉</span>（<span class="mono">deg(r)</span>=root 邻接链路数：角 2/边 3/内 4），规则 <span class="mono">P_min=1</span>。可选 XY incast。</li>
-    <li><strong>All-to-all</strong>（两种 variant）：<span class="mono">z*=max(N·cols/4, N·rows/4)</span>（bisection 下界）。
-      <ul>
-        <li><strong>二相 stall=0（默认）</strong>：二相维序（行内→PE 中继→列内）+ 区间着色，<strong>预分配</strong> slot ⇒ <span class="mono">peak=1, stall=0</span>，实测 <span class="mono">Z=44/272/1366 @ 4×4/8×8/12×16</span>（≈2·z*）。</li>
-        <li><strong>贪心 XY 基线</strong>：全置换 XY 单播 + 在线调度，链路 peak=1 但<strong>源端等待 stall&gt;0</strong>，makespan 更接近 z*。</li>
-      </ul>
-      取舍：<strong>零等待 vs 短 makespan</strong>。详见报告 §5.1。</li>
-    <li><strong>Router 时隙表三尺度</strong>：静态转发规则周期 <span class="mono">P_min=1</span>（结构化构造普适）；一次性深度 <span class="mono">Z_router=makespan</span>；每边色重数 <span class="mono">L*</span>（每源独立 color 时的边负载，≠规则周期）。</li>
+    <li><strong>Broadcast</strong>：root 经行/列<strong>多播树</strong>（共享 color bus，一次 <code>src→E+S</code> 分叉）覆盖全网，最小化边占用。</li>
+    <li><strong>Gather</strong>：每个 PE 沿 XY 把数据汇聚到 root（incast），root 邻边为瓶颈（L* 偏大）。</li>
+    <li><strong>Reduce</strong>：2D 归约树——先列内逐级归约到 root 所在行，再行内归约到 root；中间节点本地做 reduce，非全量汇聚。</li>
+    <li><strong>All-reduce</strong>：维度序递归减半/加倍（RHD），先 X 后 Y 逐维交换，等价 reduce-scatter + all-gather，无单点 incast。</li>
+    <li><strong>All-gather</strong>：维度序 RHD（stride 由大到小），每阶段 flit 数随已收集块数倍增，最终每 PE 持有全部 <code>rows×cols</code> 块。</li>
+    <li><strong>维度切换的 PE 进出惩罚</strong>：All-reduce / All-gather 的 X 阶段与 Y 阶段是<strong>各自独立的 VN 流</strong>，仅在物理 PE 处相接——X 阶段的数据<strong>到达后进入该 PE 暂存</strong>，再由 Y 阶段<strong>从同一 PE 重新注入</strong>，这正是一次“进 PE 再出 PE”。因此在 <code>X→Y 维度切换处</code>，Y 阶段的 <code>release</code> 额外 <code>+PE_INOUT_LATENCY (10)</code> cycle。<strong>同维度内</strong>连续 stride 的过渡只算传输时间（假设可在 router 内流水、不重新完整进出 PE），不计该惩罚。</li>
+    <li><strong>All-to-all</strong>：全置换，<code>N×(N-1)</code> 条独立 VN 流（每个有序 (src,dst) 一条），XY 路由。这是<strong>对分带宽压力最大</strong>的模式：中央列/行边被大量流穿越，L* 最高。<br>
+      在 <code>noc</code> 下表现为大量源端等待错峰注入；<code>pe</code> 用中间 PE 暂存吸收边冲突、缩短源端反压，但累计 10-cycle 进出惩罚；<code>defl</code> 则让被阻塞的 flit 在 NoC 上偏转绕行、用额外 hop 换取更小的源端等待与零进出惩罚——三种策略的 makespan/延迟权衡在对比表中一目了然。周期模式对 all-to-all 无刚性 T=1 解，故流数超阈值时跳过相位回溯。</li>
   </ul>
 </div>
 </details>
@@ -230,7 +219,7 @@ svg text{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
 
 <script>
 /** Page version — date of last substantive update (YYYY-MM-DD). */
-const APP_VERSION = "2026-06-11";
+const APP_VERSION = "2026-06-08";
 
 const MAX_COLORS = 256;
 const COLOR_PALETTE = Array.from({length: MAX_COLORS}, (_, i) =>
@@ -273,15 +262,6 @@ function makeFlow(id, colorId, label, from, to, pathEdges, flits, release, paylo
   };
 }
 
-function assignRigidSlots(flows) {
-  for (const f of flows) {
-    if (!f.path.length) continue;
-    f.slots = f.path.map((_, h) => (f.release || 0) + h);
-    f.preassigned = true;
-  }
-  return flows;
-}
-
 function buildMulticastBroadcastFlows(rows, cols, root, flits) {
   const rr = Math.floor(root / cols), rc = root % cols;
   const flows = [];
@@ -316,7 +296,7 @@ function buildMulticastBroadcastFlows(rows, cols, root, flits) {
     flows.push(makeFlow(`col${c}`, 1, `c1 col${c} multicast`, node(c, rr),
       colPath[colPath.length - 1].to, colPath, flits, base, "broadcast"));
   }
-  return assignRigidSlots(flows);
+  return flows;
 }
 
 
@@ -414,7 +394,7 @@ function buildTreeReduceFlows(rows, cols, root, flits, payload) {
       ));
     }
   }
-  return assignRigidSlots(flows);
+  return flows;
 }
 
 function pow2Strides(n) {
@@ -501,73 +481,6 @@ function buildAllToAllFlows(rows, cols, flits) {
   return packetsToFlows(packets, cols, flits);
 }
 
-/** All-to-all preassigned conflict-free (stall=0) calendar: 2-phase dim-ordered + interval coloring.
- *  Mirrors collective_patterns.build_alltoall_twophase_flows (report Section 5.1). */
-function buildAllToAllTwophaseFlows(rows, cols, baseFlits) {
-  const n = rows * cols;
-  const reserved = new Map(); // edgeId -> Set(slot)
-  const isFree = (edges, phi) => edges.every((e, j) => {
-    const s = reserved.get(e.id); return !s || !s.has(phi + j);
-  });
-  const firstFree = (edges, start) => { let phi = start; while (!isFree(edges, phi)) phi++; return phi; };
-  const occupy = (edges, phi) => edges.forEach((e, j) => {
-    let s = reserved.get(e.id); if (!s) { s = new Set(); reserved.set(e.id, s); } s.add(phi + j);
-  });
-
-  const items = [];
-  for (let s = 0; s < n; s++) {
-    const sx = s % cols, sy = Math.floor(s / cols);
-    for (let d = 0; d < n; d++) {
-      if (s === d) continue;
-      const dx = d % cols, dy = Math.floor(d / cols);
-      const p = path(idxToNode(s, cols), idxToNode(d, cols));
-      const nx = Math.abs(dx - sx);
-      items.push({s, d, sx, sy, dx, dy, p, nx});
-    }
-  }
-
-  // Phase X: row moves, first-fit by left column endpoint (optimal interval coloring).
-  const xSlots = new Map();
-  let tx = 0;
-  items.filter(it => it.nx > 0)
-    .sort((a, b) => (Math.min(a.sx, a.dx) - Math.min(b.sx, b.dx)) || (Math.abs(a.dx - a.sx) - Math.abs(b.dx - b.sx)))
-    .forEach(it => {
-      const xe = it.p.slice(0, it.nx);
-      const phi = firstFree(xe, 0);
-      occupy(xe, phi);
-      xSlots.set(it.s * n + it.d, xe.map((_, j) => phi + j));
-      tx = Math.max(tx, phi + it.nx);
-    });
-
-  const barrier = tx + PE_INOUT_LATENCY;
-
-  // Phase Y: column moves, injected at/after the barrier.
-  const ySlots = new Map();
-  items.filter(it => it.p.length - it.nx > 0)
-    .sort((a, b) => (Math.min(a.sy, a.dy) - Math.min(b.sy, b.dy)) || (Math.abs(a.dy - a.sy) - Math.abs(b.dy - b.sy)))
-    .forEach(it => {
-      const ye = it.p.slice(it.nx);
-      const phi = firstFree(ye, barrier);
-      occupy(ye, phi);
-      ySlots.set(it.s * n + it.d, ye.map((_, j) => phi + j));
-    });
-
-  const flows = [];
-  let cid = 0;
-  for (const it of items) {
-    let slots = [];
-    if (it.nx > 0) slots = slots.concat(xSlots.get(it.s * n + it.d));
-    if (it.p.length - it.nx > 0) slots = slots.concat(ySlots.get(it.s * n + it.d));
-    // one flit per (s,d) message: the schedule is interval-colored for a single
-    // flit per hop, so keep flits=1 to preserve peak=1 (ignore the block slider).
-    const f = makeFlow(`a2a2p_${it.s}_${it.d}`, cid++, `${it.s}->${it.d}`,
-      idxToNode(it.s, cols), idxToNode(it.d, cols), it.p, 1, 0, "alltoall_twophase");
-    f.slots = slots; f.preassigned = true;
-    flows.push(f);
-  }
-  return flows;
-}
-
 /** All-gather: dim-wise RHD with reverse strides; flits per stage scale with blocks held (butterflyExchangeFlows). */
 function buildDimwiseAllgatherFlows(rows, cols, baseFlits) {
   const flows = [];
@@ -612,292 +525,16 @@ function buildDimwiseAllgatherFlows(rows, cols, baseFlits) {
   return flows;
 }
 
-// --- Optimal / Hamilton / dim-accum builders (sync with collective_patterns.py) ---
-
-function meshDiameter(rows, cols) {
-  return Math.max(0, cols - 1) + Math.max(0, rows - 1);
-}
-
-function eccentricity(rows, cols, root) {
-  const rr = Math.floor(root / cols), rc = root % cols;
-  return Math.max(rr, rows - 1 - rr) + Math.max(rc, cols - 1 - rc);
-}
-
-function nodeDegree(rows, cols, root) {
-  const rr = Math.floor(root / cols), rc = root % cols;
-  let d = 0;
-  if (rc > 0) d++;
-  if (rc < cols - 1) d++;
-  if (rr > 0) d++;
-  if (rr < rows - 1) d++;
-  return d;
-}
-
-function optimalHamiltonMakespan(n) {
-  return Math.ceil((n - 1) / 2);
-}
-
-function optimalZLowerBound(pattern, rows, cols, root) {
-  const n = rows * cols;
+function generateCollectiveFlows(pattern, rows, cols, flitsPerBlock, root) {
   pattern = pattern.toLowerCase();
-  const ecc = eccentricity(rows, cols, root);
-  const deg = nodeDegree(rows, cols, root);
-  const d = meshDiameter(rows, cols);
-  if (pattern === "broadcast" || pattern === "reduce") return ecc;
-  if (pattern === "allreduce") return d;
-  if (pattern === "allgather" || pattern === "gather") return Math.ceil((n - 1) / deg);
-  if (pattern === "alltoall") {
-    return Math.max(Math.ceil(n * cols / 4), Math.ceil(n * rows / 4));
-  }
-  return 0;
-}
-
-function buildHamiltonCycle(rows, cols) {
-  if (cols % 2 !== 0) throw new Error(`Hamilton snake requires even cols, got ${cols}`);
-  const cycle = [];
-  const visited = new Set();
-  for (let x = 0; x < cols; x++) {
-    if (x % 2 === 0) {
-      const yStart = x === 0 ? 0 : 1;
-      for (let y = yStart; y < rows; y++) {
-        cycle.push(node(x, y));
-        visited.add(`${x},${y}`);
-      }
-    } else {
-      for (let y = rows - 1; y > 0; y--) {
-        cycle.push(node(x, y));
-        visited.add(`${x},${y}`);
-      }
-    }
-  }
-  if (!visited.has(`${cols - 1},0`)) {
-    cycle.push(node(cols - 1, 0));
-    visited.add(`${cols - 1},0`);
-  }
-  for (let x = cols - 2; x >= 0; x--) {
-    if (!visited.has(`${x},0`)) {
-      cycle.push(node(x, 0));
-      visited.add(`${x},0`);
-    }
-  }
-  if (cycle.length !== rows * cols) {
-    throw new Error(`Hamilton cycle length ${cycle.length} != ${rows * cols}`);
-  }
-  return cycle;
-}
-
-function ringEdges(cycle) {
-  const n = cycle.length;
-  return Array.from({length: n}, (_, i) => ({
-    id: eid(cycle[i], cycle[(i + 1) % n]),
-    from: cycle[i],
-    to: cycle[(i + 1) % n],
-  }));
-}
-
-function buildHamiltonRingAllgatherFlows(rows, cols, baseFlits) {
-  const cycle = buildHamiltonCycle(rows, cols);
-  const n = cycle.length;
-  const tStar = optimalHamiltonMakespan(n);
-  const pos = Object.fromEntries(cycle.map((nd, i) => [`${nd.x},${nd.y}`, i]));
-  const edges = ringEdges(cycle);
-  const flows = [];
-  let cid = 0;
-  for (let srcIdx = 0; srcIdx < n; srcIdx++) {
-    const srcNode = cycle[srcIdx];
-    const posSrc = pos[`${srcNode.x},${srcNode.y}`];
-    const cwPath = [], cwSlots = [];
-    for (let hop = 0; hop < tStar; hop++) {
-      const ringPos = (posSrc + hop) % n;
-      cwPath.push(edges[ringPos]);
-      cwSlots.push(hop);
-    }
-    const cw = makeFlow(`hr_cw_${srcIdx}`, cid++, `hr cw src=${srcIdx}`,
-      srcNode, cwPath.length ? cwPath[cwPath.length - 1].to : srcNode,
-      cwPath, baseFlits, 0, "allgather_hamilton");
-    cw.slots = cwSlots;
-    cw.preassigned = true;
-    flows.push(cw);
-
-    const ccwPath = [], ccwSlots = [];
-    for (let hop = 0; hop < tStar; hop++) {
-      const ringPos = (posSrc - hop + n) % n;
-      const a = cycle[ringPos], b = cycle[(ringPos - 1 + n) % n];
-      ccwPath.push({id: eid(a, b), from: a, to: b});
-      ccwSlots.push(hop);
-    }
-    const ccw = makeFlow(`hr_ccw_${srcIdx}`, cid++, `hr ccw src=${srcIdx}`,
-      srcNode, ccwPath.length ? ccwPath[ccwPath.length - 1].to : srcNode,
-      ccwPath, baseFlits, 0, "allgather_hamilton");
-    ccw.slots = ccwSlots;
-    ccw.preassigned = true;
-    flows.push(ccw);
-  }
-  return {flows, meta: {tStar, preassigned: true}};
-}
-
-function buildHamiltonGatherFlows(rows, cols, root, baseFlits) {
-  let cycle = buildHamiltonCycle(rows, cols);
-  const n = cycle.length;
-  const rootNode = idxToNode(root, cols);
-  const rootKey = `${rootNode.x},${rootNode.y}`;
-  const rootPos = cycle.findIndex(nd => nd.x === rootNode.x && nd.y === rootNode.y);
-  if (rootPos > 0) cycle = cycle.slice(rootPos).concat(cycle.slice(0, rootPos));
-  const tStar = optimalHamiltonMakespan(n);
-  const edges = ringEdges(cycle);
-  const flows = [];
-  let cid = 0;
-  for (let srcIdx = 1; srcIdx < n; srcIdx++) {
-    const srcNode = cycle[srcIdx];
-    const distCw = srcIdx;
-    const distCcw = n - srcIdx;
-    let path, slots, direction;
-    if (distCcw <= distCw) {
-      path = []; slots = [];
-      for (let hop = 0; hop < distCcw; hop++) {
-        const ringPos = (srcIdx - hop + n) % n;
-        const a = cycle[ringPos], b = cycle[(ringPos - 1 + n) % n];
-        path.push({id: eid(a, b), from: a, to: b});
-        slots.push(hop);
-      }
-      direction = "ccw";
-    } else {
-      path = []; slots = [];
-      for (let hop = 0; hop < distCw; hop++) {
-        const ringPos = (srcIdx + hop) % n;
-        path.push(edges[ringPos]);
-        slots.push(hop);
-      }
-      direction = "cw";
-    }
-    const f = makeFlow(`hg_${direction}_${srcIdx}`, cid++, `gather ${direction} src=${srcIdx}`,
-      srcNode, path.length ? path[path.length - 1].to : srcNode,
-      path, baseFlits, 0, "gather_hamilton");
-    f.slots = slots;
-    f.preassigned = true;
-    flows.push(f);
-  }
-  return {flows, meta: {tStar, preassigned: true}};
-}
-
-function buildDimaccumAllreduceFlows(rows, cols, baseFlits) {
-  const flows = [];
-  let cid = 0;
-  const d = meshDiameter(rows, cols);
-  for (let y = 0; y < rows; y++) {
-    for (let t = 0; t < cols - 1; t++) {
-      const frm = node(t, y), to = node(t + 1, y);
-      const f1 = makeFlow(`ar_xe_${y}_${t}`, cid++, `X east row${y} t${t}`,
-        frm, to, [{id: eid(frm, to), from: frm, to}], baseFlits, 0, "allreduce_dimaccum");
-      f1.slots = [t]; f1.preassigned = true;
-      flows.push(f1);
-      const wx = cols - 2 - t;
-      const frm2 = node(wx + 1, y), to2 = node(wx, y);
-      const f2 = makeFlow(`ar_xw_${y}_${t}`, cid++, `X west row${y} t${t}`,
-        frm2, to2, [{id: eid(frm2, to2), from: frm2, to: to2}], baseFlits, 0, "allreduce_dimaccum");
-      f2.slots = [t]; f2.preassigned = true;
-      flows.push(f2);
-    }
-  }
-  const xPhase = cols - 1;
-  for (let x = 0; x < cols; x++) {
-    for (let t = 0; t < rows - 1; t++) {
-      const slot = xPhase + t;
-      const frm = node(x, t), to = node(x, t + 1);
-      const f1 = makeFlow(`ar_ys_${x}_${t}`, cid++, `Y south col${x} t${slot}`,
-        frm, to, [{id: eid(frm, to), from: frm, to}], baseFlits, 0, "allreduce_dimaccum");
-      f1.slots = [slot]; f1.preassigned = true;
-      flows.push(f1);
-      const wy = rows - 2 - t;
-      const frm2 = node(x, wy + 1), to2 = node(x, wy);
-      const f2 = makeFlow(`ar_yn_${x}_${t}`, cid++, `Y north col${x} t${slot}`,
-        frm2, to2, [{id: eid(frm2, to2), from: frm2, to: to2}], baseFlits, 0, "allreduce_dimaccum");
-      f2.slots = [slot]; f2.preassigned = true;
-      flows.push(f2);
-    }
-  }
-  return {flows, meta: {tStar: d, preassigned: true}};
-}
-
-function generateCollectiveFlows(pattern, rows, cols, flitsPerBlock, root, variant) {
-  pattern = pattern.toLowerCase();
-  variant = variant || "optimal";
   const flits = Math.max(1, flitsPerBlock | 0);
-  const useOptimal = variant !== "dimwise";
-  const hamiltonOk = cols % 2 === 0;
-
   if (pattern === "broadcast") return buildMulticastBroadcastFlows(rows, cols, root, flits);
+  if (pattern === "gather") return buildGatherToRootFlows(rows, cols, root, flits, pattern);
   if (pattern === "reduce") return buildTreeReduceFlows(rows, cols, root, flits, pattern);
-  if (pattern === "allreduce") {
-    if (useOptimal) return buildDimaccumAllreduceFlows(rows, cols, flits).flows;
-    return buildDimwiseAllreduceFlows(rows, cols, flits);
-  }
-  if (pattern === "allgather") {
-    if (useOptimal && hamiltonOk) return buildHamiltonRingAllgatherFlows(rows, cols, flits).flows;
-    return buildDimwiseAllgatherFlows(rows, cols, flits);
-  }
-  if (pattern === "gather") {
-    if (useOptimal && hamiltonOk) return buildHamiltonGatherFlows(rows, cols, root, flits).flows;
-    return buildGatherToRootFlows(rows, cols, root, flits, pattern);
-  }
-  if (pattern === "alltoall") {
-    if (useOptimal) return buildAllToAllTwophaseFlows(rows, cols, flits);
-    return buildAllToAllFlows(rows, cols, flits);
-  }
+  if (pattern === "allgather") return buildDimwiseAllgatherFlows(rows, cols, flits);
+  if (pattern === "allreduce") return buildDimwiseAllreduceFlows(rows, cols, flits);
+  if (pattern === "alltoall") return buildAllToAllFlows(rows, cols, flits);
   throw new Error(`Unknown pattern ${pattern}`);
-}
-
-function flowConstructionLabel(op, variant, rows, cols) {
-  const hamiltonOk = cols % 2 === 0;
-  const useOptimal = variant !== "dimwise";
-  if (op === "allgather") {
-    if (useOptimal && hamiltonOk) return "Hamilton 双向环（预分配 Z=L*）";
-    if (useOptimal && !hamiltonOk) return "Dim-wise RHD（奇数列，Hamilton 不可用）";
-    return "Dim-wise RHD（XY + X→Y +10）";
-  }
-  if (op === "gather") {
-    if (useOptimal && hamiltonOk) return "Hamilton 环→根（预分配）";
-    if (useOptimal && !hamiltonOk) return "XY incast（奇数列）";
-    return "XY incast";
-  }
-  if (op === "allreduce") {
-    return useOptimal ? "双向维累加（预分配 Z=D）" : "Dim-wise RHD（+ X→Y +10）";
-  }
-  if (op === "broadcast") return "行列多播树（Z=ecc, P_min=1）";
-  if (op === "reduce") return "反向多播树 + inline reduce";
-  if (op === "alltoall") {
-    return useOptimal
-      ? "二相维序 + 区间着色（预分配 stall=0, Z≈2z*）"
-      : "XY 全置换单播（贪心基线，源端 stall&gt;0）";
-  }
-  return variant;
-}
-
-function updateVariantOptions(op, cols) {
-  const sel = document.getElementById("variant");
-  const prev = sel.value;
-  const hamiltonOk = cols % 2 === 0;
-  if (op === "alltoall") {
-    sel.disabled = false;
-    sel.innerHTML =
-      `<option value="optimal">二相 stall=0（预分配）</option>` +
-      `<option value="dimwise">贪心 XY 基线（源端 stall）</option>`;
-    if ([...sel.options].some(o => o.value === prev)) sel.value = prev;
-    return;
-  }
-  const supportsDimwise = ["allgather", "gather", "allreduce"].includes(op);
-  if (!supportsDimwise) {
-    sel.innerHTML = `<option value="optimal">唯一构造</option>`;
-    sel.value = "optimal";
-    sel.disabled = true;
-    return;
-  }
-  sel.disabled = false;
-  const hint = hamiltonOk ? "" : "（奇数列：Hamilton 不可用，optimal 回退 XY/dimwise）";
-  sel.innerHTML =
-    `<option value="optimal">最优无冲突（默认）${hint}</option>` +
-    `<option value="dimwise">Dim-wise XY / RHD 对照</option>`;
-  if ([...sel.options].some(o => o.value === prev)) sel.value = prev;
 }
 
 function generateBaselineUnicastFlows(pattern, rows, cols, flitsPerBlock, root) {
@@ -1243,23 +880,16 @@ function buildCalendarSchedule(flows, cols, nodeCount, opts = {}) {
       const releaseAt = (flow.release || 0) + flit;
       if (!flow.path.length) continue;
 
-      let plan = null;
-      if (flow.preassigned && flow.slots && flow.slots.length === flow.path.length && flit === 0) {
-        plan = {times: flow.slots.slice(), peDwell: flow.slots.map(() => 0), edges: flow.path};
-      } else if (flow.preassigned && flow.slots && flow.slots.length === flow.path.length) {
-        const off = flit;
-        plan = {times: flow.slots.map(s => s + off), peDwell: flow.slots.map(() => 0), edges: flow.path};
-      } else {
-        plan = policy === "pe" ? planPe(flow, releaseAt, prevFirstEdge)
-          : policy === "defl" ? planDeflect(flow, releaseAt, prevFirstEdge)
-          : planNoc(flow, releaseAt, prevFirstEdge);
-        if (!plan) plan = planNoc(flow, releaseAt, prevFirstEdge);
-      }
+      let plan = policy === "pe" ? planPe(flow, releaseAt, prevFirstEdge)
+        : policy === "defl" ? planDeflect(flow, releaseAt, prevFirstEdge)
+        : planNoc(flow, releaseAt, prevFirstEdge);
+      // Deflection can rarely dead-end; fall back to rigid placement so render never breaks.
+      if (!plan) plan = planNoc(flow, releaseAt, prevFirstEdge);
       if (!plan) throw new Error(`Failed to schedule ${flow.id} flit ${flit}`);
       const {times, peDwell, edges} = plan;
 
       prevFirstEdge = times[0];
-      if (!flow.preassigned) totalStall += times[0] - releaseAt;
+      totalStall += times[0] - releaseAt;
       deflectExtra += edges.length - flow.path.length;
       const srcIdx2 = nodeIdx(flow.from, cols);
 
@@ -1513,8 +1143,8 @@ function buildPeriodicSchedule(flows, P, cols, nodeCount, placement) {
 }
 
 /** Feasibility summary for T=1 (no router buffer) at P=L*, plus min period. */
-function summarizePeriodic(rows, cols, op, root, variant) {
-  const flows = generateCollectiveFlows(op, rows, cols, 1, root, variant || "optimal");
+function summarizePeriodic(rows, cols, op, root) {
+  const flows = generateCollectiveFlows(op, rows, cols, 1, root);
   const el = computeEdgeLoad(flows);
   const t1 = buildPeriodicCalendar(flows, el.L, 1);
   const minP = findMinPeriod(flows);
@@ -1853,8 +1483,7 @@ function computeFlowStats(schedule) {
   return stats;
 }
 
-function renderResultSummary(schedule, rows, cols, op, extras) {
-  extras = extras || {};
+function renderResultSummary(schedule, rows, cols, op) {
   const stats = computeFlowStats(schedule);
   const n = stats.length;
   const totalFlits = stats.reduce((a, s) => a + s.flits, 0);
@@ -1863,10 +1492,6 @@ function renderResultSummary(schedule, rows, cols, op, extras) {
   const avgLat = n ? sum("latency") / n : 0;
   const avgHops = n ? sum("hops") / n : 0;
   const el = computeEdgeLoad(schedule.flows);
-  const zLb = extras.zLowerBound != null ? extras.zLowerBound : optimalZLowerBound(op, rows, cols, extras.root || 0);
-  const zRouter = schedule.makespan;
-  const pMin = el.L;
-  const tableRel = zRouter === pMin ? "Z = L*（表长紧）" : (pMin < zRouter ? `P_min=${pMin} < Z=${zRouter}` : `Z=${zRouter}`);
   const opName = {
     broadcast: "Broadcast", gather: "Gather", reduce: "Reduce",
     allreduce: "All-reduce", allgather: "All-gather", alltoall: "All-to-all",
@@ -1879,14 +1504,17 @@ function renderResultSummary(schedule, rows, cols, op, extras) {
   renderTable(document.getElementById("resultSummary"),
     ["指标", "值", "说明"],
     [
-      ["集合操作", opName, `${rows}×${cols} mesh · ${rows * cols} PE · ${extras.construction || ""}`],
-      ["Relay 策略", polName, "预分配构造忽略 pe/defl，直接按 slots 放置"],
-      ["z* 下界 / Z_router", `${zLb} / ${zRouter}`, zRouter <= zLb ? "达下界" : (zRouter === zLb + 1 ? "近最优" : `Z−z*=${zRouter - zLb}`)],
-      ["P_min = L* / 表关系", `${pMin} · ${tableRel}`, "周期 Router 最短帧 vs 一次性深度"],
-      ["VN 流数 / 总 flit", `${n} / ${totalFlits}`, "每条 VN 一条 color"],
-      ["Makespan", `${schedule.makespan} cycles`, `首包 c${schedule.firstInject} → 末包 c${schedule.lastArrival}`],
-      ["源端等待总量", `${schedule.totalStall} cycles`, extras.preassigned ? "预分配构造应=0" : "home PE 等待"],
-      ["峰值 edge 共享", `${schedule.peak}`, "无冲突应=1"],
+      ["集合操作", opName, `${rows}×${cols} mesh · ${rows * cols} PE`],
+      ["Relay 策略", polName, "noc：永不进 PE；pe：阻塞落 PE 付进出代价；defl：NoC 偏转绕行"],
+      ["VN 流数 / 总 flit", `${n} / ${totalFlits}`, "每条 (src,dst) 一条 color VN"],
+      ["Makespan", `${schedule.makespan} cycles`, `首包发出 c${schedule.firstInject} → 末包到达 c${schedule.lastArrival}`],
+      ["端到端延迟 avg / max", `${avgLat.toFixed(1)} / ${max("latency")}`, "到达 − release（含暂存/绕行）"],
+      ["XY 跳数 avg / max", `${avgHops.toFixed(1)} / ${max("hops")}`, "标称 XY 维序 hop 数"],
+      ["源端等待总量", `${schedule.totalStall} cycles`, "数据滞留 home PE，不计进出惩罚"],
+      ["PE 暂存次数 / 惩罚", `${schedule.peBufCount} / ${schedule.pePenalty} cycles`, `中间落 PE，每次 +${schedule.peLatency} cycle`],
+      ["NoC 偏转额外 hop", `${schedule.deflectExtra}`, "绕行多走的 NoC 跳数（仅偏转策略）"],
+      ["最大有向边负载 L*", `${el.L}`, `瓶颈边 ${el.witness || "-"} · 周期下界`],
+      ["峰值 edge 共享", `${schedule.peak}`, "calendar 无冲突恒为 1"],
     ]);
 }
 
@@ -1954,8 +1582,6 @@ function render() {
   const rows = Math.max(2, Math.min(16, +document.getElementById("rows").value || 4));
   const cols = Math.max(2, Math.min(16, +document.getElementById("cols").value || 4));
   const op = document.getElementById("op").value;
-  updateVariantOptions(op, cols);
-  const variant = document.getElementById("variant").value;
   const T = 1;
   document.getElementById("tolerance").value = T;
   const root = Math.max(0, Math.min(rows * cols - 1, +document.getElementById("root").value || 0));
@@ -1969,10 +1595,7 @@ function render() {
   const rpVal = document.getElementById("relayPolicy").value;
   const relayPolicy = rpVal === "pe" ? "pe" : rpVal === "defl" ? "defl" : "noc";
 
-  const flows = generateCollectiveFlows(op, rows, cols, base, root, variant);
-  const preassigned = flows.some(f => f.preassigned);
-  const zLb = optimalZLowerBound(op, rows, cols, root);
-  const construction = flowConstructionLabel(op, variant, rows, cols);
+  const flows = generateCollectiveFlows(op, rows, cols, base, root);
 
   // Phase-backtracking is exponential; skip it for large stream counts (e.g. all-to-all)
   // so the UI never freezes. all-to-all has no rigid periodic T=1 solution anyway.
@@ -1998,7 +1621,7 @@ function render() {
   } else {
     schedule = buildCalendarSchedule(flows, cols, rows * cols, {policy: relayPolicy});
   }
-  current = {rows, cols, op, variant, T, root, base, schedule, flows, periodic, periodicInfo, relayPolicy, preassigned, zLb, construction};
+  current = {rows, cols, op, T, root, base, schedule, flows, periodic, periodicInfo, relayPolicy};
 
   updateColorFilterOptions(schedule.flows);
   updateCalRouterOptions(rows, cols, root);
@@ -2040,7 +1663,7 @@ function render() {
       ["min P @ T=1", minPtxt, "最小无缓冲周期帧长", minP.P === el.L],
     ].map(m => `<div class="metric"><div class="name">${m[0]}</div><div class="value${m[3] ? " good" : ""}">${m[1]}</div><div class="sub">${m[2]}</div></div>`).join("");
 
-    const comp = summarizePeriodic(rows, cols, op, root, variant);
+    const comp = summarizePeriodic(rows, cols, op, root);
     renderTable(document.getElementById("compare"),
       ["维度", "结果", "说明"],
       [
@@ -2051,12 +1674,12 @@ function render() {
   } else {
     const polName = {noc: "NoC 无缓冲", pe: "PE 暂存 (+10/次)", defl: "NoC 偏转 (绕行)"}[relayPolicy];
     document.getElementById("metrics").innerHTML = [
-      ["Mesh", `${rows}×${cols}`, `${rows * cols} PEs · ${construction}`],
-      ["z* / Z_router", `${zLb} / ${schedule.makespan}`, schedule.makespan <= zLb ? "达下界" : `Δ=${schedule.makespan - zLb}`],
-      ["Makespan", `${schedule.makespan} cycles`, `c${schedule.firstInject}→c${schedule.lastArrival} · ${polName}`],
-      ["P_min=L*", `${computeEdgeLoad(flows).L}`, schedule.makespan === computeEdgeLoad(flows).L ? "Z=L*" : "见摘要表"],
-      ["Peak / stall", `${schedule.peak} / ${schedule.totalStall}`, preassigned ? "预分配应 peak=1 stall=0" : "", schedule.peak === 1 && schedule.totalStall === 0],
-      ["PE 进出 / 偏转", `${schedule.pePenalty} / ${schedule.deflectExtra}`, preassigned ? "预分配无中间 PE" : "", schedule.pePenalty === 0],
+      ["Mesh", `${rows}×${cols}`, `${rows * cols} PEs · root ${root} (${root % cols},${Math.floor(root / cols)})`],
+      ["Makespan", `${schedule.makespan} cycles`, `c${schedule.firstInject}→c${schedule.lastArrival} · ${schedule.flows.length} VN · ${polName}`],
+      ["Peak edge sharing", `${schedule.peak}`, `conflict-free`, true],
+      ["源端等待", `${schedule.totalStall} cycles`, `数据滞留 home PE（不计进出惩罚）`],
+      ["PE 进出惩罚", `${schedule.pePenalty} cycles`, `${schedule.peBufCount} 次落 PE · 每次 +${schedule.peLatency}`, schedule.pePenalty === 0],
+      ["NoC 偏转额外 hop", `${schedule.deflectExtra}`, `绕行多走的 NoC 跳数（仅偏转策略）`, schedule.deflectExtra === 0],
     ].map(m => `<div class="metric"><div class="name">${m[0]}</div><div class="value${m[3] ? " good" : ""}">${m[1]}</div><div class="sub">${m[2]}</div></div>`).join("");
 
     // Compare all three relay policies side-by-side so every trade-off is explicit.
@@ -2104,7 +1727,7 @@ function render() {
   renderRouterConnMatrix(schedule, rows, cols, cycles, root, calRouter);
   renderAllRouterRotation(schedule, rows, cols, cycle, root);
 
-  renderResultSummary(schedule, rows, cols, op, {root, zLowerBound: zLb, construction, preassigned});
+  renderResultSummary(schedule, rows, cols, op);
   renderActivityLane(schedule, cycles);
   renderStreamDetail(schedule);
 
@@ -2117,8 +1740,6 @@ function render() {
   });
 }
 
-document.getElementById("op").onchange = () => { updateVariantOptions(document.getElementById("op").value, +document.getElementById("cols").value || 4); render(); };
-document.getElementById("variant").onchange = render;
 document.getElementById("apply").onclick = render;
 document.getElementById("prev").onclick = () => { const c = document.getElementById("cycle"); c.value = Math.max(0, (+c.value || 0) - 1); render(); };
 document.getElementById("next").onclick = () => { const c = document.getElementById("cycle"); c.value = (+c.value || 0) + 1; render(); };
