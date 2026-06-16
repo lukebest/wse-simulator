@@ -32,7 +32,7 @@ from wsesim.network.collective_patterns import (
     xy_path,
 )
 
-FaultType = Literal["pe_point", "link_point", "pe_block"]
+FaultType = Literal["pe_point", "link_point", "pe_block", "pe_block_1x2"]
 Region = Literal["corner", "edge", "center"]
 
 
@@ -53,6 +53,11 @@ class MeshFault:
     def block(cls, x: int, y: int) -> MeshFault:
         nodes = frozenset((x + dx, y + dy) for dx in (0, 1) for dy in (0, 1))
         return cls(bad_nodes=nodes)
+
+    @classmethod
+    def block1x2(cls, x: int, y: int, *, horizontal: bool = True) -> MeshFault:
+        b = (x + 1, y) if horizontal else (x, y + 1)
+        return cls(bad_nodes=frozenset({(x, y), b}))
 
     def node_bad(self, n: MeshNode) -> bool:
         return (n.x, n.y) in self.bad_nodes
@@ -98,6 +103,17 @@ def region_block_origin(rows: int, cols: int, region: Region) -> tuple[int, int]
     return max(0, cols // 2 - 1), max(0, rows // 2 - 1)
 
 
+def region_block1x2(
+    rows: int, cols: int, region: Region
+) -> tuple[int, int, bool]:
+    """Origin (x, y) and orientation (horizontal) of a 1×2 PE block per region."""
+    if region == "corner":
+        return 0, 0, True
+    if region == "edge":
+        return cols // 2, 0, True
+    return cols // 2 - 1, rows // 2, True
+
+
 def make_scenario_fault(
     rows: int,
     cols: int,
@@ -112,6 +128,12 @@ def make_scenario_fault(
             x, y = region_point(rows, cols, region, root=root)
             return MeshFault.pe(x, y)
         return MeshFault.block(x, y)
+    if fault_type == "pe_block_1x2":
+        x, y, horizontal = region_block1x2(rows, cols, region)
+        bx, by = (x + 1, y) if horizontal else (x, y + 1)
+        if bx >= cols or by >= rows:
+            return MeshFault.pe(x, y)
+        return MeshFault.block1x2(x, y, horizontal=horizontal)
     x, y = region_point(rows, cols, region, root=root)
     if fault_type == "pe_point":
         return MeshFault.pe(x, y)

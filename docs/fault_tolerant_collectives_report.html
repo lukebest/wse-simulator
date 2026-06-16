@@ -88,9 +88,10 @@
       <div class="card">
         <h4>故障类型</h4>
         <ul>
-          <li><strong>PE 坏点</strong>：节点 (x,y) 不能作源/汇/转发/多播/inline-reduce</li>
+          <li><strong>PE 坏点</strong>：单节点 (x,y) 不能作源/汇/转发/多播/inline-reduce</li>
+          <li><strong>PE 坏块 (1×2)</strong>：相邻两节点失效（去 1 偶 + 1 奇，色类仍平衡）</li>
+          <li><strong>PE 坏块 (2×2)</strong>：连续 2×2 区域全部失效</li>
           <li><strong>链路坏</strong>：有向边失效，两端 PE 仍存活</li>
-          <li><strong>PE 坏块</strong>：连续 2×2 区域全部失效</li>
         </ul>
       </div>
       <div class="card">
@@ -2355,11 +2356,71 @@
         </tr>
       </thead>
       <tbody id="summary-body">
-<tr><td>4×4</td><td>54</td><td class='bad'>4.000×</td><td>AllReduce</td><td>链路坏</td><td>角</td><td>16</td></tr>
-<tr><td>8×8</td><td>54</td><td class='bad'>4.000×</td><td>AllReduce</td><td>链路坏</td><td>角</td><td>18</td></tr>
-<tr><td>12×16</td><td>54</td><td class='bad'>4.000×</td><td>AllReduce</td><td>链路坏</td><td>角</td><td>18</td></tr>
+<tr><td>4×4</td><td>72</td><td class='bad'>4.000×</td><td>AllReduce</td><td>链路坏</td><td>角</td><td>22</td></tr>
+<tr><td>8×8</td><td>72</td><td class='bad'>4.000×</td><td>AllReduce</td><td>链路坏</td><td>角</td><td>24</td></tr>
+<tr><td>12×16</td><td>72</td><td class='bad'>4.000×</td><td>AllReduce</td><td>链路坏</td><td>角</td><td>24</td></tr>
 </tbody>
     </table>
+  </div>
+</section>
+
+<section id="focus-8x8">
+  <h2>3b. 8×8 专题：各集合通信的最优容错方法与 golden 退化</h2>
+  <div class="panel">
+    <p>以 <strong>8×8 mesh</strong>（root=(0,0)）为基准，注入<strong>单点 / 1×2 块 / 2×2 块</strong>节点故障与<strong>链路</strong>故障，分别落在<strong>角 · 边 · 中心</strong>。退化比 = <span class="mono">Z_故障 / Z_golden</span>，均由统一无缓冲调度器 <span class="mono">schedule_bufferless_noc</span> 公平复跑；数据见下方 §4 全量矩阵 8×8 段。</p>
+
+    <h3>3b.1 各集合通信最优方法 × 退化包络</h3>
+    <table>
+      <thead>
+        <tr><th>Pattern</th><th>golden Z</th><th>最优容错方法</th><th>最好情形</th><th>最坏退化（场景）</th><th>退化机制</th></tr>
+      </thead>
+      <tbody>
+        <tr><td><strong>Broadcast</strong></td><td>14</td><td>多播树剪枝 + BFS 绕洞</td><td class='good'>1.000×</td><td class='warn'>1.143×（中心点 / 边链路）</td><td>绕洞 +2 跳，受偏心距 ecc 约束</td></tr>
+        <tr><td><strong>Reduce</strong></td><td>14</td><td>反向多播树 + inline-reduce</td><td class='good'>1.000×</td><td class='warn'>1.143×（角链路）</td><td>同 Broadcast（树反向）</td></tr>
+        <tr><td><strong>AllReduce</strong></td><td>14<span class="muted">*</span></td><td>维累加 dim-accum 逐边绕行</td><td class='good'>1.000×（所有坏点/坏块）</td><td class='bad'>4.000×（任意坏链路）</td><td>坏链路使单步累加波绕 3 跳；<span class="muted">*调度关键边极短(1→4)，相对直径界 z*=14 仍可忽略</span></td></tr>
+        <tr><td><strong>AllGather</strong></td><td>32</td><td>挖洞网格重建哈密顿路径（可环则双向）</td><td class='warn'>1.906×（角 1×2）</td><td class='bad'>2.031×（边/中心）</td><td>环→路径 ≈2×：去点破坏哈密顿环闭合</td></tr>
+        <tr><td><strong>Gather</strong></td><td>32</td><td>哈密顿路径向 root 汇聚</td><td class='good'>1.000×（边/链路）</td><td class='good'>1.031×（中心链路）</td><td>root 存活则 ≈1×；root/中心挖空→不可达</td></tr>
+        <tr><td><strong>AllToAll</strong></td><td>167</td><td>维序 XY 单播 + 逐流 BFS 绕洞</td><td class='good'>1.018×（边链路）</td><td class='bad'>2.000×（2×2 边块）</td><td>瓶颈=洞周对剖边；中心&gt;边&gt;角，块越大越差</td></tr>
+      </tbody>
+    </table>
+    <p class="muted">「最好/最坏」仅统计可达场景（root 在角被挖空时 Broadcast/Reduce/Gather 不可达，需 root 冗余，见 §5）。</p>
+
+    <h3>3b.2 AllToAll：退化随「区域 × 故障规模」（带宽型，最敏感）</h3>
+    <table>
+      <thead>
+        <tr><th>故障</th><th>角</th><th>边</th><th>中心</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>单点 (PE)</td><td class='good'>1.000×</td><td class='bad'>1.539×</td><td class='bad'>1.539×</td></tr>
+        <tr><td>1×2 块</td><td class='good'>1.066×</td><td class='warn'>1.491×</td><td class='bad'>1.737×</td></tr>
+        <tr><td>2×2 块</td><td class='warn'>1.335×</td><td class='bad'>2.000×</td><td class='bad'>1.766×</td></tr>
+        <tr><td>链路</td><td class='good'>1.036×</td><td class='good'>1.018×</td><td class='warn'>1.228×</td></tr>
+      </tbody>
+    </table>
+    <p class="muted">规律：节点故障<strong>中心 ≥ 边 ≫ 角</strong>——中心洞迫使最多流量绕经拥塞对剖边；角洞几乎不占对剖带宽（单点角点甚至 1.000×）。块越大、越靠中心越差；链路故障仅减 1 条边，影响最小。</p>
+
+    <h3>3b.3 AllGather / Gather：环→路径的结构降级</h3>
+    <table>
+      <thead>
+        <tr><th>故障</th><th colspan="3" style="text-align:center">AllGather（角 / 边 / 中心）</th><th colspan="3" style="text-align:center">Gather（角 / 边 / 中心）</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>单点 (PE)</td><td class='bad'>1.938×</td><td class='bad'>2.031×</td><td class='muted'>不可达†</td><td class='muted'>不可达‡</td><td class='good'>1.000×</td><td class='muted'>不可达†</td></tr>
+        <tr><td>1×2 块</td><td class='warn'>1.906×</td><td class='bad'>2.031×</td><td class='muted'>不可达†</td><td class='muted'>不可达‡</td><td class='good'>1.000×</td><td class='muted'>不可达†</td></tr>
+        <tr><td>2×2 块</td><td class='warn'>1.906×</td><td class='muted'>不可达†</td><td class='muted'>不可达†</td><td class='muted'>不可达‡</td><td class='muted'>不可达†</td><td class='muted'>不可达†</td></tr>
+        <tr><td>链路</td><td class='bad'>2.031×</td><td class='bad'>1.969×</td><td class='bad'>2.031×</td><td class='good'>1.000×</td><td class='good'>1.000×</td><td class='good'>1.031×</td></tr>
+      </tbody>
+    </table>
+    <p class="muted">‡ 角=root 被挖空 → Gather 无汇聚根，不可达（需 root 冗余）。† 中心/部分块场景下「挖洞 snake+BFS 缝合」启发式未能覆盖全部幸存点（工程上可用更强的哈密顿回溯求解，属启发式上界而非理论不可达）。链路故障两端 PE 存活 → 局部 detour，仅 +O(1)。</p>
+
+    <h3>3b.4 结论</h3>
+    <ul>
+      <li><strong>两类退化机理</strong>：① <strong>绕洞 +O(1)</strong>（Broadcast / Reduce / AllReduce / AllToAll）——makespan 小幅抬升；② <strong>结构降级 环→路径 ≈2×</strong>（AllGather / Gather）——去 1 点即破坏哈密顿环闭合，是最大的单类退化。</li>
+      <li><strong>区域规律（节点故障）</strong>：<span class="mono">中心 ≥ 边 &gt; 角</span>。中心枢纽 degree=4、承载最多 transit 流；角点 degree=2，挖空几乎不影响对剖带宽。</li>
+      <li><strong>故障规模</strong>：1×2 退化介于单点与 2×2 之间；2×2 边块是 AllToAll 最差（2.0×）。注意 1×2 去「一偶+一奇」<strong>保色平衡</strong>，但环闭合是更强约束，故 AllGather 仍降为路径。</li>
+      <li><strong>链路故障</strong>：对带宽型 AllToAll 最温和（1.02–1.23×，仅减 1 边）；却是 AllReduce「单跳累加波」最痛点（局部 4×，但绝对值 1→4 极小，远低于直径界 z*=14）。</li>
+      <li><strong>角点 = root 的特殊性</strong>：Broadcast / Reduce / Gather 的根在角点被挖空时直接不可达 → 必须 <strong>root 冗余 / 重映射</strong>（§5 WSE 行列冗余旁路）。</li>
+    </ul>
   </div>
 </section>
 
@@ -2394,24 +2455,24 @@
 <tr><td>AllGather</td><td>4×4</td><td>PE 坏点</td><td>中心</td><td>8</td><td>8</td><td>14</td><td class='bad'>1.750×</td><td>0</td><td>1</td><td>部分流(14/32); 哈密顿环→路径</td></tr>
 <tr><td>Gather</td><td>4×4</td><td>PE 坏点</td><td>中心</td><td>8</td><td>8</td><td>7</td><td class='good'>1.000×</td><td>0</td><td>1</td><td>部分流(13/15); 哈密顿环→路径</td></tr>
 <tr><td>AllToAll</td><td>4×4</td><td>PE 坏点</td><td>中心</td><td>22</td><td>22</td><td>30</td><td class='warn'>1.364×</td><td>1380</td><td>1</td><td>部分流(210/240)</td></tr>
-<tr><td>Broadcast</td><td>4×4</td><td>链路坏</td><td>角</td><td>6</td><td>6</td><td>6</td><td class='good'>1.000×</td><td>0</td><td>1</td><td>—</td></tr>
-<tr><td>Reduce</td><td>4×4</td><td>链路坏</td><td>角</td><td>6</td><td>6</td><td>8</td><td class='warn'>1.333×</td><td>0</td><td>1</td><td>—</td></tr>
-<tr><td>AllReduce</td><td>4×4</td><td>链路坏</td><td>角</td><td>6</td><td>1</td><td>4</td><td class='bad'>4.000×</td><td>2</td><td>1</td><td>—</td></tr>
-<tr><td>AllGather</td><td>4×4</td><td>链路坏</td><td>角</td><td>8</td><td>8</td><td>17</td><td class='bad'>2.125×</td><td>0</td><td>1</td><td>部分流(15/32); 哈密顿环→路径</td></tr>
-<tr><td>Gather</td><td>4×4</td><td>链路坏</td><td>角</td><td>8</td><td>8</td><td>7</td><td class='good'>1.000×</td><td>0</td><td>1</td><td>部分流(14/15); 哈密顿环→路径</td></tr>
-<tr><td>AllToAll</td><td>4×4</td><td>链路坏</td><td>角</td><td>22</td><td>22</td><td>28</td><td class='warn'>1.273×</td><td>1415</td><td>1</td><td>—</td></tr>
-<tr><td>Broadcast</td><td>4×4</td><td>链路坏</td><td>边</td><td>6</td><td>6</td><td>8</td><td class='warn'>1.333×</td><td>0</td><td>1</td><td>—</td></tr>
-<tr><td>Reduce</td><td>4×4</td><td>链路坏</td><td>边</td><td>6</td><td>6</td><td>6</td><td class='good'>1.000×</td><td>0</td><td>1</td><td>—</td></tr>
-<tr><td>AllReduce</td><td>4×4</td><td>链路坏</td><td>边</td><td>6</td><td>1</td><td>4</td><td class='bad'>4.000×</td><td>2</td><td>1</td><td>—</td></tr>
-<tr><td>AllGather</td><td>4×4</td><td>链路坏</td><td>边</td><td>8</td><td>8</td><td>15</td><td class='bad'>1.875×</td><td>0</td><td>1</td><td>部分流(15/32); 哈密顿环→路径</td></tr>
-<tr><td>Gather</td><td>4×4</td><td>链路坏</td><td>边</td><td>8</td><td>8</td><td>7</td><td class='good'>1.000×</td><td>0</td><td>1</td><td>部分流(14/15); 哈密顿环→路径</td></tr>
-<tr><td>AllToAll</td><td>4×4</td><td>链路坏</td><td>边</td><td>22</td><td>22</td><td>26</td><td class='warn'>1.182×</td><td>1388</td><td>1</td><td>—</td></tr>
-<tr><td>Broadcast</td><td>4×4</td><td>链路坏</td><td>中心</td><td>6</td><td>6</td><td>6</td><td class='good'>1.000×</td><td>0</td><td>1</td><td>—</td></tr>
-<tr><td>Reduce</td><td>4×4</td><td>链路坏</td><td>中心</td><td>6</td><td>6</td><td>6</td><td class='good'>1.000×</td><td>0</td><td>1</td><td>—</td></tr>
-<tr><td>AllReduce</td><td>4×4</td><td>链路坏</td><td>中心</td><td>6</td><td>1</td><td>4</td><td class='bad'>4.000×</td><td>2</td><td>1</td><td>—</td></tr>
-<tr><td>AllGather</td><td>4×4</td><td>链路坏</td><td>中心</td><td>8</td><td>8</td><td>17</td><td class='bad'>2.125×</td><td>0</td><td>1</td><td>部分流(15/32); 哈密顿环→路径</td></tr>
-<tr><td>Gather</td><td>4×4</td><td>链路坏</td><td>中心</td><td>8</td><td>8</td><td>9</td><td class='warn'>1.125×</td><td>0</td><td>1</td><td>部分流(14/15); 哈密顿环→路径</td></tr>
-<tr><td>AllToAll</td><td>4×4</td><td>链路坏</td><td>中心</td><td>22</td><td>22</td><td>25</td><td class='warn'>1.136×</td><td>1406</td><td>1</td><td>—</td></tr>
+<tr><td>Broadcast</td><td>4×4</td><td>PE 坏块 (1×2)</td><td>角</td><td>6</td><td>6</td><td>0</td><td class='warn'>—</td><td>0</td><td>1</td><td>不可达/无流; 部分流(0/5)</td></tr>
+<tr><td>Reduce</td><td>4×4</td><td>PE 坏块 (1×2)</td><td>角</td><td>6</td><td>6</td><td>0</td><td class='warn'>—</td><td>0</td><td>1</td><td>不可达/无流; 部分流(0/15)</td></tr>
+<tr><td>AllReduce</td><td>4×4</td><td>PE 坏块 (1×2)</td><td>角</td><td>6</td><td>1</td><td>1</td><td class='good'>1.000×</td><td>0</td><td>1</td><td>部分流(40/48)</td></tr>
+<tr><td>AllGather</td><td>4×4</td><td>PE 坏块 (1×2)</td><td>角</td><td>8</td><td>8</td><td>13</td><td class='bad'>1.625×</td><td>0</td><td>1</td><td>部分流(13/32); 哈密顿环→路径</td></tr>
+<tr><td>Gather</td><td>4×4</td><td>PE 坏块 (1×2)</td><td>角</td><td>8</td><td>8</td><td>0</td><td class='warn'>—</td><td>0</td><td>1</td><td>不可达/无流; 部分流(0/15); 哈密顿环→路径</td></tr>
+<tr><td>AllToAll</td><td>4×4</td><td>PE 坏块 (1×2)</td><td>角</td><td>22</td><td>22</td><td>27</td><td class='warn'>1.227×</td><td>910</td><td>1</td><td>部分流(182/240)</td></tr>
+<tr><td>Broadcast</td><td>4×4</td><td>PE 坏块 (1×2)</td><td>边</td><td>6</td><td>6</td><td>6</td><td class='good'>1.000×</td><td>0</td><td>1</td><td>部分流(2/5)</td></tr>
+<tr><td>Reduce</td><td>4×4</td><td>PE 坏块 (1×2)</td><td>边</td><td>6</td><td>6</td><td>6</td><td class='good'>1.000×</td><td>0</td><td>1</td><td>部分流(11/15)</td></tr>
+<tr><td>AllReduce</td><td>4×4</td><td>PE 坏块 (1×2)</td><td>边</td><td>6</td><td>1</td><td>1</td><td class='good'>1.000×</td><td>0</td><td>1</td><td>部分流(40/48)</td></tr>
+<tr><td>AllGather</td><td>4×4</td><td>PE 坏块 (1×2)</td><td>边</td><td>8</td><td>8</td><td>13</td><td class='bad'>1.625×</td><td>0</td><td>1</td><td>部分流(13/32); 哈密顿环→路径</td></tr>
+<tr><td>Gather</td><td>4×4</td><td>PE 坏块 (1×2)</td><td>边</td><td>8</td><td>8</td><td>6</td><td class='good'>1.000×</td><td>0</td><td>1</td><td>部分流(12/15); 哈密顿环→路径</td></tr>
+<tr><td>AllToAll</td><td>4×4</td><td>PE 坏块 (1×2)</td><td>边</td><td>22</td><td>22</td><td>27</td><td class='warn'>1.227×</td><td>919</td><td>1</td><td>部分流(182/240)</td></tr>
+<tr><td>Broadcast</td><td>4×4</td><td>PE 坏块 (1×2)</td><td>中心</td><td>6</td><td>6</td><td>8</td><td class='warn'>1.333×</td><td>0</td><td>1</td><td>—</td></tr>
+<tr><td>Reduce</td><td>4×4</td><td>PE 坏块 (1×2)</td><td>中心</td><td>6</td><td>6</td><td>6</td><td class='good'>1.000×</td><td>0</td><td>1</td><td>部分流(11/15)</td></tr>
+<tr><td>AllReduce</td><td>4×4</td><td>PE 坏块 (1×2)</td><td>中心</td><td>6</td><td>1</td><td>1</td><td class='good'>1.000×</td><td>0</td><td>1</td><td>部分流(34/48)</td></tr>
+<tr><td>AllGather</td><td>4×4</td><td>PE 坏块 (1×2)</td><td>中心</td><td>8</td><td>8</td><td>13</td><td class='bad'>1.625×</td><td>0</td><td>1</td><td>部分流(13/32); 哈密顿环→路径</td></tr>
+<tr><td>Gather</td><td>4×4</td><td>PE 坏块 (1×2)</td><td>中心</td><td>8</td><td>8</td><td>6</td><td class='good'>1.000×</td><td>0</td><td>1</td><td>部分流(12/15); 哈密顿环→路径</td></tr>
+<tr><td>AllToAll</td><td>4×4</td><td>PE 坏块 (1×2)</td><td>中心</td><td>22</td><td>22</td><td>30</td><td class='warn'>1.364×</td><td>1280</td><td>1</td><td>部分流(182/240)</td></tr>
 <tr><td>Broadcast</td><td>4×4</td><td>PE 坏块 (2×2)</td><td>角</td><td>6</td><td>6</td><td>0</td><td class='warn'>—</td><td>0</td><td>1</td><td>不可达/无流; 部分流(0/5)</td></tr>
 <tr><td>Reduce</td><td>4×4</td><td>PE 坏块 (2×2)</td><td>角</td><td>6</td><td>6</td><td>0</td><td class='warn'>—</td><td>0</td><td>1</td><td>不可达/无流; 部分流(0/15)</td></tr>
 <tr><td>AllReduce</td><td>4×4</td><td>PE 坏块 (2×2)</td><td>角</td><td>6</td><td>1</td><td>1</td><td class='good'>1.000×</td><td>0</td><td>1</td><td>部分流(32/48)</td></tr>
@@ -2430,6 +2491,24 @@
 <tr><td>AllGather</td><td>4×4</td><td>PE 坏块 (2×2)</td><td>中心</td><td>8</td><td>8</td><td>6</td><td class='good'>1.000×</td><td>0</td><td>1</td><td>部分流(24/32)</td></tr>
 <tr><td>Gather</td><td>4×4</td><td>PE 坏块 (2×2)</td><td>中心</td><td>8</td><td>8</td><td>6</td><td class='good'>1.000×</td><td>0</td><td>1</td><td>部分流(11/15)</td></tr>
 <tr><td>AllToAll</td><td>4×4</td><td>PE 坏块 (2×2)</td><td>中心</td><td>22</td><td>22</td><td>21</td><td class='good'>1.000×</td><td>660</td><td>1</td><td>部分流(132/240)</td></tr>
+<tr><td>Broadcast</td><td>4×4</td><td>链路坏</td><td>角</td><td>6</td><td>6</td><td>6</td><td class='good'>1.000×</td><td>0</td><td>1</td><td>—</td></tr>
+<tr><td>Reduce</td><td>4×4</td><td>链路坏</td><td>角</td><td>6</td><td>6</td><td>8</td><td class='warn'>1.333×</td><td>0</td><td>1</td><td>—</td></tr>
+<tr><td>AllReduce</td><td>4×4</td><td>链路坏</td><td>角</td><td>6</td><td>1</td><td>4</td><td class='bad'>4.000×</td><td>2</td><td>1</td><td>—</td></tr>
+<tr><td>AllGather</td><td>4×4</td><td>链路坏</td><td>角</td><td>8</td><td>8</td><td>17</td><td class='bad'>2.125×</td><td>0</td><td>1</td><td>部分流(15/32); 哈密顿环→路径</td></tr>
+<tr><td>Gather</td><td>4×4</td><td>链路坏</td><td>角</td><td>8</td><td>8</td><td>7</td><td class='good'>1.000×</td><td>0</td><td>1</td><td>部分流(14/15); 哈密顿环→路径</td></tr>
+<tr><td>AllToAll</td><td>4×4</td><td>链路坏</td><td>角</td><td>22</td><td>22</td><td>28</td><td class='warn'>1.273×</td><td>1415</td><td>1</td><td>—</td></tr>
+<tr><td>Broadcast</td><td>4×4</td><td>链路坏</td><td>边</td><td>6</td><td>6</td><td>8</td><td class='warn'>1.333×</td><td>0</td><td>1</td><td>—</td></tr>
+<tr><td>Reduce</td><td>4×4</td><td>链路坏</td><td>边</td><td>6</td><td>6</td><td>6</td><td class='good'>1.000×</td><td>0</td><td>1</td><td>—</td></tr>
+<tr><td>AllReduce</td><td>4×4</td><td>链路坏</td><td>边</td><td>6</td><td>1</td><td>4</td><td class='bad'>4.000×</td><td>2</td><td>1</td><td>—</td></tr>
+<tr><td>AllGather</td><td>4×4</td><td>链路坏</td><td>边</td><td>8</td><td>8</td><td>15</td><td class='bad'>1.875×</td><td>0</td><td>1</td><td>部分流(15/32); 哈密顿环→路径</td></tr>
+<tr><td>Gather</td><td>4×4</td><td>链路坏</td><td>边</td><td>8</td><td>8</td><td>7</td><td class='good'>1.000×</td><td>0</td><td>1</td><td>部分流(14/15); 哈密顿环→路径</td></tr>
+<tr><td>AllToAll</td><td>4×4</td><td>链路坏</td><td>边</td><td>22</td><td>22</td><td>26</td><td class='warn'>1.182×</td><td>1388</td><td>1</td><td>—</td></tr>
+<tr><td>Broadcast</td><td>4×4</td><td>链路坏</td><td>中心</td><td>6</td><td>6</td><td>6</td><td class='good'>1.000×</td><td>0</td><td>1</td><td>—</td></tr>
+<tr><td>Reduce</td><td>4×4</td><td>链路坏</td><td>中心</td><td>6</td><td>6</td><td>6</td><td class='good'>1.000×</td><td>0</td><td>1</td><td>—</td></tr>
+<tr><td>AllReduce</td><td>4×4</td><td>链路坏</td><td>中心</td><td>6</td><td>1</td><td>4</td><td class='bad'>4.000×</td><td>2</td><td>1</td><td>—</td></tr>
+<tr><td>AllGather</td><td>4×4</td><td>链路坏</td><td>中心</td><td>8</td><td>8</td><td>17</td><td class='bad'>2.125×</td><td>0</td><td>1</td><td>部分流(15/32); 哈密顿环→路径</td></tr>
+<tr><td>Gather</td><td>4×4</td><td>链路坏</td><td>中心</td><td>8</td><td>8</td><td>9</td><td class='warn'>1.125×</td><td>0</td><td>1</td><td>部分流(14/15); 哈密顿环→路径</td></tr>
+<tr><td>AllToAll</td><td>4×4</td><td>链路坏</td><td>中心</td><td>22</td><td>22</td><td>25</td><td class='warn'>1.136×</td><td>1406</td><td>1</td><td>—</td></tr>
 <tr><td>Broadcast</td><td>8×8</td><td>PE 坏点</td><td>角</td><td>14</td><td>14</td><td>0</td><td class='warn'>—</td><td>0</td><td>1</td><td>不可达/无流; 部分流(0/9)</td></tr>
 <tr><td>Reduce</td><td>8×8</td><td>PE 坏点</td><td>角</td><td>14</td><td>14</td><td>0</td><td class='warn'>—</td><td>0</td><td>1</td><td>不可达/无流; 部分流(0/63)</td></tr>
 <tr><td>AllReduce</td><td>8×8</td><td>PE 坏点</td><td>角</td><td>14</td><td>1</td><td>1</td><td class='good'>1.000×</td><td>0</td><td>1</td><td>部分流(220/224)</td></tr>
@@ -2448,24 +2527,24 @@
 <tr><td>AllGather</td><td>8×8</td><td>PE 坏点</td><td>中心</td><td>32</td><td>32</td><td>0</td><td class='warn'>—</td><td>0</td><td>1</td><td>不可达/无流; 部分流(0/128); 哈密顿环→路径</td></tr>
 <tr><td>Gather</td><td>8×8</td><td>PE 坏点</td><td>中心</td><td>32</td><td>32</td><td>0</td><td class='warn'>—</td><td>0</td><td>1</td><td>不可达/无流; 部分流(0/63); 哈密顿环→路径</td></tr>
 <tr><td>AllToAll</td><td>8×8</td><td>PE 坏点</td><td>中心</td><td>167</td><td>167</td><td>257</td><td class='bad'>1.539×</td><td>227092</td><td>1</td><td>部分流(3906/4032)</td></tr>
-<tr><td>Broadcast</td><td>8×8</td><td>链路坏</td><td>角</td><td>14</td><td>14</td><td>14</td><td class='good'>1.000×</td><td>0</td><td>1</td><td>—</td></tr>
-<tr><td>Reduce</td><td>8×8</td><td>链路坏</td><td>角</td><td>14</td><td>14</td><td>16</td><td class='warn'>1.143×</td><td>0</td><td>1</td><td>—</td></tr>
-<tr><td>AllReduce</td><td>8×8</td><td>链路坏</td><td>角</td><td>14</td><td>1</td><td>4</td><td class='bad'>4.000×</td><td>2</td><td>1</td><td>—</td></tr>
-<tr><td>AllGather</td><td>8×8</td><td>链路坏</td><td>角</td><td>32</td><td>32</td><td>65</td><td class='bad'>2.031×</td><td>0</td><td>1</td><td>部分流(63/128); 哈密顿环→路径</td></tr>
-<tr><td>Gather</td><td>8×8</td><td>链路坏</td><td>角</td><td>32</td><td>32</td><td>31</td><td class='good'>1.000×</td><td>0</td><td>1</td><td>部分流(62/63); 哈密顿环→路径</td></tr>
-<tr><td>AllToAll</td><td>8×8</td><td>链路坏</td><td>角</td><td>167</td><td>167</td><td>173</td><td class='good'>1.036×</td><td>194277</td><td>1</td><td>—</td></tr>
-<tr><td>Broadcast</td><td>8×8</td><td>链路坏</td><td>边</td><td>14</td><td>14</td><td>16</td><td class='warn'>1.143×</td><td>0</td><td>1</td><td>—</td></tr>
-<tr><td>Reduce</td><td>8×8</td><td>链路坏</td><td>边</td><td>14</td><td>14</td><td>14</td><td class='good'>1.000×</td><td>0</td><td>1</td><td>—</td></tr>
-<tr><td>AllReduce</td><td>8×8</td><td>链路坏</td><td>边</td><td>14</td><td>1</td><td>4</td><td class='bad'>4.000×</td><td>2</td><td>1</td><td>—</td></tr>
-<tr><td>AllGather</td><td>8×8</td><td>链路坏</td><td>边</td><td>32</td><td>32</td><td>63</td><td class='bad'>1.969×</td><td>0</td><td>1</td><td>部分流(63/128); 哈密顿环→路径</td></tr>
-<tr><td>Gather</td><td>8×8</td><td>链路坏</td><td>边</td><td>32</td><td>32</td><td>31</td><td class='good'>1.000×</td><td>0</td><td>1</td><td>部分流(62/63); 哈密顿环→路径</td></tr>
-<tr><td>AllToAll</td><td>8×8</td><td>链路坏</td><td>边</td><td>167</td><td>167</td><td>170</td><td class='good'>1.018×</td><td>196171</td><td>1</td><td>—</td></tr>
-<tr><td>Broadcast</td><td>8×8</td><td>链路坏</td><td>中心</td><td>14</td><td>14</td><td>14</td><td class='good'>1.000×</td><td>0</td><td>1</td><td>—</td></tr>
-<tr><td>Reduce</td><td>8×8</td><td>链路坏</td><td>中心</td><td>14</td><td>14</td><td>14</td><td class='good'>1.000×</td><td>0</td><td>1</td><td>—</td></tr>
-<tr><td>AllReduce</td><td>8×8</td><td>链路坏</td><td>中心</td><td>14</td><td>1</td><td>4</td><td class='bad'>4.000×</td><td>2</td><td>1</td><td>—</td></tr>
-<tr><td>AllGather</td><td>8×8</td><td>链路坏</td><td>中心</td><td>32</td><td>32</td><td>65</td><td class='bad'>2.031×</td><td>0</td><td>1</td><td>部分流(63/128); 哈密顿环→路径</td></tr>
-<tr><td>Gather</td><td>8×8</td><td>链路坏</td><td>中心</td><td>32</td><td>32</td><td>33</td><td class='good'>1.031×</td><td>0</td><td>1</td><td>部分流(62/63); 哈密顿环→路径</td></tr>
-<tr><td>AllToAll</td><td>8×8</td><td>链路坏</td><td>中心</td><td>167</td><td>167</td><td>205</td><td class='warn'>1.228×</td><td>211123</td><td>1</td><td>—</td></tr>
+<tr><td>Broadcast</td><td>8×8</td><td>PE 坏块 (1×2)</td><td>角</td><td>14</td><td>14</td><td>0</td><td class='warn'>—</td><td>0</td><td>1</td><td>不可达/无流; 部分流(0/9)</td></tr>
+<tr><td>Reduce</td><td>8×8</td><td>PE 坏块 (1×2)</td><td>角</td><td>14</td><td>14</td><td>0</td><td class='warn'>—</td><td>0</td><td>1</td><td>不可达/无流; 部分流(0/63)</td></tr>
+<tr><td>AllReduce</td><td>8×8</td><td>PE 坏块 (1×2)</td><td>角</td><td>14</td><td>1</td><td>1</td><td class='good'>1.000×</td><td>0</td><td>1</td><td>部分流(216/224)</td></tr>
+<tr><td>AllGather</td><td>8×8</td><td>PE 坏块 (1×2)</td><td>角</td><td>32</td><td>32</td><td>61</td><td class='bad'>1.906×</td><td>0</td><td>1</td><td>部分流(61/128); 哈密顿环→路径</td></tr>
+<tr><td>Gather</td><td>8×8</td><td>PE 坏块 (1×2)</td><td>角</td><td>32</td><td>32</td><td>0</td><td class='warn'>—</td><td>0</td><td>1</td><td>不可达/无流; 部分流(0/63); 哈密顿环→路径</td></tr>
+<tr><td>AllToAll</td><td>8×8</td><td>PE 坏块 (1×2)</td><td>角</td><td>167</td><td>167</td><td>178</td><td class='warn'>1.066×</td><td>175584</td><td>1</td><td>部分流(3782/4032)</td></tr>
+<tr><td>Broadcast</td><td>8×8</td><td>PE 坏块 (1×2)</td><td>边</td><td>14</td><td>14</td><td>14</td><td class='good'>1.000×</td><td>0</td><td>1</td><td>部分流(7/9)</td></tr>
+<tr><td>Reduce</td><td>8×8</td><td>PE 坏块 (1×2)</td><td>边</td><td>14</td><td>14</td><td>14</td><td class='good'>1.000×</td><td>0</td><td>1</td><td>部分流(58/63)</td></tr>
+<tr><td>AllReduce</td><td>8×8</td><td>PE 坏块 (1×2)</td><td>边</td><td>14</td><td>1</td><td>1</td><td class='good'>1.000×</td><td>0</td><td>1</td><td>部分流(214/224)</td></tr>
+<tr><td>AllGather</td><td>8×8</td><td>PE 坏块 (1×2)</td><td>边</td><td>32</td><td>32</td><td>65</td><td class='bad'>2.031×</td><td>28</td><td>1</td><td>部分流(65/128); 哈密顿环→路径</td></tr>
+<tr><td>Gather</td><td>8×8</td><td>PE 坏块 (1×2)</td><td>边</td><td>32</td><td>32</td><td>32</td><td class='good'>1.000×</td><td>0</td><td>1</td><td>哈密顿环→路径</td></tr>
+<tr><td>AllToAll</td><td>8×8</td><td>PE 坏块 (1×2)</td><td>边</td><td>167</td><td>167</td><td>249</td><td class='warn'>1.491×</td><td>191236</td><td>1</td><td>部分流(3782/4032)</td></tr>
+<tr><td>Broadcast</td><td>8×8</td><td>PE 坏块 (1×2)</td><td>中心</td><td>14</td><td>14</td><td>16</td><td class='warn'>1.143×</td><td>0</td><td>1</td><td>—</td></tr>
+<tr><td>Reduce</td><td>8×8</td><td>PE 坏块 (1×2)</td><td>中心</td><td>14</td><td>14</td><td>14</td><td class='good'>1.000×</td><td>0</td><td>1</td><td>部分流(59/63)</td></tr>
+<tr><td>AllReduce</td><td>8×8</td><td>PE 坏块 (1×2)</td><td>中心</td><td>14</td><td>1</td><td>1</td><td class='good'>1.000×</td><td>0</td><td>1</td><td>部分流(210/224)</td></tr>
+<tr><td>AllGather</td><td>8×8</td><td>PE 坏块 (1×2)</td><td>中心</td><td>32</td><td>32</td><td>0</td><td class='warn'>—</td><td>0</td><td>1</td><td>不可达/无流; 部分流(0/128); 哈密顿环→路径</td></tr>
+<tr><td>Gather</td><td>8×8</td><td>PE 坏块 (1×2)</td><td>中心</td><td>32</td><td>32</td><td>0</td><td class='warn'>—</td><td>0</td><td>1</td><td>不可达/无流; 部分流(0/63); 哈密顿环→路径</td></tr>
+<tr><td>AllToAll</td><td>8×8</td><td>PE 坏块 (1×2)</td><td>中心</td><td>167</td><td>167</td><td>290</td><td class='bad'>1.737×</td><td>245734</td><td>1</td><td>部分流(3782/4032)</td></tr>
 <tr><td>Broadcast</td><td>8×8</td><td>PE 坏块 (2×2)</td><td>角</td><td>14</td><td>14</td><td>0</td><td class='warn'>—</td><td>0</td><td>1</td><td>不可达/无流; 部分流(0/9)</td></tr>
 <tr><td>Reduce</td><td>8×8</td><td>PE 坏块 (2×2)</td><td>角</td><td>14</td><td>14</td><td>0</td><td class='warn'>—</td><td>0</td><td>1</td><td>不可达/无流; 部分流(0/63)</td></tr>
 <tr><td>AllReduce</td><td>8×8</td><td>PE 坏块 (2×2)</td><td>角</td><td>14</td><td>1</td><td>1</td><td class='good'>1.000×</td><td>0</td><td>1</td><td>部分流(208/224)</td></tr>
@@ -2484,6 +2563,24 @@
 <tr><td>AllGather</td><td>8×8</td><td>PE 坏块 (2×2)</td><td>中心</td><td>32</td><td>32</td><td>0</td><td class='warn'>—</td><td>0</td><td>1</td><td>不可达/无流; 部分流(0/128); 哈密顿环→路径</td></tr>
 <tr><td>Gather</td><td>8×8</td><td>PE 坏块 (2×2)</td><td>中心</td><td>32</td><td>32</td><td>0</td><td class='warn'>—</td><td>0</td><td>1</td><td>不可达/无流; 部分流(0/63); 哈密顿环→路径</td></tr>
 <tr><td>AllToAll</td><td>8×8</td><td>PE 坏块 (2×2)</td><td>中心</td><td>167</td><td>167</td><td>295</td><td class='bad'>1.766×</td><td>245775</td><td>1</td><td>部分流(3540/4032)</td></tr>
+<tr><td>Broadcast</td><td>8×8</td><td>链路坏</td><td>角</td><td>14</td><td>14</td><td>14</td><td class='good'>1.000×</td><td>0</td><td>1</td><td>—</td></tr>
+<tr><td>Reduce</td><td>8×8</td><td>链路坏</td><td>角</td><td>14</td><td>14</td><td>16</td><td class='warn'>1.143×</td><td>0</td><td>1</td><td>—</td></tr>
+<tr><td>AllReduce</td><td>8×8</td><td>链路坏</td><td>角</td><td>14</td><td>1</td><td>4</td><td class='bad'>4.000×</td><td>2</td><td>1</td><td>—</td></tr>
+<tr><td>AllGather</td><td>8×8</td><td>链路坏</td><td>角</td><td>32</td><td>32</td><td>65</td><td class='bad'>2.031×</td><td>0</td><td>1</td><td>部分流(63/128); 哈密顿环→路径</td></tr>
+<tr><td>Gather</td><td>8×8</td><td>链路坏</td><td>角</td><td>32</td><td>32</td><td>31</td><td class='good'>1.000×</td><td>0</td><td>1</td><td>部分流(62/63); 哈密顿环→路径</td></tr>
+<tr><td>AllToAll</td><td>8×8</td><td>链路坏</td><td>角</td><td>167</td><td>167</td><td>173</td><td class='good'>1.036×</td><td>194277</td><td>1</td><td>—</td></tr>
+<tr><td>Broadcast</td><td>8×8</td><td>链路坏</td><td>边</td><td>14</td><td>14</td><td>16</td><td class='warn'>1.143×</td><td>0</td><td>1</td><td>—</td></tr>
+<tr><td>Reduce</td><td>8×8</td><td>链路坏</td><td>边</td><td>14</td><td>14</td><td>14</td><td class='good'>1.000×</td><td>0</td><td>1</td><td>—</td></tr>
+<tr><td>AllReduce</td><td>8×8</td><td>链路坏</td><td>边</td><td>14</td><td>1</td><td>4</td><td class='bad'>4.000×</td><td>2</td><td>1</td><td>—</td></tr>
+<tr><td>AllGather</td><td>8×8</td><td>链路坏</td><td>边</td><td>32</td><td>32</td><td>63</td><td class='bad'>1.969×</td><td>0</td><td>1</td><td>部分流(63/128); 哈密顿环→路径</td></tr>
+<tr><td>Gather</td><td>8×8</td><td>链路坏</td><td>边</td><td>32</td><td>32</td><td>31</td><td class='good'>1.000×</td><td>0</td><td>1</td><td>部分流(62/63); 哈密顿环→路径</td></tr>
+<tr><td>AllToAll</td><td>8×8</td><td>链路坏</td><td>边</td><td>167</td><td>167</td><td>170</td><td class='good'>1.018×</td><td>196171</td><td>1</td><td>—</td></tr>
+<tr><td>Broadcast</td><td>8×8</td><td>链路坏</td><td>中心</td><td>14</td><td>14</td><td>14</td><td class='good'>1.000×</td><td>0</td><td>1</td><td>—</td></tr>
+<tr><td>Reduce</td><td>8×8</td><td>链路坏</td><td>中心</td><td>14</td><td>14</td><td>14</td><td class='good'>1.000×</td><td>0</td><td>1</td><td>—</td></tr>
+<tr><td>AllReduce</td><td>8×8</td><td>链路坏</td><td>中心</td><td>14</td><td>1</td><td>4</td><td class='bad'>4.000×</td><td>2</td><td>1</td><td>—</td></tr>
+<tr><td>AllGather</td><td>8×8</td><td>链路坏</td><td>中心</td><td>32</td><td>32</td><td>65</td><td class='bad'>2.031×</td><td>0</td><td>1</td><td>部分流(63/128); 哈密顿环→路径</td></tr>
+<tr><td>Gather</td><td>8×8</td><td>链路坏</td><td>中心</td><td>32</td><td>32</td><td>33</td><td class='good'>1.031×</td><td>0</td><td>1</td><td>部分流(62/63); 哈密顿环→路径</td></tr>
+<tr><td>AllToAll</td><td>8×8</td><td>链路坏</td><td>中心</td><td>167</td><td>167</td><td>205</td><td class='warn'>1.228×</td><td>211123</td><td>1</td><td>—</td></tr>
 <tr><td>Broadcast</td><td>12×16</td><td>PE 坏点</td><td>角</td><td>26</td><td>26</td><td>0</td><td class='warn'>—</td><td>0</td><td>1</td><td>不可达/无流; 部分流(0/17)</td></tr>
 <tr><td>Reduce</td><td>12×16</td><td>PE 坏点</td><td>角</td><td>26</td><td>26</td><td>0</td><td class='warn'>—</td><td>0</td><td>1</td><td>不可达/无流; 部分流(0/191)</td></tr>
 <tr><td>AllReduce</td><td>12×16</td><td>PE 坏点</td><td>角</td><td>26</td><td>1</td><td>1</td><td class='good'>1.000×</td><td>0</td><td>1</td><td>部分流(708/712)</td></tr>
@@ -2502,24 +2599,24 @@
 <tr><td>AllGather</td><td>12×16</td><td>PE 坏点</td><td>中心</td><td>96</td><td>96</td><td>0</td><td class='warn'>—</td><td>0</td><td>1</td><td>不可达/无流; 部分流(0/384); 哈密顿环→路径</td></tr>
 <tr><td>Gather</td><td>12×16</td><td>PE 坏点</td><td>中心</td><td>96</td><td>96</td><td>0</td><td class='warn'>—</td><td>0</td><td>1</td><td>不可达/无流; 部分流(0/191); 哈密顿环→路径</td></tr>
 <tr><td>AllToAll</td><td>12×16</td><td>PE 坏点</td><td>中心</td><td>905</td><td>905</td><td>1444</td><td class='bad'>1.596×</td><td>11264654</td><td>1</td><td>部分流(36290/36672)</td></tr>
-<tr><td>Broadcast</td><td>12×16</td><td>链路坏</td><td>角</td><td>26</td><td>26</td><td>26</td><td class='good'>1.000×</td><td>0</td><td>1</td><td>—</td></tr>
-<tr><td>Reduce</td><td>12×16</td><td>链路坏</td><td>角</td><td>26</td><td>26</td><td>28</td><td class='warn'>1.077×</td><td>0</td><td>1</td><td>—</td></tr>
-<tr><td>AllReduce</td><td>12×16</td><td>链路坏</td><td>角</td><td>26</td><td>1</td><td>4</td><td class='bad'>4.000×</td><td>2</td><td>1</td><td>—</td></tr>
-<tr><td>AllGather</td><td>12×16</td><td>链路坏</td><td>角</td><td>96</td><td>96</td><td>193</td><td class='bad'>2.010×</td><td>0</td><td>1</td><td>部分流(191/384); 哈密顿环→路径</td></tr>
-<tr><td>Gather</td><td>12×16</td><td>链路坏</td><td>角</td><td>96</td><td>96</td><td>95</td><td class='good'>1.000×</td><td>0</td><td>1</td><td>部分流(190/191); 哈密顿环→路径</td></tr>
-<tr><td>AllToAll</td><td>12×16</td><td>链路坏</td><td>角</td><td>905</td><td>905</td><td>907</td><td class='good'>1.002×</td><td>9832156</td><td>1</td><td>—</td></tr>
-<tr><td>Broadcast</td><td>12×16</td><td>链路坏</td><td>边</td><td>26</td><td>26</td><td>28</td><td class='warn'>1.077×</td><td>0</td><td>1</td><td>—</td></tr>
-<tr><td>Reduce</td><td>12×16</td><td>链路坏</td><td>边</td><td>26</td><td>26</td><td>26</td><td class='good'>1.000×</td><td>0</td><td>1</td><td>—</td></tr>
-<tr><td>AllReduce</td><td>12×16</td><td>链路坏</td><td>边</td><td>26</td><td>1</td><td>4</td><td class='bad'>4.000×</td><td>2</td><td>1</td><td>—</td></tr>
-<tr><td>AllGather</td><td>12×16</td><td>链路坏</td><td>边</td><td>96</td><td>96</td><td>191</td><td class='bad'>1.990×</td><td>0</td><td>1</td><td>部分流(191/384); 哈密顿环→路径</td></tr>
-<tr><td>Gather</td><td>12×16</td><td>链路坏</td><td>边</td><td>96</td><td>96</td><td>95</td><td class='good'>1.000×</td><td>0</td><td>1</td><td>部分流(190/191); 哈密顿环→路径</td></tr>
-<tr><td>AllToAll</td><td>12×16</td><td>链路坏</td><td>边</td><td>905</td><td>905</td><td>912</td><td class='good'>1.008×</td><td>9889745</td><td>1</td><td>—</td></tr>
-<tr><td>Broadcast</td><td>12×16</td><td>链路坏</td><td>中心</td><td>26</td><td>26</td><td>26</td><td class='good'>1.000×</td><td>0</td><td>1</td><td>—</td></tr>
-<tr><td>Reduce</td><td>12×16</td><td>链路坏</td><td>中心</td><td>26</td><td>26</td><td>26</td><td class='good'>1.000×</td><td>0</td><td>1</td><td>—</td></tr>
-<tr><td>AllReduce</td><td>12×16</td><td>链路坏</td><td>中心</td><td>26</td><td>1</td><td>4</td><td class='bad'>4.000×</td><td>2</td><td>1</td><td>—</td></tr>
-<tr><td>AllGather</td><td>12×16</td><td>链路坏</td><td>中心</td><td>96</td><td>96</td><td>193</td><td class='bad'>2.010×</td><td>0</td><td>1</td><td>部分流(191/384); 哈密顿环→路径</td></tr>
-<tr><td>Gather</td><td>12×16</td><td>链路坏</td><td>中心</td><td>96</td><td>96</td><td>97</td><td class='good'>1.010×</td><td>0</td><td>1</td><td>部分流(190/191); 哈密顿环→路径</td></tr>
-<tr><td>AllToAll</td><td>12×16</td><td>链路坏</td><td>中心</td><td>905</td><td>905</td><td>1214</td><td class='warn'>1.341×</td><td>10579626</td><td>1</td><td>—</td></tr>
+<tr><td>Broadcast</td><td>12×16</td><td>PE 坏块 (1×2)</td><td>角</td><td>26</td><td>26</td><td>0</td><td class='warn'>—</td><td>0</td><td>1</td><td>不可达/无流; 部分流(0/17)</td></tr>
+<tr><td>Reduce</td><td>12×16</td><td>PE 坏块 (1×2)</td><td>角</td><td>26</td><td>26</td><td>0</td><td class='warn'>—</td><td>0</td><td>1</td><td>不可达/无流; 部分流(0/191)</td></tr>
+<tr><td>AllReduce</td><td>12×16</td><td>PE 坏块 (1×2)</td><td>角</td><td>26</td><td>1</td><td>1</td><td class='good'>1.000×</td><td>0</td><td>1</td><td>部分流(704/712)</td></tr>
+<tr><td>AllGather</td><td>12×16</td><td>PE 坏块 (1×2)</td><td>角</td><td>96</td><td>96</td><td>189</td><td class='bad'>1.969×</td><td>0</td><td>1</td><td>部分流(189/384); 哈密顿环→路径</td></tr>
+<tr><td>Gather</td><td>12×16</td><td>PE 坏块 (1×2)</td><td>角</td><td>96</td><td>96</td><td>0</td><td class='warn'>—</td><td>0</td><td>1</td><td>不可达/无流; 部分流(0/191); 哈密顿环→路径</td></tr>
+<tr><td>AllToAll</td><td>12×16</td><td>PE 坏块 (1×2)</td><td>角</td><td>905</td><td>905</td><td>893</td><td class='good'>1.000×</td><td>9469676</td><td>1</td><td>部分流(35910/36672)</td></tr>
+<tr><td>Broadcast</td><td>12×16</td><td>PE 坏块 (1×2)</td><td>边</td><td>26</td><td>26</td><td>26</td><td class='good'>1.000×</td><td>0</td><td>1</td><td>部分流(15/17)</td></tr>
+<tr><td>Reduce</td><td>12×16</td><td>PE 坏块 (1×2)</td><td>边</td><td>26</td><td>26</td><td>26</td><td class='good'>1.000×</td><td>0</td><td>1</td><td>部分流(186/191)</td></tr>
+<tr><td>AllReduce</td><td>12×16</td><td>PE 坏块 (1×2)</td><td>边</td><td>26</td><td>1</td><td>1</td><td class='good'>1.000×</td><td>0</td><td>1</td><td>部分流(702/712)</td></tr>
+<tr><td>AllGather</td><td>12×16</td><td>PE 坏块 (1×2)</td><td>边</td><td>96</td><td>96</td><td>193</td><td class='bad'>2.010×</td><td>60</td><td>1</td><td>部分流(193/384); 哈密顿环→路径</td></tr>
+<tr><td>Gather</td><td>12×16</td><td>PE 坏块 (1×2)</td><td>边</td><td>96</td><td>96</td><td>96</td><td class='good'>1.000×</td><td>0</td><td>1</td><td>哈密顿环→路径</td></tr>
+<tr><td>AllToAll</td><td>12×16</td><td>PE 坏块 (1×2)</td><td>边</td><td>905</td><td>905</td><td>1521</td><td class='bad'>1.681×</td><td>10416414</td><td>1</td><td>部分流(35910/36672)</td></tr>
+<tr><td>Broadcast</td><td>12×16</td><td>PE 坏块 (1×2)</td><td>中心</td><td>26</td><td>26</td><td>28</td><td class='warn'>1.077×</td><td>0</td><td>1</td><td>—</td></tr>
+<tr><td>Reduce</td><td>12×16</td><td>PE 坏块 (1×2)</td><td>中心</td><td>26</td><td>26</td><td>26</td><td class='good'>1.000×</td><td>0</td><td>1</td><td>部分流(187/191)</td></tr>
+<tr><td>AllReduce</td><td>12×16</td><td>PE 坏块 (1×2)</td><td>中心</td><td>26</td><td>1</td><td>1</td><td class='good'>1.000×</td><td>0</td><td>1</td><td>部分流(698/712)</td></tr>
+<tr><td>AllGather</td><td>12×16</td><td>PE 坏块 (1×2)</td><td>中心</td><td>96</td><td>96</td><td>0</td><td class='warn'>—</td><td>0</td><td>1</td><td>不可达/无流; 部分流(0/384); 哈密顿环→路径</td></tr>
+<tr><td>Gather</td><td>12×16</td><td>PE 坏块 (1×2)</td><td>中心</td><td>96</td><td>96</td><td>0</td><td class='warn'>—</td><td>0</td><td>1</td><td>不可达/无流; 部分流(0/191); 哈密顿环→路径</td></tr>
+<tr><td>AllToAll</td><td>12×16</td><td>PE 坏块 (1×2)</td><td>中心</td><td>905</td><td>905</td><td>1622</td><td class='bad'>1.792×</td><td>12085216</td><td>1</td><td>部分流(35910/36672)</td></tr>
 <tr><td>Broadcast</td><td>12×16</td><td>PE 坏块 (2×2)</td><td>角</td><td>26</td><td>26</td><td>0</td><td class='warn'>—</td><td>0</td><td>1</td><td>不可达/无流; 部分流(0/17)</td></tr>
 <tr><td>Reduce</td><td>12×16</td><td>PE 坏块 (2×2)</td><td>角</td><td>26</td><td>26</td><td>0</td><td class='warn'>—</td><td>0</td><td>1</td><td>不可达/无流; 部分流(0/191)</td></tr>
 <tr><td>AllReduce</td><td>12×16</td><td>PE 坏块 (2×2)</td><td>角</td><td>26</td><td>1</td><td>1</td><td class='good'>1.000×</td><td>0</td><td>1</td><td>部分流(696/712)</td></tr>
@@ -2538,6 +2635,24 @@
 <tr><td>AllGather</td><td>12×16</td><td>PE 坏块 (2×2)</td><td>中心</td><td>96</td><td>96</td><td>0</td><td class='warn'>—</td><td>0</td><td>1</td><td>不可达/无流; 部分流(0/384); 哈密顿环→路径</td></tr>
 <tr><td>Gather</td><td>12×16</td><td>PE 坏块 (2×2)</td><td>中心</td><td>96</td><td>96</td><td>0</td><td class='warn'>—</td><td>0</td><td>1</td><td>不可达/无流; 部分流(0/191); 哈密顿环→路径</td></tr>
 <tr><td>AllToAll</td><td>12×16</td><td>PE 坏块 (2×2)</td><td>中心</td><td>905</td><td>905</td><td>1875</td><td class='bad'>2.072×</td><td>13178420</td><td>1</td><td>部分流(35156/36672)</td></tr>
+<tr><td>Broadcast</td><td>12×16</td><td>链路坏</td><td>角</td><td>26</td><td>26</td><td>26</td><td class='good'>1.000×</td><td>0</td><td>1</td><td>—</td></tr>
+<tr><td>Reduce</td><td>12×16</td><td>链路坏</td><td>角</td><td>26</td><td>26</td><td>28</td><td class='warn'>1.077×</td><td>0</td><td>1</td><td>—</td></tr>
+<tr><td>AllReduce</td><td>12×16</td><td>链路坏</td><td>角</td><td>26</td><td>1</td><td>4</td><td class='bad'>4.000×</td><td>2</td><td>1</td><td>—</td></tr>
+<tr><td>AllGather</td><td>12×16</td><td>链路坏</td><td>角</td><td>96</td><td>96</td><td>193</td><td class='bad'>2.010×</td><td>0</td><td>1</td><td>部分流(191/384); 哈密顿环→路径</td></tr>
+<tr><td>Gather</td><td>12×16</td><td>链路坏</td><td>角</td><td>96</td><td>96</td><td>95</td><td class='good'>1.000×</td><td>0</td><td>1</td><td>部分流(190/191); 哈密顿环→路径</td></tr>
+<tr><td>AllToAll</td><td>12×16</td><td>链路坏</td><td>角</td><td>905</td><td>905</td><td>907</td><td class='good'>1.002×</td><td>9832156</td><td>1</td><td>—</td></tr>
+<tr><td>Broadcast</td><td>12×16</td><td>链路坏</td><td>边</td><td>26</td><td>26</td><td>28</td><td class='warn'>1.077×</td><td>0</td><td>1</td><td>—</td></tr>
+<tr><td>Reduce</td><td>12×16</td><td>链路坏</td><td>边</td><td>26</td><td>26</td><td>26</td><td class='good'>1.000×</td><td>0</td><td>1</td><td>—</td></tr>
+<tr><td>AllReduce</td><td>12×16</td><td>链路坏</td><td>边</td><td>26</td><td>1</td><td>4</td><td class='bad'>4.000×</td><td>2</td><td>1</td><td>—</td></tr>
+<tr><td>AllGather</td><td>12×16</td><td>链路坏</td><td>边</td><td>96</td><td>96</td><td>191</td><td class='bad'>1.990×</td><td>0</td><td>1</td><td>部分流(191/384); 哈密顿环→路径</td></tr>
+<tr><td>Gather</td><td>12×16</td><td>链路坏</td><td>边</td><td>96</td><td>96</td><td>95</td><td class='good'>1.000×</td><td>0</td><td>1</td><td>部分流(190/191); 哈密顿环→路径</td></tr>
+<tr><td>AllToAll</td><td>12×16</td><td>链路坏</td><td>边</td><td>905</td><td>905</td><td>912</td><td class='good'>1.008×</td><td>9889745</td><td>1</td><td>—</td></tr>
+<tr><td>Broadcast</td><td>12×16</td><td>链路坏</td><td>中心</td><td>26</td><td>26</td><td>26</td><td class='good'>1.000×</td><td>0</td><td>1</td><td>—</td></tr>
+<tr><td>Reduce</td><td>12×16</td><td>链路坏</td><td>中心</td><td>26</td><td>26</td><td>26</td><td class='good'>1.000×</td><td>0</td><td>1</td><td>—</td></tr>
+<tr><td>AllReduce</td><td>12×16</td><td>链路坏</td><td>中心</td><td>26</td><td>1</td><td>4</td><td class='bad'>4.000×</td><td>2</td><td>1</td><td>—</td></tr>
+<tr><td>AllGather</td><td>12×16</td><td>链路坏</td><td>中心</td><td>96</td><td>96</td><td>193</td><td class='bad'>2.010×</td><td>0</td><td>1</td><td>部分流(191/384); 哈密顿环→路径</td></tr>
+<tr><td>Gather</td><td>12×16</td><td>链路坏</td><td>中心</td><td>96</td><td>96</td><td>97</td><td class='good'>1.010×</td><td>0</td><td>1</td><td>部分流(190/191); 哈密顿环→路径</td></tr>
+<tr><td>AllToAll</td><td>12×16</td><td>链路坏</td><td>中心</td><td>905</td><td>905</td><td>1214</td><td class='warn'>1.341×</td><td>10579626</td><td>1</td><td>—</td></tr>
 </tbody>
     </table>
     </div>
@@ -3173,12 +3288,240 @@ pytest tests/test_collective_faults.py -v</pre>
     "mesh": "4×4",
     "root": 0,
     "region": "corner",
-    "fault_type": "link_point",
-    "bad_nodes": [],
-    "bad_edges": [
-      "0,0->1,0",
-      "1,0->0,0"
+    "fault_type": "pe_block_1x2",
+    "bad_nodes": [
+      [
+        0,
+        0
+      ],
+      [
+        1,
+        0
+      ]
     ],
+    "bad_edges": [],
+    "z_healthy_ref": 6,
+    "z_healthy_scheduled": 6,
+    "z_faulty": 0,
+    "ratio": null,
+    "stall_healthy": 0,
+    "stall_faulty": 0,
+    "peak_healthy": 1,
+    "peak_faulty": 1,
+    "ok_healthy": true,
+    "ok_faulty": true,
+    "reachable": false,
+    "hamilton_degraded": false,
+    "is_cycle": true,
+    "flow_count_faulty": 0,
+    "flow_count_expected": 5,
+    "partial_coverage": true,
+    "note": "不可达/无流; 部分流(0/5)"
+  },
+  {
+    "pattern": "reduce",
+    "rows": 4,
+    "cols": 4,
+    "mesh": "4×4",
+    "root": 0,
+    "region": "corner",
+    "fault_type": "pe_block_1x2",
+    "bad_nodes": [
+      [
+        0,
+        0
+      ],
+      [
+        1,
+        0
+      ]
+    ],
+    "bad_edges": [],
+    "z_healthy_ref": 6,
+    "z_healthy_scheduled": 6,
+    "z_faulty": 0,
+    "ratio": null,
+    "stall_healthy": 0,
+    "stall_faulty": 0,
+    "peak_healthy": 1,
+    "peak_faulty": 1,
+    "ok_healthy": true,
+    "ok_faulty": true,
+    "reachable": false,
+    "hamilton_degraded": false,
+    "is_cycle": true,
+    "flow_count_faulty": 0,
+    "flow_count_expected": 15,
+    "partial_coverage": true,
+    "note": "不可达/无流; 部分流(0/15)"
+  },
+  {
+    "pattern": "allreduce",
+    "rows": 4,
+    "cols": 4,
+    "mesh": "4×4",
+    "root": 0,
+    "region": "corner",
+    "fault_type": "pe_block_1x2",
+    "bad_nodes": [
+      [
+        0,
+        0
+      ],
+      [
+        1,
+        0
+      ]
+    ],
+    "bad_edges": [],
+    "z_healthy_ref": 6,
+    "z_healthy_scheduled": 1,
+    "z_faulty": 1,
+    "ratio": 1.0,
+    "stall_healthy": 0,
+    "stall_faulty": 0,
+    "peak_healthy": 1,
+    "peak_faulty": 1,
+    "ok_healthy": true,
+    "ok_faulty": true,
+    "reachable": true,
+    "hamilton_degraded": false,
+    "is_cycle": true,
+    "flow_count_faulty": 40,
+    "flow_count_expected": 48,
+    "partial_coverage": true,
+    "note": "部分流(40/48)"
+  },
+  {
+    "pattern": "allgather",
+    "rows": 4,
+    "cols": 4,
+    "mesh": "4×4",
+    "root": 0,
+    "region": "corner",
+    "fault_type": "pe_block_1x2",
+    "bad_nodes": [
+      [
+        0,
+        0
+      ],
+      [
+        1,
+        0
+      ]
+    ],
+    "bad_edges": [],
+    "z_healthy_ref": 8,
+    "z_healthy_scheduled": 8,
+    "z_faulty": 13,
+    "ratio": 1.625,
+    "stall_healthy": 0,
+    "stall_faulty": 0,
+    "peak_healthy": 1,
+    "peak_faulty": 1,
+    "ok_healthy": true,
+    "ok_faulty": true,
+    "reachable": true,
+    "hamilton_degraded": true,
+    "is_cycle": false,
+    "flow_count_faulty": 13,
+    "flow_count_expected": 32,
+    "partial_coverage": true,
+    "note": "部分流(13/32); 哈密顿环→路径"
+  },
+  {
+    "pattern": "gather",
+    "rows": 4,
+    "cols": 4,
+    "mesh": "4×4",
+    "root": 0,
+    "region": "corner",
+    "fault_type": "pe_block_1x2",
+    "bad_nodes": [
+      [
+        0,
+        0
+      ],
+      [
+        1,
+        0
+      ]
+    ],
+    "bad_edges": [],
+    "z_healthy_ref": 8,
+    "z_healthy_scheduled": 8,
+    "z_faulty": 0,
+    "ratio": null,
+    "stall_healthy": 0,
+    "stall_faulty": 0,
+    "peak_healthy": 1,
+    "peak_faulty": 1,
+    "ok_healthy": true,
+    "ok_faulty": true,
+    "reachable": false,
+    "hamilton_degraded": true,
+    "is_cycle": false,
+    "flow_count_faulty": 0,
+    "flow_count_expected": 15,
+    "partial_coverage": true,
+    "note": "不可达/无流; 部分流(0/15); 哈密顿环→路径"
+  },
+  {
+    "pattern": "alltoall",
+    "rows": 4,
+    "cols": 4,
+    "mesh": "4×4",
+    "root": 0,
+    "region": "corner",
+    "fault_type": "pe_block_1x2",
+    "bad_nodes": [
+      [
+        0,
+        0
+      ],
+      [
+        1,
+        0
+      ]
+    ],
+    "bad_edges": [],
+    "z_healthy_ref": 22,
+    "z_healthy_scheduled": 22,
+    "z_faulty": 27,
+    "ratio": 1.227,
+    "stall_healthy": 1245,
+    "stall_faulty": 910,
+    "peak_healthy": 1,
+    "peak_faulty": 1,
+    "ok_healthy": true,
+    "ok_faulty": true,
+    "reachable": true,
+    "hamilton_degraded": false,
+    "is_cycle": true,
+    "flow_count_faulty": 182,
+    "flow_count_expected": 240,
+    "partial_coverage": true,
+    "note": "部分流(182/240)"
+  },
+  {
+    "pattern": "broadcast",
+    "rows": 4,
+    "cols": 4,
+    "mesh": "4×4",
+    "root": 0,
+    "region": "edge",
+    "fault_type": "pe_block_1x2",
+    "bad_nodes": [
+      [
+        2,
+        0
+      ],
+      [
+        3,
+        0
+      ]
+    ],
+    "bad_edges": [],
     "z_healthy_ref": 6,
     "z_healthy_scheduled": 6,
     "z_faulty": 6,
@@ -3192,10 +3535,10 @@ pytest tests/test_collective_faults.py -v</pre>
     "reachable": true,
     "hamilton_degraded": false,
     "is_cycle": true,
-    "flow_count_faulty": 5,
+    "flow_count_faulty": 2,
     "flow_count_expected": 5,
-    "partial_coverage": false,
-    "note": ""
+    "partial_coverage": true,
+    "note": "部分流(2/5)"
   },
   {
     "pattern": "reduce",
@@ -3203,13 +3546,204 @@ pytest tests/test_collective_faults.py -v</pre>
     "cols": 4,
     "mesh": "4×4",
     "root": 0,
-    "region": "corner",
-    "fault_type": "link_point",
-    "bad_nodes": [],
-    "bad_edges": [
-      "0,0->1,0",
-      "1,0->0,0"
+    "region": "edge",
+    "fault_type": "pe_block_1x2",
+    "bad_nodes": [
+      [
+        2,
+        0
+      ],
+      [
+        3,
+        0
+      ]
     ],
+    "bad_edges": [],
+    "z_healthy_ref": 6,
+    "z_healthy_scheduled": 6,
+    "z_faulty": 6,
+    "ratio": 1.0,
+    "stall_healthy": 0,
+    "stall_faulty": 0,
+    "peak_healthy": 1,
+    "peak_faulty": 1,
+    "ok_healthy": true,
+    "ok_faulty": true,
+    "reachable": true,
+    "hamilton_degraded": false,
+    "is_cycle": true,
+    "flow_count_faulty": 11,
+    "flow_count_expected": 15,
+    "partial_coverage": true,
+    "note": "部分流(11/15)"
+  },
+  {
+    "pattern": "allreduce",
+    "rows": 4,
+    "cols": 4,
+    "mesh": "4×4",
+    "root": 0,
+    "region": "edge",
+    "fault_type": "pe_block_1x2",
+    "bad_nodes": [
+      [
+        2,
+        0
+      ],
+      [
+        3,
+        0
+      ]
+    ],
+    "bad_edges": [],
+    "z_healthy_ref": 6,
+    "z_healthy_scheduled": 1,
+    "z_faulty": 1,
+    "ratio": 1.0,
+    "stall_healthy": 0,
+    "stall_faulty": 0,
+    "peak_healthy": 1,
+    "peak_faulty": 1,
+    "ok_healthy": true,
+    "ok_faulty": true,
+    "reachable": true,
+    "hamilton_degraded": false,
+    "is_cycle": true,
+    "flow_count_faulty": 40,
+    "flow_count_expected": 48,
+    "partial_coverage": true,
+    "note": "部分流(40/48)"
+  },
+  {
+    "pattern": "allgather",
+    "rows": 4,
+    "cols": 4,
+    "mesh": "4×4",
+    "root": 0,
+    "region": "edge",
+    "fault_type": "pe_block_1x2",
+    "bad_nodes": [
+      [
+        2,
+        0
+      ],
+      [
+        3,
+        0
+      ]
+    ],
+    "bad_edges": [],
+    "z_healthy_ref": 8,
+    "z_healthy_scheduled": 8,
+    "z_faulty": 13,
+    "ratio": 1.625,
+    "stall_healthy": 0,
+    "stall_faulty": 0,
+    "peak_healthy": 1,
+    "peak_faulty": 1,
+    "ok_healthy": true,
+    "ok_faulty": true,
+    "reachable": true,
+    "hamilton_degraded": true,
+    "is_cycle": false,
+    "flow_count_faulty": 13,
+    "flow_count_expected": 32,
+    "partial_coverage": true,
+    "note": "部分流(13/32); 哈密顿环→路径"
+  },
+  {
+    "pattern": "gather",
+    "rows": 4,
+    "cols": 4,
+    "mesh": "4×4",
+    "root": 0,
+    "region": "edge",
+    "fault_type": "pe_block_1x2",
+    "bad_nodes": [
+      [
+        2,
+        0
+      ],
+      [
+        3,
+        0
+      ]
+    ],
+    "bad_edges": [],
+    "z_healthy_ref": 8,
+    "z_healthy_scheduled": 8,
+    "z_faulty": 6,
+    "ratio": 1.0,
+    "stall_healthy": 0,
+    "stall_faulty": 0,
+    "peak_healthy": 1,
+    "peak_faulty": 1,
+    "ok_healthy": true,
+    "ok_faulty": true,
+    "reachable": true,
+    "hamilton_degraded": true,
+    "is_cycle": false,
+    "flow_count_faulty": 12,
+    "flow_count_expected": 15,
+    "partial_coverage": true,
+    "note": "部分流(12/15); 哈密顿环→路径"
+  },
+  {
+    "pattern": "alltoall",
+    "rows": 4,
+    "cols": 4,
+    "mesh": "4×4",
+    "root": 0,
+    "region": "edge",
+    "fault_type": "pe_block_1x2",
+    "bad_nodes": [
+      [
+        2,
+        0
+      ],
+      [
+        3,
+        0
+      ]
+    ],
+    "bad_edges": [],
+    "z_healthy_ref": 22,
+    "z_healthy_scheduled": 22,
+    "z_faulty": 27,
+    "ratio": 1.227,
+    "stall_healthy": 1245,
+    "stall_faulty": 919,
+    "peak_healthy": 1,
+    "peak_faulty": 1,
+    "ok_healthy": true,
+    "ok_faulty": true,
+    "reachable": true,
+    "hamilton_degraded": false,
+    "is_cycle": true,
+    "flow_count_faulty": 182,
+    "flow_count_expected": 240,
+    "partial_coverage": true,
+    "note": "部分流(182/240)"
+  },
+  {
+    "pattern": "broadcast",
+    "rows": 4,
+    "cols": 4,
+    "mesh": "4×4",
+    "root": 0,
+    "region": "center",
+    "fault_type": "pe_block_1x2",
+    "bad_nodes": [
+      [
+        1,
+        2
+      ],
+      [
+        2,
+        2
+      ]
+    ],
+    "bad_edges": [],
     "z_healthy_ref": 6,
     "z_healthy_scheduled": 6,
     "z_faulty": 8,
@@ -3223,347 +3757,6 @@ pytest tests/test_collective_faults.py -v</pre>
     "reachable": true,
     "hamilton_degraded": false,
     "is_cycle": true,
-    "flow_count_faulty": 15,
-    "flow_count_expected": 15,
-    "partial_coverage": false,
-    "note": ""
-  },
-  {
-    "pattern": "allreduce",
-    "rows": 4,
-    "cols": 4,
-    "mesh": "4×4",
-    "root": 0,
-    "region": "corner",
-    "fault_type": "link_point",
-    "bad_nodes": [],
-    "bad_edges": [
-      "0,0->1,0",
-      "1,0->0,0"
-    ],
-    "z_healthy_ref": 6,
-    "z_healthy_scheduled": 1,
-    "z_faulty": 4,
-    "ratio": 4.0,
-    "stall_healthy": 0,
-    "stall_faulty": 2,
-    "peak_healthy": 1,
-    "peak_faulty": 1,
-    "ok_healthy": true,
-    "ok_faulty": true,
-    "reachable": true,
-    "hamilton_degraded": false,
-    "is_cycle": true,
-    "flow_count_faulty": 48,
-    "flow_count_expected": 48,
-    "partial_coverage": false,
-    "note": ""
-  },
-  {
-    "pattern": "allgather",
-    "rows": 4,
-    "cols": 4,
-    "mesh": "4×4",
-    "root": 0,
-    "region": "corner",
-    "fault_type": "link_point",
-    "bad_nodes": [],
-    "bad_edges": [
-      "0,0->1,0",
-      "1,0->0,0"
-    ],
-    "z_healthy_ref": 8,
-    "z_healthy_scheduled": 8,
-    "z_faulty": 17,
-    "ratio": 2.125,
-    "stall_healthy": 0,
-    "stall_faulty": 0,
-    "peak_healthy": 1,
-    "peak_faulty": 1,
-    "ok_healthy": true,
-    "ok_faulty": true,
-    "reachable": true,
-    "hamilton_degraded": true,
-    "is_cycle": false,
-    "flow_count_faulty": 15,
-    "flow_count_expected": 32,
-    "partial_coverage": true,
-    "note": "部分流(15/32); 哈密顿环→路径"
-  },
-  {
-    "pattern": "gather",
-    "rows": 4,
-    "cols": 4,
-    "mesh": "4×4",
-    "root": 0,
-    "region": "corner",
-    "fault_type": "link_point",
-    "bad_nodes": [],
-    "bad_edges": [
-      "0,0->1,0",
-      "1,0->0,0"
-    ],
-    "z_healthy_ref": 8,
-    "z_healthy_scheduled": 8,
-    "z_faulty": 7,
-    "ratio": 1.0,
-    "stall_healthy": 0,
-    "stall_faulty": 0,
-    "peak_healthy": 1,
-    "peak_faulty": 1,
-    "ok_healthy": true,
-    "ok_faulty": true,
-    "reachable": true,
-    "hamilton_degraded": true,
-    "is_cycle": false,
-    "flow_count_faulty": 14,
-    "flow_count_expected": 15,
-    "partial_coverage": true,
-    "note": "部分流(14/15); 哈密顿环→路径"
-  },
-  {
-    "pattern": "alltoall",
-    "rows": 4,
-    "cols": 4,
-    "mesh": "4×4",
-    "root": 0,
-    "region": "corner",
-    "fault_type": "link_point",
-    "bad_nodes": [],
-    "bad_edges": [
-      "0,0->1,0",
-      "1,0->0,0"
-    ],
-    "z_healthy_ref": 22,
-    "z_healthy_scheduled": 22,
-    "z_faulty": 28,
-    "ratio": 1.273,
-    "stall_healthy": 1245,
-    "stall_faulty": 1415,
-    "peak_healthy": 1,
-    "peak_faulty": 1,
-    "ok_healthy": true,
-    "ok_faulty": true,
-    "reachable": true,
-    "hamilton_degraded": false,
-    "is_cycle": true,
-    "flow_count_faulty": 240,
-    "flow_count_expected": 240,
-    "partial_coverage": false,
-    "note": ""
-  },
-  {
-    "pattern": "broadcast",
-    "rows": 4,
-    "cols": 4,
-    "mesh": "4×4",
-    "root": 0,
-    "region": "edge",
-    "fault_type": "link_point",
-    "bad_nodes": [],
-    "bad_edges": [
-      "2,0->2,1",
-      "2,1->2,0"
-    ],
-    "z_healthy_ref": 6,
-    "z_healthy_scheduled": 6,
-    "z_faulty": 8,
-    "ratio": 1.333,
-    "stall_healthy": 0,
-    "stall_faulty": 0,
-    "peak_healthy": 1,
-    "peak_faulty": 1,
-    "ok_healthy": true,
-    "ok_faulty": true,
-    "reachable": true,
-    "hamilton_degraded": false,
-    "is_cycle": true,
-    "flow_count_faulty": 5,
-    "flow_count_expected": 5,
-    "partial_coverage": false,
-    "note": ""
-  },
-  {
-    "pattern": "reduce",
-    "rows": 4,
-    "cols": 4,
-    "mesh": "4×4",
-    "root": 0,
-    "region": "edge",
-    "fault_type": "link_point",
-    "bad_nodes": [],
-    "bad_edges": [
-      "2,0->2,1",
-      "2,1->2,0"
-    ],
-    "z_healthy_ref": 6,
-    "z_healthy_scheduled": 6,
-    "z_faulty": 6,
-    "ratio": 1.0,
-    "stall_healthy": 0,
-    "stall_faulty": 0,
-    "peak_healthy": 1,
-    "peak_faulty": 1,
-    "ok_healthy": true,
-    "ok_faulty": true,
-    "reachable": true,
-    "hamilton_degraded": false,
-    "is_cycle": true,
-    "flow_count_faulty": 15,
-    "flow_count_expected": 15,
-    "partial_coverage": false,
-    "note": ""
-  },
-  {
-    "pattern": "allreduce",
-    "rows": 4,
-    "cols": 4,
-    "mesh": "4×4",
-    "root": 0,
-    "region": "edge",
-    "fault_type": "link_point",
-    "bad_nodes": [],
-    "bad_edges": [
-      "2,0->2,1",
-      "2,1->2,0"
-    ],
-    "z_healthy_ref": 6,
-    "z_healthy_scheduled": 1,
-    "z_faulty": 4,
-    "ratio": 4.0,
-    "stall_healthy": 0,
-    "stall_faulty": 2,
-    "peak_healthy": 1,
-    "peak_faulty": 1,
-    "ok_healthy": true,
-    "ok_faulty": true,
-    "reachable": true,
-    "hamilton_degraded": false,
-    "is_cycle": true,
-    "flow_count_faulty": 48,
-    "flow_count_expected": 48,
-    "partial_coverage": false,
-    "note": ""
-  },
-  {
-    "pattern": "allgather",
-    "rows": 4,
-    "cols": 4,
-    "mesh": "4×4",
-    "root": 0,
-    "region": "edge",
-    "fault_type": "link_point",
-    "bad_nodes": [],
-    "bad_edges": [
-      "2,0->2,1",
-      "2,1->2,0"
-    ],
-    "z_healthy_ref": 8,
-    "z_healthy_scheduled": 8,
-    "z_faulty": 15,
-    "ratio": 1.875,
-    "stall_healthy": 0,
-    "stall_faulty": 0,
-    "peak_healthy": 1,
-    "peak_faulty": 1,
-    "ok_healthy": true,
-    "ok_faulty": true,
-    "reachable": true,
-    "hamilton_degraded": true,
-    "is_cycle": false,
-    "flow_count_faulty": 15,
-    "flow_count_expected": 32,
-    "partial_coverage": true,
-    "note": "部分流(15/32); 哈密顿环→路径"
-  },
-  {
-    "pattern": "gather",
-    "rows": 4,
-    "cols": 4,
-    "mesh": "4×4",
-    "root": 0,
-    "region": "edge",
-    "fault_type": "link_point",
-    "bad_nodes": [],
-    "bad_edges": [
-      "2,0->2,1",
-      "2,1->2,0"
-    ],
-    "z_healthy_ref": 8,
-    "z_healthy_scheduled": 8,
-    "z_faulty": 7,
-    "ratio": 1.0,
-    "stall_healthy": 0,
-    "stall_faulty": 0,
-    "peak_healthy": 1,
-    "peak_faulty": 1,
-    "ok_healthy": true,
-    "ok_faulty": true,
-    "reachable": true,
-    "hamilton_degraded": true,
-    "is_cycle": false,
-    "flow_count_faulty": 14,
-    "flow_count_expected": 15,
-    "partial_coverage": true,
-    "note": "部分流(14/15); 哈密顿环→路径"
-  },
-  {
-    "pattern": "alltoall",
-    "rows": 4,
-    "cols": 4,
-    "mesh": "4×4",
-    "root": 0,
-    "region": "edge",
-    "fault_type": "link_point",
-    "bad_nodes": [],
-    "bad_edges": [
-      "2,0->2,1",
-      "2,1->2,0"
-    ],
-    "z_healthy_ref": 22,
-    "z_healthy_scheduled": 22,
-    "z_faulty": 26,
-    "ratio": 1.182,
-    "stall_healthy": 1245,
-    "stall_faulty": 1388,
-    "peak_healthy": 1,
-    "peak_faulty": 1,
-    "ok_healthy": true,
-    "ok_faulty": true,
-    "reachable": true,
-    "hamilton_degraded": false,
-    "is_cycle": true,
-    "flow_count_faulty": 240,
-    "flow_count_expected": 240,
-    "partial_coverage": false,
-    "note": ""
-  },
-  {
-    "pattern": "broadcast",
-    "rows": 4,
-    "cols": 4,
-    "mesh": "4×4",
-    "root": 0,
-    "region": "center",
-    "fault_type": "link_point",
-    "bad_nodes": [],
-    "bad_edges": [
-      "2,2->3,2",
-      "3,2->2,2"
-    ],
-    "z_healthy_ref": 6,
-    "z_healthy_scheduled": 6,
-    "z_faulty": 6,
-    "ratio": 1.0,
-    "stall_healthy": 0,
-    "stall_faulty": 0,
-    "peak_healthy": 1,
-    "peak_faulty": 1,
-    "ok_healthy": true,
-    "ok_faulty": true,
-    "reachable": true,
-    "hamilton_degraded": false,
-    "is_cycle": true,
     "flow_count_faulty": 5,
     "flow_count_expected": 5,
     "partial_coverage": false,
@@ -3576,12 +3769,18 @@ pytest tests/test_collective_faults.py -v</pre>
     "mesh": "4×4",
     "root": 0,
     "region": "center",
-    "fault_type": "link_point",
-    "bad_nodes": [],
-    "bad_edges": [
-      "2,2->3,2",
-      "3,2->2,2"
+    "fault_type": "pe_block_1x2",
+    "bad_nodes": [
+      [
+        1,
+        2
+      ],
+      [
+        2,
+        2
+      ]
     ],
+    "bad_edges": [],
     "z_healthy_ref": 6,
     "z_healthy_scheduled": 6,
     "z_faulty": 6,
@@ -3595,10 +3794,10 @@ pytest tests/test_collective_faults.py -v</pre>
     "reachable": true,
     "hamilton_degraded": false,
     "is_cycle": true,
-    "flow_count_faulty": 15,
+    "flow_count_faulty": 11,
     "flow_count_expected": 15,
-    "partial_coverage": false,
-    "note": ""
+    "partial_coverage": true,
+    "note": "部分流(11/15)"
   },
   {
     "pattern": "allreduce",
@@ -3607,18 +3806,24 @@ pytest tests/test_collective_faults.py -v</pre>
     "mesh": "4×4",
     "root": 0,
     "region": "center",
-    "fault_type": "link_point",
-    "bad_nodes": [],
-    "bad_edges": [
-      "2,2->3,2",
-      "3,2->2,2"
+    "fault_type": "pe_block_1x2",
+    "bad_nodes": [
+      [
+        1,
+        2
+      ],
+      [
+        2,
+        2
+      ]
     ],
+    "bad_edges": [],
     "z_healthy_ref": 6,
     "z_healthy_scheduled": 1,
-    "z_faulty": 4,
-    "ratio": 4.0,
+    "z_faulty": 1,
+    "ratio": 1.0,
     "stall_healthy": 0,
-    "stall_faulty": 2,
+    "stall_faulty": 0,
     "peak_healthy": 1,
     "peak_faulty": 1,
     "ok_healthy": true,
@@ -3626,10 +3831,10 @@ pytest tests/test_collective_faults.py -v</pre>
     "reachable": true,
     "hamilton_degraded": false,
     "is_cycle": true,
-    "flow_count_faulty": 48,
+    "flow_count_faulty": 34,
     "flow_count_expected": 48,
-    "partial_coverage": false,
-    "note": ""
+    "partial_coverage": true,
+    "note": "部分流(34/48)"
   },
   {
     "pattern": "allgather",
@@ -3638,16 +3843,22 @@ pytest tests/test_collective_faults.py -v</pre>
     "mesh": "4×4",
     "root": 0,
     "region": "center",
-    "fault_type": "link_point",
-    "bad_nodes": [],
-    "bad_edges": [
-      "2,2->3,2",
-      "3,2->2,2"
+    "fault_type": "pe_block_1x2",
+    "bad_nodes": [
+      [
+        1,
+        2
+      ],
+      [
+        2,
+        2
+      ]
     ],
+    "bad_edges": [],
     "z_healthy_ref": 8,
     "z_healthy_scheduled": 8,
-    "z_faulty": 17,
-    "ratio": 2.125,
+    "z_faulty": 13,
+    "ratio": 1.625,
     "stall_healthy": 0,
     "stall_faulty": 0,
     "peak_healthy": 1,
@@ -3657,10 +3868,10 @@ pytest tests/test_collective_faults.py -v</pre>
     "reachable": true,
     "hamilton_degraded": true,
     "is_cycle": false,
-    "flow_count_faulty": 15,
+    "flow_count_faulty": 13,
     "flow_count_expected": 32,
     "partial_coverage": true,
-    "note": "部分流(15/32); 哈密顿环→路径"
+    "note": "部分流(13/32); 哈密顿环→路径"
   },
   {
     "pattern": "gather",
@@ -3669,16 +3880,22 @@ pytest tests/test_collective_faults.py -v</pre>
     "mesh": "4×4",
     "root": 0,
     "region": "center",
-    "fault_type": "link_point",
-    "bad_nodes": [],
-    "bad_edges": [
-      "2,2->3,2",
-      "3,2->2,2"
+    "fault_type": "pe_block_1x2",
+    "bad_nodes": [
+      [
+        1,
+        2
+      ],
+      [
+        2,
+        2
+      ]
     ],
+    "bad_edges": [],
     "z_healthy_ref": 8,
     "z_healthy_scheduled": 8,
-    "z_faulty": 9,
-    "ratio": 1.125,
+    "z_faulty": 6,
+    "ratio": 1.0,
     "stall_healthy": 0,
     "stall_faulty": 0,
     "peak_healthy": 1,
@@ -3688,10 +3905,10 @@ pytest tests/test_collective_faults.py -v</pre>
     "reachable": true,
     "hamilton_degraded": true,
     "is_cycle": false,
-    "flow_count_faulty": 14,
+    "flow_count_faulty": 12,
     "flow_count_expected": 15,
     "partial_coverage": true,
-    "note": "部分流(14/15); 哈密顿环→路径"
+    "note": "部分流(12/15); 哈密顿环→路径"
   },
   {
     "pattern": "alltoall",
@@ -3700,18 +3917,24 @@ pytest tests/test_collective_faults.py -v</pre>
     "mesh": "4×4",
     "root": 0,
     "region": "center",
-    "fault_type": "link_point",
-    "bad_nodes": [],
-    "bad_edges": [
-      "2,2->3,2",
-      "3,2->2,2"
+    "fault_type": "pe_block_1x2",
+    "bad_nodes": [
+      [
+        1,
+        2
+      ],
+      [
+        2,
+        2
+      ]
     ],
+    "bad_edges": [],
     "z_healthy_ref": 22,
     "z_healthy_scheduled": 22,
-    "z_faulty": 25,
-    "ratio": 1.136,
+    "z_faulty": 30,
+    "ratio": 1.364,
     "stall_healthy": 1245,
-    "stall_faulty": 1406,
+    "stall_faulty": 1280,
     "peak_healthy": 1,
     "peak_faulty": 1,
     "ok_healthy": true,
@@ -3719,10 +3942,10 @@ pytest tests/test_collective_faults.py -v</pre>
     "reachable": true,
     "hamilton_degraded": false,
     "is_cycle": true,
-    "flow_count_faulty": 240,
+    "flow_count_faulty": 182,
     "flow_count_expected": 240,
-    "partial_coverage": false,
-    "note": ""
+    "partial_coverage": true,
+    "note": "部分流(182/240)"
   },
   {
     "pattern": "broadcast",
@@ -4536,6 +4759,564 @@ pytest tests/test_collective_faults.py -v</pre>
   },
   {
     "pattern": "broadcast",
+    "rows": 4,
+    "cols": 4,
+    "mesh": "4×4",
+    "root": 0,
+    "region": "corner",
+    "fault_type": "link_point",
+    "bad_nodes": [],
+    "bad_edges": [
+      "0,0->1,0",
+      "1,0->0,0"
+    ],
+    "z_healthy_ref": 6,
+    "z_healthy_scheduled": 6,
+    "z_faulty": 6,
+    "ratio": 1.0,
+    "stall_healthy": 0,
+    "stall_faulty": 0,
+    "peak_healthy": 1,
+    "peak_faulty": 1,
+    "ok_healthy": true,
+    "ok_faulty": true,
+    "reachable": true,
+    "hamilton_degraded": false,
+    "is_cycle": true,
+    "flow_count_faulty": 5,
+    "flow_count_expected": 5,
+    "partial_coverage": false,
+    "note": ""
+  },
+  {
+    "pattern": "reduce",
+    "rows": 4,
+    "cols": 4,
+    "mesh": "4×4",
+    "root": 0,
+    "region": "corner",
+    "fault_type": "link_point",
+    "bad_nodes": [],
+    "bad_edges": [
+      "0,0->1,0",
+      "1,0->0,0"
+    ],
+    "z_healthy_ref": 6,
+    "z_healthy_scheduled": 6,
+    "z_faulty": 8,
+    "ratio": 1.333,
+    "stall_healthy": 0,
+    "stall_faulty": 0,
+    "peak_healthy": 1,
+    "peak_faulty": 1,
+    "ok_healthy": true,
+    "ok_faulty": true,
+    "reachable": true,
+    "hamilton_degraded": false,
+    "is_cycle": true,
+    "flow_count_faulty": 15,
+    "flow_count_expected": 15,
+    "partial_coverage": false,
+    "note": ""
+  },
+  {
+    "pattern": "allreduce",
+    "rows": 4,
+    "cols": 4,
+    "mesh": "4×4",
+    "root": 0,
+    "region": "corner",
+    "fault_type": "link_point",
+    "bad_nodes": [],
+    "bad_edges": [
+      "0,0->1,0",
+      "1,0->0,0"
+    ],
+    "z_healthy_ref": 6,
+    "z_healthy_scheduled": 1,
+    "z_faulty": 4,
+    "ratio": 4.0,
+    "stall_healthy": 0,
+    "stall_faulty": 2,
+    "peak_healthy": 1,
+    "peak_faulty": 1,
+    "ok_healthy": true,
+    "ok_faulty": true,
+    "reachable": true,
+    "hamilton_degraded": false,
+    "is_cycle": true,
+    "flow_count_faulty": 48,
+    "flow_count_expected": 48,
+    "partial_coverage": false,
+    "note": ""
+  },
+  {
+    "pattern": "allgather",
+    "rows": 4,
+    "cols": 4,
+    "mesh": "4×4",
+    "root": 0,
+    "region": "corner",
+    "fault_type": "link_point",
+    "bad_nodes": [],
+    "bad_edges": [
+      "0,0->1,0",
+      "1,0->0,0"
+    ],
+    "z_healthy_ref": 8,
+    "z_healthy_scheduled": 8,
+    "z_faulty": 17,
+    "ratio": 2.125,
+    "stall_healthy": 0,
+    "stall_faulty": 0,
+    "peak_healthy": 1,
+    "peak_faulty": 1,
+    "ok_healthy": true,
+    "ok_faulty": true,
+    "reachable": true,
+    "hamilton_degraded": true,
+    "is_cycle": false,
+    "flow_count_faulty": 15,
+    "flow_count_expected": 32,
+    "partial_coverage": true,
+    "note": "部分流(15/32); 哈密顿环→路径"
+  },
+  {
+    "pattern": "gather",
+    "rows": 4,
+    "cols": 4,
+    "mesh": "4×4",
+    "root": 0,
+    "region": "corner",
+    "fault_type": "link_point",
+    "bad_nodes": [],
+    "bad_edges": [
+      "0,0->1,0",
+      "1,0->0,0"
+    ],
+    "z_healthy_ref": 8,
+    "z_healthy_scheduled": 8,
+    "z_faulty": 7,
+    "ratio": 1.0,
+    "stall_healthy": 0,
+    "stall_faulty": 0,
+    "peak_healthy": 1,
+    "peak_faulty": 1,
+    "ok_healthy": true,
+    "ok_faulty": true,
+    "reachable": true,
+    "hamilton_degraded": true,
+    "is_cycle": false,
+    "flow_count_faulty": 14,
+    "flow_count_expected": 15,
+    "partial_coverage": true,
+    "note": "部分流(14/15); 哈密顿环→路径"
+  },
+  {
+    "pattern": "alltoall",
+    "rows": 4,
+    "cols": 4,
+    "mesh": "4×4",
+    "root": 0,
+    "region": "corner",
+    "fault_type": "link_point",
+    "bad_nodes": [],
+    "bad_edges": [
+      "0,0->1,0",
+      "1,0->0,0"
+    ],
+    "z_healthy_ref": 22,
+    "z_healthy_scheduled": 22,
+    "z_faulty": 28,
+    "ratio": 1.273,
+    "stall_healthy": 1245,
+    "stall_faulty": 1415,
+    "peak_healthy": 1,
+    "peak_faulty": 1,
+    "ok_healthy": true,
+    "ok_faulty": true,
+    "reachable": true,
+    "hamilton_degraded": false,
+    "is_cycle": true,
+    "flow_count_faulty": 240,
+    "flow_count_expected": 240,
+    "partial_coverage": false,
+    "note": ""
+  },
+  {
+    "pattern": "broadcast",
+    "rows": 4,
+    "cols": 4,
+    "mesh": "4×4",
+    "root": 0,
+    "region": "edge",
+    "fault_type": "link_point",
+    "bad_nodes": [],
+    "bad_edges": [
+      "2,0->2,1",
+      "2,1->2,0"
+    ],
+    "z_healthy_ref": 6,
+    "z_healthy_scheduled": 6,
+    "z_faulty": 8,
+    "ratio": 1.333,
+    "stall_healthy": 0,
+    "stall_faulty": 0,
+    "peak_healthy": 1,
+    "peak_faulty": 1,
+    "ok_healthy": true,
+    "ok_faulty": true,
+    "reachable": true,
+    "hamilton_degraded": false,
+    "is_cycle": true,
+    "flow_count_faulty": 5,
+    "flow_count_expected": 5,
+    "partial_coverage": false,
+    "note": ""
+  },
+  {
+    "pattern": "reduce",
+    "rows": 4,
+    "cols": 4,
+    "mesh": "4×4",
+    "root": 0,
+    "region": "edge",
+    "fault_type": "link_point",
+    "bad_nodes": [],
+    "bad_edges": [
+      "2,0->2,1",
+      "2,1->2,0"
+    ],
+    "z_healthy_ref": 6,
+    "z_healthy_scheduled": 6,
+    "z_faulty": 6,
+    "ratio": 1.0,
+    "stall_healthy": 0,
+    "stall_faulty": 0,
+    "peak_healthy": 1,
+    "peak_faulty": 1,
+    "ok_healthy": true,
+    "ok_faulty": true,
+    "reachable": true,
+    "hamilton_degraded": false,
+    "is_cycle": true,
+    "flow_count_faulty": 15,
+    "flow_count_expected": 15,
+    "partial_coverage": false,
+    "note": ""
+  },
+  {
+    "pattern": "allreduce",
+    "rows": 4,
+    "cols": 4,
+    "mesh": "4×4",
+    "root": 0,
+    "region": "edge",
+    "fault_type": "link_point",
+    "bad_nodes": [],
+    "bad_edges": [
+      "2,0->2,1",
+      "2,1->2,0"
+    ],
+    "z_healthy_ref": 6,
+    "z_healthy_scheduled": 1,
+    "z_faulty": 4,
+    "ratio": 4.0,
+    "stall_healthy": 0,
+    "stall_faulty": 2,
+    "peak_healthy": 1,
+    "peak_faulty": 1,
+    "ok_healthy": true,
+    "ok_faulty": true,
+    "reachable": true,
+    "hamilton_degraded": false,
+    "is_cycle": true,
+    "flow_count_faulty": 48,
+    "flow_count_expected": 48,
+    "partial_coverage": false,
+    "note": ""
+  },
+  {
+    "pattern": "allgather",
+    "rows": 4,
+    "cols": 4,
+    "mesh": "4×4",
+    "root": 0,
+    "region": "edge",
+    "fault_type": "link_point",
+    "bad_nodes": [],
+    "bad_edges": [
+      "2,0->2,1",
+      "2,1->2,0"
+    ],
+    "z_healthy_ref": 8,
+    "z_healthy_scheduled": 8,
+    "z_faulty": 15,
+    "ratio": 1.875,
+    "stall_healthy": 0,
+    "stall_faulty": 0,
+    "peak_healthy": 1,
+    "peak_faulty": 1,
+    "ok_healthy": true,
+    "ok_faulty": true,
+    "reachable": true,
+    "hamilton_degraded": true,
+    "is_cycle": false,
+    "flow_count_faulty": 15,
+    "flow_count_expected": 32,
+    "partial_coverage": true,
+    "note": "部分流(15/32); 哈密顿环→路径"
+  },
+  {
+    "pattern": "gather",
+    "rows": 4,
+    "cols": 4,
+    "mesh": "4×4",
+    "root": 0,
+    "region": "edge",
+    "fault_type": "link_point",
+    "bad_nodes": [],
+    "bad_edges": [
+      "2,0->2,1",
+      "2,1->2,0"
+    ],
+    "z_healthy_ref": 8,
+    "z_healthy_scheduled": 8,
+    "z_faulty": 7,
+    "ratio": 1.0,
+    "stall_healthy": 0,
+    "stall_faulty": 0,
+    "peak_healthy": 1,
+    "peak_faulty": 1,
+    "ok_healthy": true,
+    "ok_faulty": true,
+    "reachable": true,
+    "hamilton_degraded": true,
+    "is_cycle": false,
+    "flow_count_faulty": 14,
+    "flow_count_expected": 15,
+    "partial_coverage": true,
+    "note": "部分流(14/15); 哈密顿环→路径"
+  },
+  {
+    "pattern": "alltoall",
+    "rows": 4,
+    "cols": 4,
+    "mesh": "4×4",
+    "root": 0,
+    "region": "edge",
+    "fault_type": "link_point",
+    "bad_nodes": [],
+    "bad_edges": [
+      "2,0->2,1",
+      "2,1->2,0"
+    ],
+    "z_healthy_ref": 22,
+    "z_healthy_scheduled": 22,
+    "z_faulty": 26,
+    "ratio": 1.182,
+    "stall_healthy": 1245,
+    "stall_faulty": 1388,
+    "peak_healthy": 1,
+    "peak_faulty": 1,
+    "ok_healthy": true,
+    "ok_faulty": true,
+    "reachable": true,
+    "hamilton_degraded": false,
+    "is_cycle": true,
+    "flow_count_faulty": 240,
+    "flow_count_expected": 240,
+    "partial_coverage": false,
+    "note": ""
+  },
+  {
+    "pattern": "broadcast",
+    "rows": 4,
+    "cols": 4,
+    "mesh": "4×4",
+    "root": 0,
+    "region": "center",
+    "fault_type": "link_point",
+    "bad_nodes": [],
+    "bad_edges": [
+      "2,2->3,2",
+      "3,2->2,2"
+    ],
+    "z_healthy_ref": 6,
+    "z_healthy_scheduled": 6,
+    "z_faulty": 6,
+    "ratio": 1.0,
+    "stall_healthy": 0,
+    "stall_faulty": 0,
+    "peak_healthy": 1,
+    "peak_faulty": 1,
+    "ok_healthy": true,
+    "ok_faulty": true,
+    "reachable": true,
+    "hamilton_degraded": false,
+    "is_cycle": true,
+    "flow_count_faulty": 5,
+    "flow_count_expected": 5,
+    "partial_coverage": false,
+    "note": ""
+  },
+  {
+    "pattern": "reduce",
+    "rows": 4,
+    "cols": 4,
+    "mesh": "4×4",
+    "root": 0,
+    "region": "center",
+    "fault_type": "link_point",
+    "bad_nodes": [],
+    "bad_edges": [
+      "2,2->3,2",
+      "3,2->2,2"
+    ],
+    "z_healthy_ref": 6,
+    "z_healthy_scheduled": 6,
+    "z_faulty": 6,
+    "ratio": 1.0,
+    "stall_healthy": 0,
+    "stall_faulty": 0,
+    "peak_healthy": 1,
+    "peak_faulty": 1,
+    "ok_healthy": true,
+    "ok_faulty": true,
+    "reachable": true,
+    "hamilton_degraded": false,
+    "is_cycle": true,
+    "flow_count_faulty": 15,
+    "flow_count_expected": 15,
+    "partial_coverage": false,
+    "note": ""
+  },
+  {
+    "pattern": "allreduce",
+    "rows": 4,
+    "cols": 4,
+    "mesh": "4×4",
+    "root": 0,
+    "region": "center",
+    "fault_type": "link_point",
+    "bad_nodes": [],
+    "bad_edges": [
+      "2,2->3,2",
+      "3,2->2,2"
+    ],
+    "z_healthy_ref": 6,
+    "z_healthy_scheduled": 1,
+    "z_faulty": 4,
+    "ratio": 4.0,
+    "stall_healthy": 0,
+    "stall_faulty": 2,
+    "peak_healthy": 1,
+    "peak_faulty": 1,
+    "ok_healthy": true,
+    "ok_faulty": true,
+    "reachable": true,
+    "hamilton_degraded": false,
+    "is_cycle": true,
+    "flow_count_faulty": 48,
+    "flow_count_expected": 48,
+    "partial_coverage": false,
+    "note": ""
+  },
+  {
+    "pattern": "allgather",
+    "rows": 4,
+    "cols": 4,
+    "mesh": "4×4",
+    "root": 0,
+    "region": "center",
+    "fault_type": "link_point",
+    "bad_nodes": [],
+    "bad_edges": [
+      "2,2->3,2",
+      "3,2->2,2"
+    ],
+    "z_healthy_ref": 8,
+    "z_healthy_scheduled": 8,
+    "z_faulty": 17,
+    "ratio": 2.125,
+    "stall_healthy": 0,
+    "stall_faulty": 0,
+    "peak_healthy": 1,
+    "peak_faulty": 1,
+    "ok_healthy": true,
+    "ok_faulty": true,
+    "reachable": true,
+    "hamilton_degraded": true,
+    "is_cycle": false,
+    "flow_count_faulty": 15,
+    "flow_count_expected": 32,
+    "partial_coverage": true,
+    "note": "部分流(15/32); 哈密顿环→路径"
+  },
+  {
+    "pattern": "gather",
+    "rows": 4,
+    "cols": 4,
+    "mesh": "4×4",
+    "root": 0,
+    "region": "center",
+    "fault_type": "link_point",
+    "bad_nodes": [],
+    "bad_edges": [
+      "2,2->3,2",
+      "3,2->2,2"
+    ],
+    "z_healthy_ref": 8,
+    "z_healthy_scheduled": 8,
+    "z_faulty": 9,
+    "ratio": 1.125,
+    "stall_healthy": 0,
+    "stall_faulty": 0,
+    "peak_healthy": 1,
+    "peak_faulty": 1,
+    "ok_healthy": true,
+    "ok_faulty": true,
+    "reachable": true,
+    "hamilton_degraded": true,
+    "is_cycle": false,
+    "flow_count_faulty": 14,
+    "flow_count_expected": 15,
+    "partial_coverage": true,
+    "note": "部分流(14/15); 哈密顿环→路径"
+  },
+  {
+    "pattern": "alltoall",
+    "rows": 4,
+    "cols": 4,
+    "mesh": "4×4",
+    "root": 0,
+    "region": "center",
+    "fault_type": "link_point",
+    "bad_nodes": [],
+    "bad_edges": [
+      "2,2->3,2",
+      "3,2->2,2"
+    ],
+    "z_healthy_ref": 22,
+    "z_healthy_scheduled": 22,
+    "z_faulty": 25,
+    "ratio": 1.136,
+    "stall_healthy": 1245,
+    "stall_faulty": 1406,
+    "peak_healthy": 1,
+    "peak_faulty": 1,
+    "ok_healthy": true,
+    "ok_faulty": true,
+    "reachable": true,
+    "hamilton_degraded": false,
+    "is_cycle": true,
+    "flow_count_faulty": 240,
+    "flow_count_expected": 240,
+    "partial_coverage": false,
+    "note": ""
+  },
+  {
+    "pattern": "broadcast",
     "rows": 8,
     "cols": 8,
     "mesh": "8×8",
@@ -5135,12 +5916,240 @@ pytest tests/test_collective_faults.py -v</pre>
     "mesh": "8×8",
     "root": 0,
     "region": "corner",
-    "fault_type": "link_point",
-    "bad_nodes": [],
-    "bad_edges": [
-      "0,0->1,0",
-      "1,0->0,0"
+    "fault_type": "pe_block_1x2",
+    "bad_nodes": [
+      [
+        0,
+        0
+      ],
+      [
+        1,
+        0
+      ]
     ],
+    "bad_edges": [],
+    "z_healthy_ref": 14,
+    "z_healthy_scheduled": 14,
+    "z_faulty": 0,
+    "ratio": null,
+    "stall_healthy": 0,
+    "stall_faulty": 0,
+    "peak_healthy": 1,
+    "peak_faulty": 1,
+    "ok_healthy": true,
+    "ok_faulty": true,
+    "reachable": false,
+    "hamilton_degraded": false,
+    "is_cycle": true,
+    "flow_count_faulty": 0,
+    "flow_count_expected": 9,
+    "partial_coverage": true,
+    "note": "不可达/无流; 部分流(0/9)"
+  },
+  {
+    "pattern": "reduce",
+    "rows": 8,
+    "cols": 8,
+    "mesh": "8×8",
+    "root": 0,
+    "region": "corner",
+    "fault_type": "pe_block_1x2",
+    "bad_nodes": [
+      [
+        0,
+        0
+      ],
+      [
+        1,
+        0
+      ]
+    ],
+    "bad_edges": [],
+    "z_healthy_ref": 14,
+    "z_healthy_scheduled": 14,
+    "z_faulty": 0,
+    "ratio": null,
+    "stall_healthy": 0,
+    "stall_faulty": 0,
+    "peak_healthy": 1,
+    "peak_faulty": 1,
+    "ok_healthy": true,
+    "ok_faulty": true,
+    "reachable": false,
+    "hamilton_degraded": false,
+    "is_cycle": true,
+    "flow_count_faulty": 0,
+    "flow_count_expected": 63,
+    "partial_coverage": true,
+    "note": "不可达/无流; 部分流(0/63)"
+  },
+  {
+    "pattern": "allreduce",
+    "rows": 8,
+    "cols": 8,
+    "mesh": "8×8",
+    "root": 0,
+    "region": "corner",
+    "fault_type": "pe_block_1x2",
+    "bad_nodes": [
+      [
+        0,
+        0
+      ],
+      [
+        1,
+        0
+      ]
+    ],
+    "bad_edges": [],
+    "z_healthy_ref": 14,
+    "z_healthy_scheduled": 1,
+    "z_faulty": 1,
+    "ratio": 1.0,
+    "stall_healthy": 0,
+    "stall_faulty": 0,
+    "peak_healthy": 1,
+    "peak_faulty": 1,
+    "ok_healthy": true,
+    "ok_faulty": true,
+    "reachable": true,
+    "hamilton_degraded": false,
+    "is_cycle": true,
+    "flow_count_faulty": 216,
+    "flow_count_expected": 224,
+    "partial_coverage": true,
+    "note": "部分流(216/224)"
+  },
+  {
+    "pattern": "allgather",
+    "rows": 8,
+    "cols": 8,
+    "mesh": "8×8",
+    "root": 0,
+    "region": "corner",
+    "fault_type": "pe_block_1x2",
+    "bad_nodes": [
+      [
+        0,
+        0
+      ],
+      [
+        1,
+        0
+      ]
+    ],
+    "bad_edges": [],
+    "z_healthy_ref": 32,
+    "z_healthy_scheduled": 32,
+    "z_faulty": 61,
+    "ratio": 1.906,
+    "stall_healthy": 0,
+    "stall_faulty": 0,
+    "peak_healthy": 1,
+    "peak_faulty": 1,
+    "ok_healthy": true,
+    "ok_faulty": true,
+    "reachable": true,
+    "hamilton_degraded": true,
+    "is_cycle": false,
+    "flow_count_faulty": 61,
+    "flow_count_expected": 128,
+    "partial_coverage": true,
+    "note": "部分流(61/128); 哈密顿环→路径"
+  },
+  {
+    "pattern": "gather",
+    "rows": 8,
+    "cols": 8,
+    "mesh": "8×8",
+    "root": 0,
+    "region": "corner",
+    "fault_type": "pe_block_1x2",
+    "bad_nodes": [
+      [
+        0,
+        0
+      ],
+      [
+        1,
+        0
+      ]
+    ],
+    "bad_edges": [],
+    "z_healthy_ref": 32,
+    "z_healthy_scheduled": 32,
+    "z_faulty": 0,
+    "ratio": null,
+    "stall_healthy": 0,
+    "stall_faulty": 0,
+    "peak_healthy": 1,
+    "peak_faulty": 1,
+    "ok_healthy": true,
+    "ok_faulty": true,
+    "reachable": false,
+    "hamilton_degraded": true,
+    "is_cycle": false,
+    "flow_count_faulty": 0,
+    "flow_count_expected": 63,
+    "partial_coverage": true,
+    "note": "不可达/无流; 部分流(0/63); 哈密顿环→路径"
+  },
+  {
+    "pattern": "alltoall",
+    "rows": 8,
+    "cols": 8,
+    "mesh": "8×8",
+    "root": 0,
+    "region": "corner",
+    "fault_type": "pe_block_1x2",
+    "bad_nodes": [
+      [
+        0,
+        0
+      ],
+      [
+        1,
+        0
+      ]
+    ],
+    "bad_edges": [],
+    "z_healthy_ref": 167,
+    "z_healthy_scheduled": 167,
+    "z_faulty": 178,
+    "ratio": 1.066,
+    "stall_healthy": 192930,
+    "stall_faulty": 175584,
+    "peak_healthy": 1,
+    "peak_faulty": 1,
+    "ok_healthy": true,
+    "ok_faulty": true,
+    "reachable": true,
+    "hamilton_degraded": false,
+    "is_cycle": true,
+    "flow_count_faulty": 3782,
+    "flow_count_expected": 4032,
+    "partial_coverage": true,
+    "note": "部分流(3782/4032)"
+  },
+  {
+    "pattern": "broadcast",
+    "rows": 8,
+    "cols": 8,
+    "mesh": "8×8",
+    "root": 0,
+    "region": "edge",
+    "fault_type": "pe_block_1x2",
+    "bad_nodes": [
+      [
+        4,
+        0
+      ],
+      [
+        5,
+        0
+      ]
+    ],
+    "bad_edges": [],
     "z_healthy_ref": 14,
     "z_healthy_scheduled": 14,
     "z_faulty": 14,
@@ -5154,10 +6163,10 @@ pytest tests/test_collective_faults.py -v</pre>
     "reachable": true,
     "hamilton_degraded": false,
     "is_cycle": true,
-    "flow_count_faulty": 9,
+    "flow_count_faulty": 7,
     "flow_count_expected": 9,
-    "partial_coverage": false,
-    "note": ""
+    "partial_coverage": true,
+    "note": "部分流(7/9)"
   },
   {
     "pattern": "reduce",
@@ -5165,13 +6174,204 @@ pytest tests/test_collective_faults.py -v</pre>
     "cols": 8,
     "mesh": "8×8",
     "root": 0,
-    "region": "corner",
-    "fault_type": "link_point",
-    "bad_nodes": [],
-    "bad_edges": [
-      "0,0->1,0",
-      "1,0->0,0"
+    "region": "edge",
+    "fault_type": "pe_block_1x2",
+    "bad_nodes": [
+      [
+        4,
+        0
+      ],
+      [
+        5,
+        0
+      ]
     ],
+    "bad_edges": [],
+    "z_healthy_ref": 14,
+    "z_healthy_scheduled": 14,
+    "z_faulty": 14,
+    "ratio": 1.0,
+    "stall_healthy": 0,
+    "stall_faulty": 0,
+    "peak_healthy": 1,
+    "peak_faulty": 1,
+    "ok_healthy": true,
+    "ok_faulty": true,
+    "reachable": true,
+    "hamilton_degraded": false,
+    "is_cycle": true,
+    "flow_count_faulty": 58,
+    "flow_count_expected": 63,
+    "partial_coverage": true,
+    "note": "部分流(58/63)"
+  },
+  {
+    "pattern": "allreduce",
+    "rows": 8,
+    "cols": 8,
+    "mesh": "8×8",
+    "root": 0,
+    "region": "edge",
+    "fault_type": "pe_block_1x2",
+    "bad_nodes": [
+      [
+        4,
+        0
+      ],
+      [
+        5,
+        0
+      ]
+    ],
+    "bad_edges": [],
+    "z_healthy_ref": 14,
+    "z_healthy_scheduled": 1,
+    "z_faulty": 1,
+    "ratio": 1.0,
+    "stall_healthy": 0,
+    "stall_faulty": 0,
+    "peak_healthy": 1,
+    "peak_faulty": 1,
+    "ok_healthy": true,
+    "ok_faulty": true,
+    "reachable": true,
+    "hamilton_degraded": false,
+    "is_cycle": true,
+    "flow_count_faulty": 214,
+    "flow_count_expected": 224,
+    "partial_coverage": true,
+    "note": "部分流(214/224)"
+  },
+  {
+    "pattern": "allgather",
+    "rows": 8,
+    "cols": 8,
+    "mesh": "8×8",
+    "root": 0,
+    "region": "edge",
+    "fault_type": "pe_block_1x2",
+    "bad_nodes": [
+      [
+        4,
+        0
+      ],
+      [
+        5,
+        0
+      ]
+    ],
+    "bad_edges": [],
+    "z_healthy_ref": 32,
+    "z_healthy_scheduled": 32,
+    "z_faulty": 65,
+    "ratio": 2.031,
+    "stall_healthy": 0,
+    "stall_faulty": 28,
+    "peak_healthy": 1,
+    "peak_faulty": 1,
+    "ok_healthy": true,
+    "ok_faulty": true,
+    "reachable": true,
+    "hamilton_degraded": true,
+    "is_cycle": false,
+    "flow_count_faulty": 65,
+    "flow_count_expected": 128,
+    "partial_coverage": true,
+    "note": "部分流(65/128); 哈密顿环→路径"
+  },
+  {
+    "pattern": "gather",
+    "rows": 8,
+    "cols": 8,
+    "mesh": "8×8",
+    "root": 0,
+    "region": "edge",
+    "fault_type": "pe_block_1x2",
+    "bad_nodes": [
+      [
+        4,
+        0
+      ],
+      [
+        5,
+        0
+      ]
+    ],
+    "bad_edges": [],
+    "z_healthy_ref": 32,
+    "z_healthy_scheduled": 32,
+    "z_faulty": 32,
+    "ratio": 1.0,
+    "stall_healthy": 0,
+    "stall_faulty": 0,
+    "peak_healthy": 1,
+    "peak_faulty": 1,
+    "ok_healthy": true,
+    "ok_faulty": true,
+    "reachable": true,
+    "hamilton_degraded": true,
+    "is_cycle": false,
+    "flow_count_faulty": 64,
+    "flow_count_expected": 63,
+    "partial_coverage": false,
+    "note": "哈密顿环→路径"
+  },
+  {
+    "pattern": "alltoall",
+    "rows": 8,
+    "cols": 8,
+    "mesh": "8×8",
+    "root": 0,
+    "region": "edge",
+    "fault_type": "pe_block_1x2",
+    "bad_nodes": [
+      [
+        4,
+        0
+      ],
+      [
+        5,
+        0
+      ]
+    ],
+    "bad_edges": [],
+    "z_healthy_ref": 167,
+    "z_healthy_scheduled": 167,
+    "z_faulty": 249,
+    "ratio": 1.491,
+    "stall_healthy": 192930,
+    "stall_faulty": 191236,
+    "peak_healthy": 1,
+    "peak_faulty": 1,
+    "ok_healthy": true,
+    "ok_faulty": true,
+    "reachable": true,
+    "hamilton_degraded": false,
+    "is_cycle": true,
+    "flow_count_faulty": 3782,
+    "flow_count_expected": 4032,
+    "partial_coverage": true,
+    "note": "部分流(3782/4032)"
+  },
+  {
+    "pattern": "broadcast",
+    "rows": 8,
+    "cols": 8,
+    "mesh": "8×8",
+    "root": 0,
+    "region": "center",
+    "fault_type": "pe_block_1x2",
+    "bad_nodes": [
+      [
+        3,
+        4
+      ],
+      [
+        4,
+        4
+      ]
+    ],
+    "bad_edges": [],
     "z_healthy_ref": 14,
     "z_healthy_scheduled": 14,
     "z_faulty": 16,
@@ -5185,347 +6385,6 @@ pytest tests/test_collective_faults.py -v</pre>
     "reachable": true,
     "hamilton_degraded": false,
     "is_cycle": true,
-    "flow_count_faulty": 63,
-    "flow_count_expected": 63,
-    "partial_coverage": false,
-    "note": ""
-  },
-  {
-    "pattern": "allreduce",
-    "rows": 8,
-    "cols": 8,
-    "mesh": "8×8",
-    "root": 0,
-    "region": "corner",
-    "fault_type": "link_point",
-    "bad_nodes": [],
-    "bad_edges": [
-      "0,0->1,0",
-      "1,0->0,0"
-    ],
-    "z_healthy_ref": 14,
-    "z_healthy_scheduled": 1,
-    "z_faulty": 4,
-    "ratio": 4.0,
-    "stall_healthy": 0,
-    "stall_faulty": 2,
-    "peak_healthy": 1,
-    "peak_faulty": 1,
-    "ok_healthy": true,
-    "ok_faulty": true,
-    "reachable": true,
-    "hamilton_degraded": false,
-    "is_cycle": true,
-    "flow_count_faulty": 224,
-    "flow_count_expected": 224,
-    "partial_coverage": false,
-    "note": ""
-  },
-  {
-    "pattern": "allgather",
-    "rows": 8,
-    "cols": 8,
-    "mesh": "8×8",
-    "root": 0,
-    "region": "corner",
-    "fault_type": "link_point",
-    "bad_nodes": [],
-    "bad_edges": [
-      "0,0->1,0",
-      "1,0->0,0"
-    ],
-    "z_healthy_ref": 32,
-    "z_healthy_scheduled": 32,
-    "z_faulty": 65,
-    "ratio": 2.031,
-    "stall_healthy": 0,
-    "stall_faulty": 0,
-    "peak_healthy": 1,
-    "peak_faulty": 1,
-    "ok_healthy": true,
-    "ok_faulty": true,
-    "reachable": true,
-    "hamilton_degraded": true,
-    "is_cycle": false,
-    "flow_count_faulty": 63,
-    "flow_count_expected": 128,
-    "partial_coverage": true,
-    "note": "部分流(63/128); 哈密顿环→路径"
-  },
-  {
-    "pattern": "gather",
-    "rows": 8,
-    "cols": 8,
-    "mesh": "8×8",
-    "root": 0,
-    "region": "corner",
-    "fault_type": "link_point",
-    "bad_nodes": [],
-    "bad_edges": [
-      "0,0->1,0",
-      "1,0->0,0"
-    ],
-    "z_healthy_ref": 32,
-    "z_healthy_scheduled": 32,
-    "z_faulty": 31,
-    "ratio": 1.0,
-    "stall_healthy": 0,
-    "stall_faulty": 0,
-    "peak_healthy": 1,
-    "peak_faulty": 1,
-    "ok_healthy": true,
-    "ok_faulty": true,
-    "reachable": true,
-    "hamilton_degraded": true,
-    "is_cycle": false,
-    "flow_count_faulty": 62,
-    "flow_count_expected": 63,
-    "partial_coverage": true,
-    "note": "部分流(62/63); 哈密顿环→路径"
-  },
-  {
-    "pattern": "alltoall",
-    "rows": 8,
-    "cols": 8,
-    "mesh": "8×8",
-    "root": 0,
-    "region": "corner",
-    "fault_type": "link_point",
-    "bad_nodes": [],
-    "bad_edges": [
-      "0,0->1,0",
-      "1,0->0,0"
-    ],
-    "z_healthy_ref": 167,
-    "z_healthy_scheduled": 167,
-    "z_faulty": 173,
-    "ratio": 1.036,
-    "stall_healthy": 192930,
-    "stall_faulty": 194277,
-    "peak_healthy": 1,
-    "peak_faulty": 1,
-    "ok_healthy": true,
-    "ok_faulty": true,
-    "reachable": true,
-    "hamilton_degraded": false,
-    "is_cycle": true,
-    "flow_count_faulty": 4032,
-    "flow_count_expected": 4032,
-    "partial_coverage": false,
-    "note": ""
-  },
-  {
-    "pattern": "broadcast",
-    "rows": 8,
-    "cols": 8,
-    "mesh": "8×8",
-    "root": 0,
-    "region": "edge",
-    "fault_type": "link_point",
-    "bad_nodes": [],
-    "bad_edges": [
-      "4,0->4,1",
-      "4,1->4,0"
-    ],
-    "z_healthy_ref": 14,
-    "z_healthy_scheduled": 14,
-    "z_faulty": 16,
-    "ratio": 1.143,
-    "stall_healthy": 0,
-    "stall_faulty": 0,
-    "peak_healthy": 1,
-    "peak_faulty": 1,
-    "ok_healthy": true,
-    "ok_faulty": true,
-    "reachable": true,
-    "hamilton_degraded": false,
-    "is_cycle": true,
-    "flow_count_faulty": 9,
-    "flow_count_expected": 9,
-    "partial_coverage": false,
-    "note": ""
-  },
-  {
-    "pattern": "reduce",
-    "rows": 8,
-    "cols": 8,
-    "mesh": "8×8",
-    "root": 0,
-    "region": "edge",
-    "fault_type": "link_point",
-    "bad_nodes": [],
-    "bad_edges": [
-      "4,0->4,1",
-      "4,1->4,0"
-    ],
-    "z_healthy_ref": 14,
-    "z_healthy_scheduled": 14,
-    "z_faulty": 14,
-    "ratio": 1.0,
-    "stall_healthy": 0,
-    "stall_faulty": 0,
-    "peak_healthy": 1,
-    "peak_faulty": 1,
-    "ok_healthy": true,
-    "ok_faulty": true,
-    "reachable": true,
-    "hamilton_degraded": false,
-    "is_cycle": true,
-    "flow_count_faulty": 63,
-    "flow_count_expected": 63,
-    "partial_coverage": false,
-    "note": ""
-  },
-  {
-    "pattern": "allreduce",
-    "rows": 8,
-    "cols": 8,
-    "mesh": "8×8",
-    "root": 0,
-    "region": "edge",
-    "fault_type": "link_point",
-    "bad_nodes": [],
-    "bad_edges": [
-      "4,0->4,1",
-      "4,1->4,0"
-    ],
-    "z_healthy_ref": 14,
-    "z_healthy_scheduled": 1,
-    "z_faulty": 4,
-    "ratio": 4.0,
-    "stall_healthy": 0,
-    "stall_faulty": 2,
-    "peak_healthy": 1,
-    "peak_faulty": 1,
-    "ok_healthy": true,
-    "ok_faulty": true,
-    "reachable": true,
-    "hamilton_degraded": false,
-    "is_cycle": true,
-    "flow_count_faulty": 224,
-    "flow_count_expected": 224,
-    "partial_coverage": false,
-    "note": ""
-  },
-  {
-    "pattern": "allgather",
-    "rows": 8,
-    "cols": 8,
-    "mesh": "8×8",
-    "root": 0,
-    "region": "edge",
-    "fault_type": "link_point",
-    "bad_nodes": [],
-    "bad_edges": [
-      "4,0->4,1",
-      "4,1->4,0"
-    ],
-    "z_healthy_ref": 32,
-    "z_healthy_scheduled": 32,
-    "z_faulty": 63,
-    "ratio": 1.969,
-    "stall_healthy": 0,
-    "stall_faulty": 0,
-    "peak_healthy": 1,
-    "peak_faulty": 1,
-    "ok_healthy": true,
-    "ok_faulty": true,
-    "reachable": true,
-    "hamilton_degraded": true,
-    "is_cycle": false,
-    "flow_count_faulty": 63,
-    "flow_count_expected": 128,
-    "partial_coverage": true,
-    "note": "部分流(63/128); 哈密顿环→路径"
-  },
-  {
-    "pattern": "gather",
-    "rows": 8,
-    "cols": 8,
-    "mesh": "8×8",
-    "root": 0,
-    "region": "edge",
-    "fault_type": "link_point",
-    "bad_nodes": [],
-    "bad_edges": [
-      "4,0->4,1",
-      "4,1->4,0"
-    ],
-    "z_healthy_ref": 32,
-    "z_healthy_scheduled": 32,
-    "z_faulty": 31,
-    "ratio": 1.0,
-    "stall_healthy": 0,
-    "stall_faulty": 0,
-    "peak_healthy": 1,
-    "peak_faulty": 1,
-    "ok_healthy": true,
-    "ok_faulty": true,
-    "reachable": true,
-    "hamilton_degraded": true,
-    "is_cycle": false,
-    "flow_count_faulty": 62,
-    "flow_count_expected": 63,
-    "partial_coverage": true,
-    "note": "部分流(62/63); 哈密顿环→路径"
-  },
-  {
-    "pattern": "alltoall",
-    "rows": 8,
-    "cols": 8,
-    "mesh": "8×8",
-    "root": 0,
-    "region": "edge",
-    "fault_type": "link_point",
-    "bad_nodes": [],
-    "bad_edges": [
-      "4,0->4,1",
-      "4,1->4,0"
-    ],
-    "z_healthy_ref": 167,
-    "z_healthy_scheduled": 167,
-    "z_faulty": 170,
-    "ratio": 1.018,
-    "stall_healthy": 192930,
-    "stall_faulty": 196171,
-    "peak_healthy": 1,
-    "peak_faulty": 1,
-    "ok_healthy": true,
-    "ok_faulty": true,
-    "reachable": true,
-    "hamilton_degraded": false,
-    "is_cycle": true,
-    "flow_count_faulty": 4032,
-    "flow_count_expected": 4032,
-    "partial_coverage": false,
-    "note": ""
-  },
-  {
-    "pattern": "broadcast",
-    "rows": 8,
-    "cols": 8,
-    "mesh": "8×8",
-    "root": 0,
-    "region": "center",
-    "fault_type": "link_point",
-    "bad_nodes": [],
-    "bad_edges": [
-      "4,4->5,4",
-      "5,4->4,4"
-    ],
-    "z_healthy_ref": 14,
-    "z_healthy_scheduled": 14,
-    "z_faulty": 14,
-    "ratio": 1.0,
-    "stall_healthy": 0,
-    "stall_faulty": 0,
-    "peak_healthy": 1,
-    "peak_faulty": 1,
-    "ok_healthy": true,
-    "ok_faulty": true,
-    "reachable": true,
-    "hamilton_degraded": false,
-    "is_cycle": true,
     "flow_count_faulty": 9,
     "flow_count_expected": 9,
     "partial_coverage": false,
@@ -5538,12 +6397,18 @@ pytest tests/test_collective_faults.py -v</pre>
     "mesh": "8×8",
     "root": 0,
     "region": "center",
-    "fault_type": "link_point",
-    "bad_nodes": [],
-    "bad_edges": [
-      "4,4->5,4",
-      "5,4->4,4"
+    "fault_type": "pe_block_1x2",
+    "bad_nodes": [
+      [
+        3,
+        4
+      ],
+      [
+        4,
+        4
+      ]
     ],
+    "bad_edges": [],
     "z_healthy_ref": 14,
     "z_healthy_scheduled": 14,
     "z_faulty": 14,
@@ -5557,10 +6422,10 @@ pytest tests/test_collective_faults.py -v</pre>
     "reachable": true,
     "hamilton_degraded": false,
     "is_cycle": true,
-    "flow_count_faulty": 63,
+    "flow_count_faulty": 59,
     "flow_count_expected": 63,
-    "partial_coverage": false,
-    "note": ""
+    "partial_coverage": true,
+    "note": "部分流(59/63)"
   },
   {
     "pattern": "allreduce",
@@ -5569,18 +6434,24 @@ pytest tests/test_collective_faults.py -v</pre>
     "mesh": "8×8",
     "root": 0,
     "region": "center",
-    "fault_type": "link_point",
-    "bad_nodes": [],
-    "bad_edges": [
-      "4,4->5,4",
-      "5,4->4,4"
+    "fault_type": "pe_block_1x2",
+    "bad_nodes": [
+      [
+        3,
+        4
+      ],
+      [
+        4,
+        4
+      ]
     ],
+    "bad_edges": [],
     "z_healthy_ref": 14,
     "z_healthy_scheduled": 1,
-    "z_faulty": 4,
-    "ratio": 4.0,
+    "z_faulty": 1,
+    "ratio": 1.0,
     "stall_healthy": 0,
-    "stall_faulty": 2,
+    "stall_faulty": 0,
     "peak_healthy": 1,
     "peak_faulty": 1,
     "ok_healthy": true,
@@ -5588,10 +6459,10 @@ pytest tests/test_collective_faults.py -v</pre>
     "reachable": true,
     "hamilton_degraded": false,
     "is_cycle": true,
-    "flow_count_faulty": 224,
+    "flow_count_faulty": 210,
     "flow_count_expected": 224,
-    "partial_coverage": false,
-    "note": ""
+    "partial_coverage": true,
+    "note": "部分流(210/224)"
   },
   {
     "pattern": "allgather",
@@ -5600,29 +6471,35 @@ pytest tests/test_collective_faults.py -v</pre>
     "mesh": "8×8",
     "root": 0,
     "region": "center",
-    "fault_type": "link_point",
-    "bad_nodes": [],
-    "bad_edges": [
-      "4,4->5,4",
-      "5,4->4,4"
+    "fault_type": "pe_block_1x2",
+    "bad_nodes": [
+      [
+        3,
+        4
+      ],
+      [
+        4,
+        4
+      ]
     ],
+    "bad_edges": [],
     "z_healthy_ref": 32,
     "z_healthy_scheduled": 32,
-    "z_faulty": 65,
-    "ratio": 2.031,
+    "z_faulty": 0,
+    "ratio": null,
     "stall_healthy": 0,
     "stall_faulty": 0,
     "peak_healthy": 1,
     "peak_faulty": 1,
     "ok_healthy": true,
     "ok_faulty": true,
-    "reachable": true,
+    "reachable": false,
     "hamilton_degraded": true,
     "is_cycle": false,
-    "flow_count_faulty": 63,
+    "flow_count_faulty": 0,
     "flow_count_expected": 128,
     "partial_coverage": true,
-    "note": "部分流(63/128); 哈密顿环→路径"
+    "note": "不可达/无流; 部分流(0/128); 哈密顿环→路径"
   },
   {
     "pattern": "gather",
@@ -5631,29 +6508,35 @@ pytest tests/test_collective_faults.py -v</pre>
     "mesh": "8×8",
     "root": 0,
     "region": "center",
-    "fault_type": "link_point",
-    "bad_nodes": [],
-    "bad_edges": [
-      "4,4->5,4",
-      "5,4->4,4"
+    "fault_type": "pe_block_1x2",
+    "bad_nodes": [
+      [
+        3,
+        4
+      ],
+      [
+        4,
+        4
+      ]
     ],
+    "bad_edges": [],
     "z_healthy_ref": 32,
     "z_healthy_scheduled": 32,
-    "z_faulty": 33,
-    "ratio": 1.031,
+    "z_faulty": 0,
+    "ratio": null,
     "stall_healthy": 0,
     "stall_faulty": 0,
     "peak_healthy": 1,
     "peak_faulty": 1,
     "ok_healthy": true,
     "ok_faulty": true,
-    "reachable": true,
+    "reachable": false,
     "hamilton_degraded": true,
     "is_cycle": false,
-    "flow_count_faulty": 62,
+    "flow_count_faulty": 0,
     "flow_count_expected": 63,
     "partial_coverage": true,
-    "note": "部分流(62/63); 哈密顿环→路径"
+    "note": "不可达/无流; 部分流(0/63); 哈密顿环→路径"
   },
   {
     "pattern": "alltoall",
@@ -5662,18 +6545,24 @@ pytest tests/test_collective_faults.py -v</pre>
     "mesh": "8×8",
     "root": 0,
     "region": "center",
-    "fault_type": "link_point",
-    "bad_nodes": [],
-    "bad_edges": [
-      "4,4->5,4",
-      "5,4->4,4"
+    "fault_type": "pe_block_1x2",
+    "bad_nodes": [
+      [
+        3,
+        4
+      ],
+      [
+        4,
+        4
+      ]
     ],
+    "bad_edges": [],
     "z_healthy_ref": 167,
     "z_healthy_scheduled": 167,
-    "z_faulty": 205,
-    "ratio": 1.228,
+    "z_faulty": 290,
+    "ratio": 1.737,
     "stall_healthy": 192930,
-    "stall_faulty": 211123,
+    "stall_faulty": 245734,
     "peak_healthy": 1,
     "peak_faulty": 1,
     "ok_healthy": true,
@@ -5681,10 +6570,10 @@ pytest tests/test_collective_faults.py -v</pre>
     "reachable": true,
     "hamilton_degraded": false,
     "is_cycle": true,
-    "flow_count_faulty": 4032,
+    "flow_count_faulty": 3782,
     "flow_count_expected": 4032,
-    "partial_coverage": false,
-    "note": ""
+    "partial_coverage": true,
+    "note": "部分流(3782/4032)"
   },
   {
     "pattern": "broadcast",
@@ -6498,6 +7387,564 @@ pytest tests/test_collective_faults.py -v</pre>
   },
   {
     "pattern": "broadcast",
+    "rows": 8,
+    "cols": 8,
+    "mesh": "8×8",
+    "root": 0,
+    "region": "corner",
+    "fault_type": "link_point",
+    "bad_nodes": [],
+    "bad_edges": [
+      "0,0->1,0",
+      "1,0->0,0"
+    ],
+    "z_healthy_ref": 14,
+    "z_healthy_scheduled": 14,
+    "z_faulty": 14,
+    "ratio": 1.0,
+    "stall_healthy": 0,
+    "stall_faulty": 0,
+    "peak_healthy": 1,
+    "peak_faulty": 1,
+    "ok_healthy": true,
+    "ok_faulty": true,
+    "reachable": true,
+    "hamilton_degraded": false,
+    "is_cycle": true,
+    "flow_count_faulty": 9,
+    "flow_count_expected": 9,
+    "partial_coverage": false,
+    "note": ""
+  },
+  {
+    "pattern": "reduce",
+    "rows": 8,
+    "cols": 8,
+    "mesh": "8×8",
+    "root": 0,
+    "region": "corner",
+    "fault_type": "link_point",
+    "bad_nodes": [],
+    "bad_edges": [
+      "0,0->1,0",
+      "1,0->0,0"
+    ],
+    "z_healthy_ref": 14,
+    "z_healthy_scheduled": 14,
+    "z_faulty": 16,
+    "ratio": 1.143,
+    "stall_healthy": 0,
+    "stall_faulty": 0,
+    "peak_healthy": 1,
+    "peak_faulty": 1,
+    "ok_healthy": true,
+    "ok_faulty": true,
+    "reachable": true,
+    "hamilton_degraded": false,
+    "is_cycle": true,
+    "flow_count_faulty": 63,
+    "flow_count_expected": 63,
+    "partial_coverage": false,
+    "note": ""
+  },
+  {
+    "pattern": "allreduce",
+    "rows": 8,
+    "cols": 8,
+    "mesh": "8×8",
+    "root": 0,
+    "region": "corner",
+    "fault_type": "link_point",
+    "bad_nodes": [],
+    "bad_edges": [
+      "0,0->1,0",
+      "1,0->0,0"
+    ],
+    "z_healthy_ref": 14,
+    "z_healthy_scheduled": 1,
+    "z_faulty": 4,
+    "ratio": 4.0,
+    "stall_healthy": 0,
+    "stall_faulty": 2,
+    "peak_healthy": 1,
+    "peak_faulty": 1,
+    "ok_healthy": true,
+    "ok_faulty": true,
+    "reachable": true,
+    "hamilton_degraded": false,
+    "is_cycle": true,
+    "flow_count_faulty": 224,
+    "flow_count_expected": 224,
+    "partial_coverage": false,
+    "note": ""
+  },
+  {
+    "pattern": "allgather",
+    "rows": 8,
+    "cols": 8,
+    "mesh": "8×8",
+    "root": 0,
+    "region": "corner",
+    "fault_type": "link_point",
+    "bad_nodes": [],
+    "bad_edges": [
+      "0,0->1,0",
+      "1,0->0,0"
+    ],
+    "z_healthy_ref": 32,
+    "z_healthy_scheduled": 32,
+    "z_faulty": 65,
+    "ratio": 2.031,
+    "stall_healthy": 0,
+    "stall_faulty": 0,
+    "peak_healthy": 1,
+    "peak_faulty": 1,
+    "ok_healthy": true,
+    "ok_faulty": true,
+    "reachable": true,
+    "hamilton_degraded": true,
+    "is_cycle": false,
+    "flow_count_faulty": 63,
+    "flow_count_expected": 128,
+    "partial_coverage": true,
+    "note": "部分流(63/128); 哈密顿环→路径"
+  },
+  {
+    "pattern": "gather",
+    "rows": 8,
+    "cols": 8,
+    "mesh": "8×8",
+    "root": 0,
+    "region": "corner",
+    "fault_type": "link_point",
+    "bad_nodes": [],
+    "bad_edges": [
+      "0,0->1,0",
+      "1,0->0,0"
+    ],
+    "z_healthy_ref": 32,
+    "z_healthy_scheduled": 32,
+    "z_faulty": 31,
+    "ratio": 1.0,
+    "stall_healthy": 0,
+    "stall_faulty": 0,
+    "peak_healthy": 1,
+    "peak_faulty": 1,
+    "ok_healthy": true,
+    "ok_faulty": true,
+    "reachable": true,
+    "hamilton_degraded": true,
+    "is_cycle": false,
+    "flow_count_faulty": 62,
+    "flow_count_expected": 63,
+    "partial_coverage": true,
+    "note": "部分流(62/63); 哈密顿环→路径"
+  },
+  {
+    "pattern": "alltoall",
+    "rows": 8,
+    "cols": 8,
+    "mesh": "8×8",
+    "root": 0,
+    "region": "corner",
+    "fault_type": "link_point",
+    "bad_nodes": [],
+    "bad_edges": [
+      "0,0->1,0",
+      "1,0->0,0"
+    ],
+    "z_healthy_ref": 167,
+    "z_healthy_scheduled": 167,
+    "z_faulty": 173,
+    "ratio": 1.036,
+    "stall_healthy": 192930,
+    "stall_faulty": 194277,
+    "peak_healthy": 1,
+    "peak_faulty": 1,
+    "ok_healthy": true,
+    "ok_faulty": true,
+    "reachable": true,
+    "hamilton_degraded": false,
+    "is_cycle": true,
+    "flow_count_faulty": 4032,
+    "flow_count_expected": 4032,
+    "partial_coverage": false,
+    "note": ""
+  },
+  {
+    "pattern": "broadcast",
+    "rows": 8,
+    "cols": 8,
+    "mesh": "8×8",
+    "root": 0,
+    "region": "edge",
+    "fault_type": "link_point",
+    "bad_nodes": [],
+    "bad_edges": [
+      "4,0->4,1",
+      "4,1->4,0"
+    ],
+    "z_healthy_ref": 14,
+    "z_healthy_scheduled": 14,
+    "z_faulty": 16,
+    "ratio": 1.143,
+    "stall_healthy": 0,
+    "stall_faulty": 0,
+    "peak_healthy": 1,
+    "peak_faulty": 1,
+    "ok_healthy": true,
+    "ok_faulty": true,
+    "reachable": true,
+    "hamilton_degraded": false,
+    "is_cycle": true,
+    "flow_count_faulty": 9,
+    "flow_count_expected": 9,
+    "partial_coverage": false,
+    "note": ""
+  },
+  {
+    "pattern": "reduce",
+    "rows": 8,
+    "cols": 8,
+    "mesh": "8×8",
+    "root": 0,
+    "region": "edge",
+    "fault_type": "link_point",
+    "bad_nodes": [],
+    "bad_edges": [
+      "4,0->4,1",
+      "4,1->4,0"
+    ],
+    "z_healthy_ref": 14,
+    "z_healthy_scheduled": 14,
+    "z_faulty": 14,
+    "ratio": 1.0,
+    "stall_healthy": 0,
+    "stall_faulty": 0,
+    "peak_healthy": 1,
+    "peak_faulty": 1,
+    "ok_healthy": true,
+    "ok_faulty": true,
+    "reachable": true,
+    "hamilton_degraded": false,
+    "is_cycle": true,
+    "flow_count_faulty": 63,
+    "flow_count_expected": 63,
+    "partial_coverage": false,
+    "note": ""
+  },
+  {
+    "pattern": "allreduce",
+    "rows": 8,
+    "cols": 8,
+    "mesh": "8×8",
+    "root": 0,
+    "region": "edge",
+    "fault_type": "link_point",
+    "bad_nodes": [],
+    "bad_edges": [
+      "4,0->4,1",
+      "4,1->4,0"
+    ],
+    "z_healthy_ref": 14,
+    "z_healthy_scheduled": 1,
+    "z_faulty": 4,
+    "ratio": 4.0,
+    "stall_healthy": 0,
+    "stall_faulty": 2,
+    "peak_healthy": 1,
+    "peak_faulty": 1,
+    "ok_healthy": true,
+    "ok_faulty": true,
+    "reachable": true,
+    "hamilton_degraded": false,
+    "is_cycle": true,
+    "flow_count_faulty": 224,
+    "flow_count_expected": 224,
+    "partial_coverage": false,
+    "note": ""
+  },
+  {
+    "pattern": "allgather",
+    "rows": 8,
+    "cols": 8,
+    "mesh": "8×8",
+    "root": 0,
+    "region": "edge",
+    "fault_type": "link_point",
+    "bad_nodes": [],
+    "bad_edges": [
+      "4,0->4,1",
+      "4,1->4,0"
+    ],
+    "z_healthy_ref": 32,
+    "z_healthy_scheduled": 32,
+    "z_faulty": 63,
+    "ratio": 1.969,
+    "stall_healthy": 0,
+    "stall_faulty": 0,
+    "peak_healthy": 1,
+    "peak_faulty": 1,
+    "ok_healthy": true,
+    "ok_faulty": true,
+    "reachable": true,
+    "hamilton_degraded": true,
+    "is_cycle": false,
+    "flow_count_faulty": 63,
+    "flow_count_expected": 128,
+    "partial_coverage": true,
+    "note": "部分流(63/128); 哈密顿环→路径"
+  },
+  {
+    "pattern": "gather",
+    "rows": 8,
+    "cols": 8,
+    "mesh": "8×8",
+    "root": 0,
+    "region": "edge",
+    "fault_type": "link_point",
+    "bad_nodes": [],
+    "bad_edges": [
+      "4,0->4,1",
+      "4,1->4,0"
+    ],
+    "z_healthy_ref": 32,
+    "z_healthy_scheduled": 32,
+    "z_faulty": 31,
+    "ratio": 1.0,
+    "stall_healthy": 0,
+    "stall_faulty": 0,
+    "peak_healthy": 1,
+    "peak_faulty": 1,
+    "ok_healthy": true,
+    "ok_faulty": true,
+    "reachable": true,
+    "hamilton_degraded": true,
+    "is_cycle": false,
+    "flow_count_faulty": 62,
+    "flow_count_expected": 63,
+    "partial_coverage": true,
+    "note": "部分流(62/63); 哈密顿环→路径"
+  },
+  {
+    "pattern": "alltoall",
+    "rows": 8,
+    "cols": 8,
+    "mesh": "8×8",
+    "root": 0,
+    "region": "edge",
+    "fault_type": "link_point",
+    "bad_nodes": [],
+    "bad_edges": [
+      "4,0->4,1",
+      "4,1->4,0"
+    ],
+    "z_healthy_ref": 167,
+    "z_healthy_scheduled": 167,
+    "z_faulty": 170,
+    "ratio": 1.018,
+    "stall_healthy": 192930,
+    "stall_faulty": 196171,
+    "peak_healthy": 1,
+    "peak_faulty": 1,
+    "ok_healthy": true,
+    "ok_faulty": true,
+    "reachable": true,
+    "hamilton_degraded": false,
+    "is_cycle": true,
+    "flow_count_faulty": 4032,
+    "flow_count_expected": 4032,
+    "partial_coverage": false,
+    "note": ""
+  },
+  {
+    "pattern": "broadcast",
+    "rows": 8,
+    "cols": 8,
+    "mesh": "8×8",
+    "root": 0,
+    "region": "center",
+    "fault_type": "link_point",
+    "bad_nodes": [],
+    "bad_edges": [
+      "4,4->5,4",
+      "5,4->4,4"
+    ],
+    "z_healthy_ref": 14,
+    "z_healthy_scheduled": 14,
+    "z_faulty": 14,
+    "ratio": 1.0,
+    "stall_healthy": 0,
+    "stall_faulty": 0,
+    "peak_healthy": 1,
+    "peak_faulty": 1,
+    "ok_healthy": true,
+    "ok_faulty": true,
+    "reachable": true,
+    "hamilton_degraded": false,
+    "is_cycle": true,
+    "flow_count_faulty": 9,
+    "flow_count_expected": 9,
+    "partial_coverage": false,
+    "note": ""
+  },
+  {
+    "pattern": "reduce",
+    "rows": 8,
+    "cols": 8,
+    "mesh": "8×8",
+    "root": 0,
+    "region": "center",
+    "fault_type": "link_point",
+    "bad_nodes": [],
+    "bad_edges": [
+      "4,4->5,4",
+      "5,4->4,4"
+    ],
+    "z_healthy_ref": 14,
+    "z_healthy_scheduled": 14,
+    "z_faulty": 14,
+    "ratio": 1.0,
+    "stall_healthy": 0,
+    "stall_faulty": 0,
+    "peak_healthy": 1,
+    "peak_faulty": 1,
+    "ok_healthy": true,
+    "ok_faulty": true,
+    "reachable": true,
+    "hamilton_degraded": false,
+    "is_cycle": true,
+    "flow_count_faulty": 63,
+    "flow_count_expected": 63,
+    "partial_coverage": false,
+    "note": ""
+  },
+  {
+    "pattern": "allreduce",
+    "rows": 8,
+    "cols": 8,
+    "mesh": "8×8",
+    "root": 0,
+    "region": "center",
+    "fault_type": "link_point",
+    "bad_nodes": [],
+    "bad_edges": [
+      "4,4->5,4",
+      "5,4->4,4"
+    ],
+    "z_healthy_ref": 14,
+    "z_healthy_scheduled": 1,
+    "z_faulty": 4,
+    "ratio": 4.0,
+    "stall_healthy": 0,
+    "stall_faulty": 2,
+    "peak_healthy": 1,
+    "peak_faulty": 1,
+    "ok_healthy": true,
+    "ok_faulty": true,
+    "reachable": true,
+    "hamilton_degraded": false,
+    "is_cycle": true,
+    "flow_count_faulty": 224,
+    "flow_count_expected": 224,
+    "partial_coverage": false,
+    "note": ""
+  },
+  {
+    "pattern": "allgather",
+    "rows": 8,
+    "cols": 8,
+    "mesh": "8×8",
+    "root": 0,
+    "region": "center",
+    "fault_type": "link_point",
+    "bad_nodes": [],
+    "bad_edges": [
+      "4,4->5,4",
+      "5,4->4,4"
+    ],
+    "z_healthy_ref": 32,
+    "z_healthy_scheduled": 32,
+    "z_faulty": 65,
+    "ratio": 2.031,
+    "stall_healthy": 0,
+    "stall_faulty": 0,
+    "peak_healthy": 1,
+    "peak_faulty": 1,
+    "ok_healthy": true,
+    "ok_faulty": true,
+    "reachable": true,
+    "hamilton_degraded": true,
+    "is_cycle": false,
+    "flow_count_faulty": 63,
+    "flow_count_expected": 128,
+    "partial_coverage": true,
+    "note": "部分流(63/128); 哈密顿环→路径"
+  },
+  {
+    "pattern": "gather",
+    "rows": 8,
+    "cols": 8,
+    "mesh": "8×8",
+    "root": 0,
+    "region": "center",
+    "fault_type": "link_point",
+    "bad_nodes": [],
+    "bad_edges": [
+      "4,4->5,4",
+      "5,4->4,4"
+    ],
+    "z_healthy_ref": 32,
+    "z_healthy_scheduled": 32,
+    "z_faulty": 33,
+    "ratio": 1.031,
+    "stall_healthy": 0,
+    "stall_faulty": 0,
+    "peak_healthy": 1,
+    "peak_faulty": 1,
+    "ok_healthy": true,
+    "ok_faulty": true,
+    "reachable": true,
+    "hamilton_degraded": true,
+    "is_cycle": false,
+    "flow_count_faulty": 62,
+    "flow_count_expected": 63,
+    "partial_coverage": true,
+    "note": "部分流(62/63); 哈密顿环→路径"
+  },
+  {
+    "pattern": "alltoall",
+    "rows": 8,
+    "cols": 8,
+    "mesh": "8×8",
+    "root": 0,
+    "region": "center",
+    "fault_type": "link_point",
+    "bad_nodes": [],
+    "bad_edges": [
+      "4,4->5,4",
+      "5,4->4,4"
+    ],
+    "z_healthy_ref": 167,
+    "z_healthy_scheduled": 167,
+    "z_faulty": 205,
+    "ratio": 1.228,
+    "stall_healthy": 192930,
+    "stall_faulty": 211123,
+    "peak_healthy": 1,
+    "peak_faulty": 1,
+    "ok_healthy": true,
+    "ok_faulty": true,
+    "reachable": true,
+    "hamilton_degraded": false,
+    "is_cycle": true,
+    "flow_count_faulty": 4032,
+    "flow_count_expected": 4032,
+    "partial_coverage": false,
+    "note": ""
+  },
+  {
+    "pattern": "broadcast",
     "rows": 12,
     "cols": 16,
     "mesh": "12×16",
@@ -7097,12 +8544,240 @@ pytest tests/test_collective_faults.py -v</pre>
     "mesh": "12×16",
     "root": 0,
     "region": "corner",
-    "fault_type": "link_point",
-    "bad_nodes": [],
-    "bad_edges": [
-      "0,0->1,0",
-      "1,0->0,0"
+    "fault_type": "pe_block_1x2",
+    "bad_nodes": [
+      [
+        0,
+        0
+      ],
+      [
+        1,
+        0
+      ]
     ],
+    "bad_edges": [],
+    "z_healthy_ref": 26,
+    "z_healthy_scheduled": 26,
+    "z_faulty": 0,
+    "ratio": null,
+    "stall_healthy": 0,
+    "stall_faulty": 0,
+    "peak_healthy": 1,
+    "peak_faulty": 1,
+    "ok_healthy": true,
+    "ok_faulty": true,
+    "reachable": false,
+    "hamilton_degraded": false,
+    "is_cycle": true,
+    "flow_count_faulty": 0,
+    "flow_count_expected": 17,
+    "partial_coverage": true,
+    "note": "不可达/无流; 部分流(0/17)"
+  },
+  {
+    "pattern": "reduce",
+    "rows": 12,
+    "cols": 16,
+    "mesh": "12×16",
+    "root": 0,
+    "region": "corner",
+    "fault_type": "pe_block_1x2",
+    "bad_nodes": [
+      [
+        0,
+        0
+      ],
+      [
+        1,
+        0
+      ]
+    ],
+    "bad_edges": [],
+    "z_healthy_ref": 26,
+    "z_healthy_scheduled": 26,
+    "z_faulty": 0,
+    "ratio": null,
+    "stall_healthy": 0,
+    "stall_faulty": 0,
+    "peak_healthy": 1,
+    "peak_faulty": 1,
+    "ok_healthy": true,
+    "ok_faulty": true,
+    "reachable": false,
+    "hamilton_degraded": false,
+    "is_cycle": true,
+    "flow_count_faulty": 0,
+    "flow_count_expected": 191,
+    "partial_coverage": true,
+    "note": "不可达/无流; 部分流(0/191)"
+  },
+  {
+    "pattern": "allreduce",
+    "rows": 12,
+    "cols": 16,
+    "mesh": "12×16",
+    "root": 0,
+    "region": "corner",
+    "fault_type": "pe_block_1x2",
+    "bad_nodes": [
+      [
+        0,
+        0
+      ],
+      [
+        1,
+        0
+      ]
+    ],
+    "bad_edges": [],
+    "z_healthy_ref": 26,
+    "z_healthy_scheduled": 1,
+    "z_faulty": 1,
+    "ratio": 1.0,
+    "stall_healthy": 0,
+    "stall_faulty": 0,
+    "peak_healthy": 1,
+    "peak_faulty": 1,
+    "ok_healthy": true,
+    "ok_faulty": true,
+    "reachable": true,
+    "hamilton_degraded": false,
+    "is_cycle": true,
+    "flow_count_faulty": 704,
+    "flow_count_expected": 712,
+    "partial_coverage": true,
+    "note": "部分流(704/712)"
+  },
+  {
+    "pattern": "allgather",
+    "rows": 12,
+    "cols": 16,
+    "mesh": "12×16",
+    "root": 0,
+    "region": "corner",
+    "fault_type": "pe_block_1x2",
+    "bad_nodes": [
+      [
+        0,
+        0
+      ],
+      [
+        1,
+        0
+      ]
+    ],
+    "bad_edges": [],
+    "z_healthy_ref": 96,
+    "z_healthy_scheduled": 96,
+    "z_faulty": 189,
+    "ratio": 1.969,
+    "stall_healthy": 0,
+    "stall_faulty": 0,
+    "peak_healthy": 1,
+    "peak_faulty": 1,
+    "ok_healthy": true,
+    "ok_faulty": true,
+    "reachable": true,
+    "hamilton_degraded": true,
+    "is_cycle": false,
+    "flow_count_faulty": 189,
+    "flow_count_expected": 384,
+    "partial_coverage": true,
+    "note": "部分流(189/384); 哈密顿环→路径"
+  },
+  {
+    "pattern": "gather",
+    "rows": 12,
+    "cols": 16,
+    "mesh": "12×16",
+    "root": 0,
+    "region": "corner",
+    "fault_type": "pe_block_1x2",
+    "bad_nodes": [
+      [
+        0,
+        0
+      ],
+      [
+        1,
+        0
+      ]
+    ],
+    "bad_edges": [],
+    "z_healthy_ref": 96,
+    "z_healthy_scheduled": 96,
+    "z_faulty": 0,
+    "ratio": null,
+    "stall_healthy": 0,
+    "stall_faulty": 0,
+    "peak_healthy": 1,
+    "peak_faulty": 1,
+    "ok_healthy": true,
+    "ok_faulty": true,
+    "reachable": false,
+    "hamilton_degraded": true,
+    "is_cycle": false,
+    "flow_count_faulty": 0,
+    "flow_count_expected": 191,
+    "partial_coverage": true,
+    "note": "不可达/无流; 部分流(0/191); 哈密顿环→路径"
+  },
+  {
+    "pattern": "alltoall",
+    "rows": 12,
+    "cols": 16,
+    "mesh": "12×16",
+    "root": 0,
+    "region": "corner",
+    "fault_type": "pe_block_1x2",
+    "bad_nodes": [
+      [
+        0,
+        0
+      ],
+      [
+        1,
+        0
+      ]
+    ],
+    "bad_edges": [],
+    "z_healthy_ref": 905,
+    "z_healthy_scheduled": 905,
+    "z_faulty": 893,
+    "ratio": 1.0,
+    "stall_healthy": 9814908,
+    "stall_faulty": 9469676,
+    "peak_healthy": 1,
+    "peak_faulty": 1,
+    "ok_healthy": true,
+    "ok_faulty": true,
+    "reachable": true,
+    "hamilton_degraded": false,
+    "is_cycle": true,
+    "flow_count_faulty": 35910,
+    "flow_count_expected": 36672,
+    "partial_coverage": true,
+    "note": "部分流(35910/36672)"
+  },
+  {
+    "pattern": "broadcast",
+    "rows": 12,
+    "cols": 16,
+    "mesh": "12×16",
+    "root": 0,
+    "region": "edge",
+    "fault_type": "pe_block_1x2",
+    "bad_nodes": [
+      [
+        8,
+        0
+      ],
+      [
+        9,
+        0
+      ]
+    ],
+    "bad_edges": [],
     "z_healthy_ref": 26,
     "z_healthy_scheduled": 26,
     "z_faulty": 26,
@@ -7116,10 +8791,10 @@ pytest tests/test_collective_faults.py -v</pre>
     "reachable": true,
     "hamilton_degraded": false,
     "is_cycle": true,
-    "flow_count_faulty": 17,
+    "flow_count_faulty": 15,
     "flow_count_expected": 17,
-    "partial_coverage": false,
-    "note": ""
+    "partial_coverage": true,
+    "note": "部分流(15/17)"
   },
   {
     "pattern": "reduce",
@@ -7127,13 +8802,204 @@ pytest tests/test_collective_faults.py -v</pre>
     "cols": 16,
     "mesh": "12×16",
     "root": 0,
-    "region": "corner",
-    "fault_type": "link_point",
-    "bad_nodes": [],
-    "bad_edges": [
-      "0,0->1,0",
-      "1,0->0,0"
+    "region": "edge",
+    "fault_type": "pe_block_1x2",
+    "bad_nodes": [
+      [
+        8,
+        0
+      ],
+      [
+        9,
+        0
+      ]
     ],
+    "bad_edges": [],
+    "z_healthy_ref": 26,
+    "z_healthy_scheduled": 26,
+    "z_faulty": 26,
+    "ratio": 1.0,
+    "stall_healthy": 0,
+    "stall_faulty": 0,
+    "peak_healthy": 1,
+    "peak_faulty": 1,
+    "ok_healthy": true,
+    "ok_faulty": true,
+    "reachable": true,
+    "hamilton_degraded": false,
+    "is_cycle": true,
+    "flow_count_faulty": 186,
+    "flow_count_expected": 191,
+    "partial_coverage": true,
+    "note": "部分流(186/191)"
+  },
+  {
+    "pattern": "allreduce",
+    "rows": 12,
+    "cols": 16,
+    "mesh": "12×16",
+    "root": 0,
+    "region": "edge",
+    "fault_type": "pe_block_1x2",
+    "bad_nodes": [
+      [
+        8,
+        0
+      ],
+      [
+        9,
+        0
+      ]
+    ],
+    "bad_edges": [],
+    "z_healthy_ref": 26,
+    "z_healthy_scheduled": 1,
+    "z_faulty": 1,
+    "ratio": 1.0,
+    "stall_healthy": 0,
+    "stall_faulty": 0,
+    "peak_healthy": 1,
+    "peak_faulty": 1,
+    "ok_healthy": true,
+    "ok_faulty": true,
+    "reachable": true,
+    "hamilton_degraded": false,
+    "is_cycle": true,
+    "flow_count_faulty": 702,
+    "flow_count_expected": 712,
+    "partial_coverage": true,
+    "note": "部分流(702/712)"
+  },
+  {
+    "pattern": "allgather",
+    "rows": 12,
+    "cols": 16,
+    "mesh": "12×16",
+    "root": 0,
+    "region": "edge",
+    "fault_type": "pe_block_1x2",
+    "bad_nodes": [
+      [
+        8,
+        0
+      ],
+      [
+        9,
+        0
+      ]
+    ],
+    "bad_edges": [],
+    "z_healthy_ref": 96,
+    "z_healthy_scheduled": 96,
+    "z_faulty": 193,
+    "ratio": 2.01,
+    "stall_healthy": 0,
+    "stall_faulty": 60,
+    "peak_healthy": 1,
+    "peak_faulty": 1,
+    "ok_healthy": true,
+    "ok_faulty": true,
+    "reachable": true,
+    "hamilton_degraded": true,
+    "is_cycle": false,
+    "flow_count_faulty": 193,
+    "flow_count_expected": 384,
+    "partial_coverage": true,
+    "note": "部分流(193/384); 哈密顿环→路径"
+  },
+  {
+    "pattern": "gather",
+    "rows": 12,
+    "cols": 16,
+    "mesh": "12×16",
+    "root": 0,
+    "region": "edge",
+    "fault_type": "pe_block_1x2",
+    "bad_nodes": [
+      [
+        8,
+        0
+      ],
+      [
+        9,
+        0
+      ]
+    ],
+    "bad_edges": [],
+    "z_healthy_ref": 96,
+    "z_healthy_scheduled": 96,
+    "z_faulty": 96,
+    "ratio": 1.0,
+    "stall_healthy": 0,
+    "stall_faulty": 0,
+    "peak_healthy": 1,
+    "peak_faulty": 1,
+    "ok_healthy": true,
+    "ok_faulty": true,
+    "reachable": true,
+    "hamilton_degraded": true,
+    "is_cycle": false,
+    "flow_count_faulty": 192,
+    "flow_count_expected": 191,
+    "partial_coverage": false,
+    "note": "哈密顿环→路径"
+  },
+  {
+    "pattern": "alltoall",
+    "rows": 12,
+    "cols": 16,
+    "mesh": "12×16",
+    "root": 0,
+    "region": "edge",
+    "fault_type": "pe_block_1x2",
+    "bad_nodes": [
+      [
+        8,
+        0
+      ],
+      [
+        9,
+        0
+      ]
+    ],
+    "bad_edges": [],
+    "z_healthy_ref": 905,
+    "z_healthy_scheduled": 905,
+    "z_faulty": 1521,
+    "ratio": 1.681,
+    "stall_healthy": 9814908,
+    "stall_faulty": 10416414,
+    "peak_healthy": 1,
+    "peak_faulty": 1,
+    "ok_healthy": true,
+    "ok_faulty": true,
+    "reachable": true,
+    "hamilton_degraded": false,
+    "is_cycle": true,
+    "flow_count_faulty": 35910,
+    "flow_count_expected": 36672,
+    "partial_coverage": true,
+    "note": "部分流(35910/36672)"
+  },
+  {
+    "pattern": "broadcast",
+    "rows": 12,
+    "cols": 16,
+    "mesh": "12×16",
+    "root": 0,
+    "region": "center",
+    "fault_type": "pe_block_1x2",
+    "bad_nodes": [
+      [
+        7,
+        6
+      ],
+      [
+        8,
+        6
+      ]
+    ],
+    "bad_edges": [],
     "z_healthy_ref": 26,
     "z_healthy_scheduled": 26,
     "z_faulty": 28,
@@ -7147,347 +9013,6 @@ pytest tests/test_collective_faults.py -v</pre>
     "reachable": true,
     "hamilton_degraded": false,
     "is_cycle": true,
-    "flow_count_faulty": 191,
-    "flow_count_expected": 191,
-    "partial_coverage": false,
-    "note": ""
-  },
-  {
-    "pattern": "allreduce",
-    "rows": 12,
-    "cols": 16,
-    "mesh": "12×16",
-    "root": 0,
-    "region": "corner",
-    "fault_type": "link_point",
-    "bad_nodes": [],
-    "bad_edges": [
-      "0,0->1,0",
-      "1,0->0,0"
-    ],
-    "z_healthy_ref": 26,
-    "z_healthy_scheduled": 1,
-    "z_faulty": 4,
-    "ratio": 4.0,
-    "stall_healthy": 0,
-    "stall_faulty": 2,
-    "peak_healthy": 1,
-    "peak_faulty": 1,
-    "ok_healthy": true,
-    "ok_faulty": true,
-    "reachable": true,
-    "hamilton_degraded": false,
-    "is_cycle": true,
-    "flow_count_faulty": 712,
-    "flow_count_expected": 712,
-    "partial_coverage": false,
-    "note": ""
-  },
-  {
-    "pattern": "allgather",
-    "rows": 12,
-    "cols": 16,
-    "mesh": "12×16",
-    "root": 0,
-    "region": "corner",
-    "fault_type": "link_point",
-    "bad_nodes": [],
-    "bad_edges": [
-      "0,0->1,0",
-      "1,0->0,0"
-    ],
-    "z_healthy_ref": 96,
-    "z_healthy_scheduled": 96,
-    "z_faulty": 193,
-    "ratio": 2.01,
-    "stall_healthy": 0,
-    "stall_faulty": 0,
-    "peak_healthy": 1,
-    "peak_faulty": 1,
-    "ok_healthy": true,
-    "ok_faulty": true,
-    "reachable": true,
-    "hamilton_degraded": true,
-    "is_cycle": false,
-    "flow_count_faulty": 191,
-    "flow_count_expected": 384,
-    "partial_coverage": true,
-    "note": "部分流(191/384); 哈密顿环→路径"
-  },
-  {
-    "pattern": "gather",
-    "rows": 12,
-    "cols": 16,
-    "mesh": "12×16",
-    "root": 0,
-    "region": "corner",
-    "fault_type": "link_point",
-    "bad_nodes": [],
-    "bad_edges": [
-      "0,0->1,0",
-      "1,0->0,0"
-    ],
-    "z_healthy_ref": 96,
-    "z_healthy_scheduled": 96,
-    "z_faulty": 95,
-    "ratio": 1.0,
-    "stall_healthy": 0,
-    "stall_faulty": 0,
-    "peak_healthy": 1,
-    "peak_faulty": 1,
-    "ok_healthy": true,
-    "ok_faulty": true,
-    "reachable": true,
-    "hamilton_degraded": true,
-    "is_cycle": false,
-    "flow_count_faulty": 190,
-    "flow_count_expected": 191,
-    "partial_coverage": true,
-    "note": "部分流(190/191); 哈密顿环→路径"
-  },
-  {
-    "pattern": "alltoall",
-    "rows": 12,
-    "cols": 16,
-    "mesh": "12×16",
-    "root": 0,
-    "region": "corner",
-    "fault_type": "link_point",
-    "bad_nodes": [],
-    "bad_edges": [
-      "0,0->1,0",
-      "1,0->0,0"
-    ],
-    "z_healthy_ref": 905,
-    "z_healthy_scheduled": 905,
-    "z_faulty": 907,
-    "ratio": 1.002,
-    "stall_healthy": 9814908,
-    "stall_faulty": 9832156,
-    "peak_healthy": 1,
-    "peak_faulty": 1,
-    "ok_healthy": true,
-    "ok_faulty": true,
-    "reachable": true,
-    "hamilton_degraded": false,
-    "is_cycle": true,
-    "flow_count_faulty": 36672,
-    "flow_count_expected": 36672,
-    "partial_coverage": false,
-    "note": ""
-  },
-  {
-    "pattern": "broadcast",
-    "rows": 12,
-    "cols": 16,
-    "mesh": "12×16",
-    "root": 0,
-    "region": "edge",
-    "fault_type": "link_point",
-    "bad_nodes": [],
-    "bad_edges": [
-      "8,0->8,1",
-      "8,1->8,0"
-    ],
-    "z_healthy_ref": 26,
-    "z_healthy_scheduled": 26,
-    "z_faulty": 28,
-    "ratio": 1.077,
-    "stall_healthy": 0,
-    "stall_faulty": 0,
-    "peak_healthy": 1,
-    "peak_faulty": 1,
-    "ok_healthy": true,
-    "ok_faulty": true,
-    "reachable": true,
-    "hamilton_degraded": false,
-    "is_cycle": true,
-    "flow_count_faulty": 17,
-    "flow_count_expected": 17,
-    "partial_coverage": false,
-    "note": ""
-  },
-  {
-    "pattern": "reduce",
-    "rows": 12,
-    "cols": 16,
-    "mesh": "12×16",
-    "root": 0,
-    "region": "edge",
-    "fault_type": "link_point",
-    "bad_nodes": [],
-    "bad_edges": [
-      "8,0->8,1",
-      "8,1->8,0"
-    ],
-    "z_healthy_ref": 26,
-    "z_healthy_scheduled": 26,
-    "z_faulty": 26,
-    "ratio": 1.0,
-    "stall_healthy": 0,
-    "stall_faulty": 0,
-    "peak_healthy": 1,
-    "peak_faulty": 1,
-    "ok_healthy": true,
-    "ok_faulty": true,
-    "reachable": true,
-    "hamilton_degraded": false,
-    "is_cycle": true,
-    "flow_count_faulty": 191,
-    "flow_count_expected": 191,
-    "partial_coverage": false,
-    "note": ""
-  },
-  {
-    "pattern": "allreduce",
-    "rows": 12,
-    "cols": 16,
-    "mesh": "12×16",
-    "root": 0,
-    "region": "edge",
-    "fault_type": "link_point",
-    "bad_nodes": [],
-    "bad_edges": [
-      "8,0->8,1",
-      "8,1->8,0"
-    ],
-    "z_healthy_ref": 26,
-    "z_healthy_scheduled": 1,
-    "z_faulty": 4,
-    "ratio": 4.0,
-    "stall_healthy": 0,
-    "stall_faulty": 2,
-    "peak_healthy": 1,
-    "peak_faulty": 1,
-    "ok_healthy": true,
-    "ok_faulty": true,
-    "reachable": true,
-    "hamilton_degraded": false,
-    "is_cycle": true,
-    "flow_count_faulty": 712,
-    "flow_count_expected": 712,
-    "partial_coverage": false,
-    "note": ""
-  },
-  {
-    "pattern": "allgather",
-    "rows": 12,
-    "cols": 16,
-    "mesh": "12×16",
-    "root": 0,
-    "region": "edge",
-    "fault_type": "link_point",
-    "bad_nodes": [],
-    "bad_edges": [
-      "8,0->8,1",
-      "8,1->8,0"
-    ],
-    "z_healthy_ref": 96,
-    "z_healthy_scheduled": 96,
-    "z_faulty": 191,
-    "ratio": 1.99,
-    "stall_healthy": 0,
-    "stall_faulty": 0,
-    "peak_healthy": 1,
-    "peak_faulty": 1,
-    "ok_healthy": true,
-    "ok_faulty": true,
-    "reachable": true,
-    "hamilton_degraded": true,
-    "is_cycle": false,
-    "flow_count_faulty": 191,
-    "flow_count_expected": 384,
-    "partial_coverage": true,
-    "note": "部分流(191/384); 哈密顿环→路径"
-  },
-  {
-    "pattern": "gather",
-    "rows": 12,
-    "cols": 16,
-    "mesh": "12×16",
-    "root": 0,
-    "region": "edge",
-    "fault_type": "link_point",
-    "bad_nodes": [],
-    "bad_edges": [
-      "8,0->8,1",
-      "8,1->8,0"
-    ],
-    "z_healthy_ref": 96,
-    "z_healthy_scheduled": 96,
-    "z_faulty": 95,
-    "ratio": 1.0,
-    "stall_healthy": 0,
-    "stall_faulty": 0,
-    "peak_healthy": 1,
-    "peak_faulty": 1,
-    "ok_healthy": true,
-    "ok_faulty": true,
-    "reachable": true,
-    "hamilton_degraded": true,
-    "is_cycle": false,
-    "flow_count_faulty": 190,
-    "flow_count_expected": 191,
-    "partial_coverage": true,
-    "note": "部分流(190/191); 哈密顿环→路径"
-  },
-  {
-    "pattern": "alltoall",
-    "rows": 12,
-    "cols": 16,
-    "mesh": "12×16",
-    "root": 0,
-    "region": "edge",
-    "fault_type": "link_point",
-    "bad_nodes": [],
-    "bad_edges": [
-      "8,0->8,1",
-      "8,1->8,0"
-    ],
-    "z_healthy_ref": 905,
-    "z_healthy_scheduled": 905,
-    "z_faulty": 912,
-    "ratio": 1.008,
-    "stall_healthy": 9814908,
-    "stall_faulty": 9889745,
-    "peak_healthy": 1,
-    "peak_faulty": 1,
-    "ok_healthy": true,
-    "ok_faulty": true,
-    "reachable": true,
-    "hamilton_degraded": false,
-    "is_cycle": true,
-    "flow_count_faulty": 36672,
-    "flow_count_expected": 36672,
-    "partial_coverage": false,
-    "note": ""
-  },
-  {
-    "pattern": "broadcast",
-    "rows": 12,
-    "cols": 16,
-    "mesh": "12×16",
-    "root": 0,
-    "region": "center",
-    "fault_type": "link_point",
-    "bad_nodes": [],
-    "bad_edges": [
-      "8,6->9,6",
-      "9,6->8,6"
-    ],
-    "z_healthy_ref": 26,
-    "z_healthy_scheduled": 26,
-    "z_faulty": 26,
-    "ratio": 1.0,
-    "stall_healthy": 0,
-    "stall_faulty": 0,
-    "peak_healthy": 1,
-    "peak_faulty": 1,
-    "ok_healthy": true,
-    "ok_faulty": true,
-    "reachable": true,
-    "hamilton_degraded": false,
-    "is_cycle": true,
     "flow_count_faulty": 17,
     "flow_count_expected": 17,
     "partial_coverage": false,
@@ -7500,12 +9025,18 @@ pytest tests/test_collective_faults.py -v</pre>
     "mesh": "12×16",
     "root": 0,
     "region": "center",
-    "fault_type": "link_point",
-    "bad_nodes": [],
-    "bad_edges": [
-      "8,6->9,6",
-      "9,6->8,6"
+    "fault_type": "pe_block_1x2",
+    "bad_nodes": [
+      [
+        7,
+        6
+      ],
+      [
+        8,
+        6
+      ]
     ],
+    "bad_edges": [],
     "z_healthy_ref": 26,
     "z_healthy_scheduled": 26,
     "z_faulty": 26,
@@ -7519,10 +9050,10 @@ pytest tests/test_collective_faults.py -v</pre>
     "reachable": true,
     "hamilton_degraded": false,
     "is_cycle": true,
-    "flow_count_faulty": 191,
+    "flow_count_faulty": 187,
     "flow_count_expected": 191,
-    "partial_coverage": false,
-    "note": ""
+    "partial_coverage": true,
+    "note": "部分流(187/191)"
   },
   {
     "pattern": "allreduce",
@@ -7531,18 +9062,24 @@ pytest tests/test_collective_faults.py -v</pre>
     "mesh": "12×16",
     "root": 0,
     "region": "center",
-    "fault_type": "link_point",
-    "bad_nodes": [],
-    "bad_edges": [
-      "8,6->9,6",
-      "9,6->8,6"
+    "fault_type": "pe_block_1x2",
+    "bad_nodes": [
+      [
+        7,
+        6
+      ],
+      [
+        8,
+        6
+      ]
     ],
+    "bad_edges": [],
     "z_healthy_ref": 26,
     "z_healthy_scheduled": 1,
-    "z_faulty": 4,
-    "ratio": 4.0,
+    "z_faulty": 1,
+    "ratio": 1.0,
     "stall_healthy": 0,
-    "stall_faulty": 2,
+    "stall_faulty": 0,
     "peak_healthy": 1,
     "peak_faulty": 1,
     "ok_healthy": true,
@@ -7550,10 +9087,10 @@ pytest tests/test_collective_faults.py -v</pre>
     "reachable": true,
     "hamilton_degraded": false,
     "is_cycle": true,
-    "flow_count_faulty": 712,
+    "flow_count_faulty": 698,
     "flow_count_expected": 712,
-    "partial_coverage": false,
-    "note": ""
+    "partial_coverage": true,
+    "note": "部分流(698/712)"
   },
   {
     "pattern": "allgather",
@@ -7562,29 +9099,35 @@ pytest tests/test_collective_faults.py -v</pre>
     "mesh": "12×16",
     "root": 0,
     "region": "center",
-    "fault_type": "link_point",
-    "bad_nodes": [],
-    "bad_edges": [
-      "8,6->9,6",
-      "9,6->8,6"
+    "fault_type": "pe_block_1x2",
+    "bad_nodes": [
+      [
+        7,
+        6
+      ],
+      [
+        8,
+        6
+      ]
     ],
+    "bad_edges": [],
     "z_healthy_ref": 96,
     "z_healthy_scheduled": 96,
-    "z_faulty": 193,
-    "ratio": 2.01,
+    "z_faulty": 0,
+    "ratio": null,
     "stall_healthy": 0,
     "stall_faulty": 0,
     "peak_healthy": 1,
     "peak_faulty": 1,
     "ok_healthy": true,
     "ok_faulty": true,
-    "reachable": true,
+    "reachable": false,
     "hamilton_degraded": true,
     "is_cycle": false,
-    "flow_count_faulty": 191,
+    "flow_count_faulty": 0,
     "flow_count_expected": 384,
     "partial_coverage": true,
-    "note": "部分流(191/384); 哈密顿环→路径"
+    "note": "不可达/无流; 部分流(0/384); 哈密顿环→路径"
   },
   {
     "pattern": "gather",
@@ -7593,29 +9136,35 @@ pytest tests/test_collective_faults.py -v</pre>
     "mesh": "12×16",
     "root": 0,
     "region": "center",
-    "fault_type": "link_point",
-    "bad_nodes": [],
-    "bad_edges": [
-      "8,6->9,6",
-      "9,6->8,6"
+    "fault_type": "pe_block_1x2",
+    "bad_nodes": [
+      [
+        7,
+        6
+      ],
+      [
+        8,
+        6
+      ]
     ],
+    "bad_edges": [],
     "z_healthy_ref": 96,
     "z_healthy_scheduled": 96,
-    "z_faulty": 97,
-    "ratio": 1.01,
+    "z_faulty": 0,
+    "ratio": null,
     "stall_healthy": 0,
     "stall_faulty": 0,
     "peak_healthy": 1,
     "peak_faulty": 1,
     "ok_healthy": true,
     "ok_faulty": true,
-    "reachable": true,
+    "reachable": false,
     "hamilton_degraded": true,
     "is_cycle": false,
-    "flow_count_faulty": 190,
+    "flow_count_faulty": 0,
     "flow_count_expected": 191,
     "partial_coverage": true,
-    "note": "部分流(190/191); 哈密顿环→路径"
+    "note": "不可达/无流; 部分流(0/191); 哈密顿环→路径"
   },
   {
     "pattern": "alltoall",
@@ -7624,18 +9173,24 @@ pytest tests/test_collective_faults.py -v</pre>
     "mesh": "12×16",
     "root": 0,
     "region": "center",
-    "fault_type": "link_point",
-    "bad_nodes": [],
-    "bad_edges": [
-      "8,6->9,6",
-      "9,6->8,6"
+    "fault_type": "pe_block_1x2",
+    "bad_nodes": [
+      [
+        7,
+        6
+      ],
+      [
+        8,
+        6
+      ]
     ],
+    "bad_edges": [],
     "z_healthy_ref": 905,
     "z_healthy_scheduled": 905,
-    "z_faulty": 1214,
-    "ratio": 1.341,
+    "z_faulty": 1622,
+    "ratio": 1.792,
     "stall_healthy": 9814908,
-    "stall_faulty": 10579626,
+    "stall_faulty": 12085216,
     "peak_healthy": 1,
     "peak_faulty": 1,
     "ok_healthy": true,
@@ -7643,10 +9198,10 @@ pytest tests/test_collective_faults.py -v</pre>
     "reachable": true,
     "hamilton_degraded": false,
     "is_cycle": true,
-    "flow_count_faulty": 36672,
+    "flow_count_faulty": 35910,
     "flow_count_expected": 36672,
-    "partial_coverage": false,
-    "note": ""
+    "partial_coverage": true,
+    "note": "部分流(35910/36672)"
   },
   {
     "pattern": "broadcast",
@@ -8457,6 +10012,564 @@ pytest tests/test_collective_faults.py -v</pre>
     "flow_count_expected": 36672,
     "partial_coverage": true,
     "note": "部分流(35156/36672)"
+  },
+  {
+    "pattern": "broadcast",
+    "rows": 12,
+    "cols": 16,
+    "mesh": "12×16",
+    "root": 0,
+    "region": "corner",
+    "fault_type": "link_point",
+    "bad_nodes": [],
+    "bad_edges": [
+      "0,0->1,0",
+      "1,0->0,0"
+    ],
+    "z_healthy_ref": 26,
+    "z_healthy_scheduled": 26,
+    "z_faulty": 26,
+    "ratio": 1.0,
+    "stall_healthy": 0,
+    "stall_faulty": 0,
+    "peak_healthy": 1,
+    "peak_faulty": 1,
+    "ok_healthy": true,
+    "ok_faulty": true,
+    "reachable": true,
+    "hamilton_degraded": false,
+    "is_cycle": true,
+    "flow_count_faulty": 17,
+    "flow_count_expected": 17,
+    "partial_coverage": false,
+    "note": ""
+  },
+  {
+    "pattern": "reduce",
+    "rows": 12,
+    "cols": 16,
+    "mesh": "12×16",
+    "root": 0,
+    "region": "corner",
+    "fault_type": "link_point",
+    "bad_nodes": [],
+    "bad_edges": [
+      "0,0->1,0",
+      "1,0->0,0"
+    ],
+    "z_healthy_ref": 26,
+    "z_healthy_scheduled": 26,
+    "z_faulty": 28,
+    "ratio": 1.077,
+    "stall_healthy": 0,
+    "stall_faulty": 0,
+    "peak_healthy": 1,
+    "peak_faulty": 1,
+    "ok_healthy": true,
+    "ok_faulty": true,
+    "reachable": true,
+    "hamilton_degraded": false,
+    "is_cycle": true,
+    "flow_count_faulty": 191,
+    "flow_count_expected": 191,
+    "partial_coverage": false,
+    "note": ""
+  },
+  {
+    "pattern": "allreduce",
+    "rows": 12,
+    "cols": 16,
+    "mesh": "12×16",
+    "root": 0,
+    "region": "corner",
+    "fault_type": "link_point",
+    "bad_nodes": [],
+    "bad_edges": [
+      "0,0->1,0",
+      "1,0->0,0"
+    ],
+    "z_healthy_ref": 26,
+    "z_healthy_scheduled": 1,
+    "z_faulty": 4,
+    "ratio": 4.0,
+    "stall_healthy": 0,
+    "stall_faulty": 2,
+    "peak_healthy": 1,
+    "peak_faulty": 1,
+    "ok_healthy": true,
+    "ok_faulty": true,
+    "reachable": true,
+    "hamilton_degraded": false,
+    "is_cycle": true,
+    "flow_count_faulty": 712,
+    "flow_count_expected": 712,
+    "partial_coverage": false,
+    "note": ""
+  },
+  {
+    "pattern": "allgather",
+    "rows": 12,
+    "cols": 16,
+    "mesh": "12×16",
+    "root": 0,
+    "region": "corner",
+    "fault_type": "link_point",
+    "bad_nodes": [],
+    "bad_edges": [
+      "0,0->1,0",
+      "1,0->0,0"
+    ],
+    "z_healthy_ref": 96,
+    "z_healthy_scheduled": 96,
+    "z_faulty": 193,
+    "ratio": 2.01,
+    "stall_healthy": 0,
+    "stall_faulty": 0,
+    "peak_healthy": 1,
+    "peak_faulty": 1,
+    "ok_healthy": true,
+    "ok_faulty": true,
+    "reachable": true,
+    "hamilton_degraded": true,
+    "is_cycle": false,
+    "flow_count_faulty": 191,
+    "flow_count_expected": 384,
+    "partial_coverage": true,
+    "note": "部分流(191/384); 哈密顿环→路径"
+  },
+  {
+    "pattern": "gather",
+    "rows": 12,
+    "cols": 16,
+    "mesh": "12×16",
+    "root": 0,
+    "region": "corner",
+    "fault_type": "link_point",
+    "bad_nodes": [],
+    "bad_edges": [
+      "0,0->1,0",
+      "1,0->0,0"
+    ],
+    "z_healthy_ref": 96,
+    "z_healthy_scheduled": 96,
+    "z_faulty": 95,
+    "ratio": 1.0,
+    "stall_healthy": 0,
+    "stall_faulty": 0,
+    "peak_healthy": 1,
+    "peak_faulty": 1,
+    "ok_healthy": true,
+    "ok_faulty": true,
+    "reachable": true,
+    "hamilton_degraded": true,
+    "is_cycle": false,
+    "flow_count_faulty": 190,
+    "flow_count_expected": 191,
+    "partial_coverage": true,
+    "note": "部分流(190/191); 哈密顿环→路径"
+  },
+  {
+    "pattern": "alltoall",
+    "rows": 12,
+    "cols": 16,
+    "mesh": "12×16",
+    "root": 0,
+    "region": "corner",
+    "fault_type": "link_point",
+    "bad_nodes": [],
+    "bad_edges": [
+      "0,0->1,0",
+      "1,0->0,0"
+    ],
+    "z_healthy_ref": 905,
+    "z_healthy_scheduled": 905,
+    "z_faulty": 907,
+    "ratio": 1.002,
+    "stall_healthy": 9814908,
+    "stall_faulty": 9832156,
+    "peak_healthy": 1,
+    "peak_faulty": 1,
+    "ok_healthy": true,
+    "ok_faulty": true,
+    "reachable": true,
+    "hamilton_degraded": false,
+    "is_cycle": true,
+    "flow_count_faulty": 36672,
+    "flow_count_expected": 36672,
+    "partial_coverage": false,
+    "note": ""
+  },
+  {
+    "pattern": "broadcast",
+    "rows": 12,
+    "cols": 16,
+    "mesh": "12×16",
+    "root": 0,
+    "region": "edge",
+    "fault_type": "link_point",
+    "bad_nodes": [],
+    "bad_edges": [
+      "8,0->8,1",
+      "8,1->8,0"
+    ],
+    "z_healthy_ref": 26,
+    "z_healthy_scheduled": 26,
+    "z_faulty": 28,
+    "ratio": 1.077,
+    "stall_healthy": 0,
+    "stall_faulty": 0,
+    "peak_healthy": 1,
+    "peak_faulty": 1,
+    "ok_healthy": true,
+    "ok_faulty": true,
+    "reachable": true,
+    "hamilton_degraded": false,
+    "is_cycle": true,
+    "flow_count_faulty": 17,
+    "flow_count_expected": 17,
+    "partial_coverage": false,
+    "note": ""
+  },
+  {
+    "pattern": "reduce",
+    "rows": 12,
+    "cols": 16,
+    "mesh": "12×16",
+    "root": 0,
+    "region": "edge",
+    "fault_type": "link_point",
+    "bad_nodes": [],
+    "bad_edges": [
+      "8,0->8,1",
+      "8,1->8,0"
+    ],
+    "z_healthy_ref": 26,
+    "z_healthy_scheduled": 26,
+    "z_faulty": 26,
+    "ratio": 1.0,
+    "stall_healthy": 0,
+    "stall_faulty": 0,
+    "peak_healthy": 1,
+    "peak_faulty": 1,
+    "ok_healthy": true,
+    "ok_faulty": true,
+    "reachable": true,
+    "hamilton_degraded": false,
+    "is_cycle": true,
+    "flow_count_faulty": 191,
+    "flow_count_expected": 191,
+    "partial_coverage": false,
+    "note": ""
+  },
+  {
+    "pattern": "allreduce",
+    "rows": 12,
+    "cols": 16,
+    "mesh": "12×16",
+    "root": 0,
+    "region": "edge",
+    "fault_type": "link_point",
+    "bad_nodes": [],
+    "bad_edges": [
+      "8,0->8,1",
+      "8,1->8,0"
+    ],
+    "z_healthy_ref": 26,
+    "z_healthy_scheduled": 1,
+    "z_faulty": 4,
+    "ratio": 4.0,
+    "stall_healthy": 0,
+    "stall_faulty": 2,
+    "peak_healthy": 1,
+    "peak_faulty": 1,
+    "ok_healthy": true,
+    "ok_faulty": true,
+    "reachable": true,
+    "hamilton_degraded": false,
+    "is_cycle": true,
+    "flow_count_faulty": 712,
+    "flow_count_expected": 712,
+    "partial_coverage": false,
+    "note": ""
+  },
+  {
+    "pattern": "allgather",
+    "rows": 12,
+    "cols": 16,
+    "mesh": "12×16",
+    "root": 0,
+    "region": "edge",
+    "fault_type": "link_point",
+    "bad_nodes": [],
+    "bad_edges": [
+      "8,0->8,1",
+      "8,1->8,0"
+    ],
+    "z_healthy_ref": 96,
+    "z_healthy_scheduled": 96,
+    "z_faulty": 191,
+    "ratio": 1.99,
+    "stall_healthy": 0,
+    "stall_faulty": 0,
+    "peak_healthy": 1,
+    "peak_faulty": 1,
+    "ok_healthy": true,
+    "ok_faulty": true,
+    "reachable": true,
+    "hamilton_degraded": true,
+    "is_cycle": false,
+    "flow_count_faulty": 191,
+    "flow_count_expected": 384,
+    "partial_coverage": true,
+    "note": "部分流(191/384); 哈密顿环→路径"
+  },
+  {
+    "pattern": "gather",
+    "rows": 12,
+    "cols": 16,
+    "mesh": "12×16",
+    "root": 0,
+    "region": "edge",
+    "fault_type": "link_point",
+    "bad_nodes": [],
+    "bad_edges": [
+      "8,0->8,1",
+      "8,1->8,0"
+    ],
+    "z_healthy_ref": 96,
+    "z_healthy_scheduled": 96,
+    "z_faulty": 95,
+    "ratio": 1.0,
+    "stall_healthy": 0,
+    "stall_faulty": 0,
+    "peak_healthy": 1,
+    "peak_faulty": 1,
+    "ok_healthy": true,
+    "ok_faulty": true,
+    "reachable": true,
+    "hamilton_degraded": true,
+    "is_cycle": false,
+    "flow_count_faulty": 190,
+    "flow_count_expected": 191,
+    "partial_coverage": true,
+    "note": "部分流(190/191); 哈密顿环→路径"
+  },
+  {
+    "pattern": "alltoall",
+    "rows": 12,
+    "cols": 16,
+    "mesh": "12×16",
+    "root": 0,
+    "region": "edge",
+    "fault_type": "link_point",
+    "bad_nodes": [],
+    "bad_edges": [
+      "8,0->8,1",
+      "8,1->8,0"
+    ],
+    "z_healthy_ref": 905,
+    "z_healthy_scheduled": 905,
+    "z_faulty": 912,
+    "ratio": 1.008,
+    "stall_healthy": 9814908,
+    "stall_faulty": 9889745,
+    "peak_healthy": 1,
+    "peak_faulty": 1,
+    "ok_healthy": true,
+    "ok_faulty": true,
+    "reachable": true,
+    "hamilton_degraded": false,
+    "is_cycle": true,
+    "flow_count_faulty": 36672,
+    "flow_count_expected": 36672,
+    "partial_coverage": false,
+    "note": ""
+  },
+  {
+    "pattern": "broadcast",
+    "rows": 12,
+    "cols": 16,
+    "mesh": "12×16",
+    "root": 0,
+    "region": "center",
+    "fault_type": "link_point",
+    "bad_nodes": [],
+    "bad_edges": [
+      "8,6->9,6",
+      "9,6->8,6"
+    ],
+    "z_healthy_ref": 26,
+    "z_healthy_scheduled": 26,
+    "z_faulty": 26,
+    "ratio": 1.0,
+    "stall_healthy": 0,
+    "stall_faulty": 0,
+    "peak_healthy": 1,
+    "peak_faulty": 1,
+    "ok_healthy": true,
+    "ok_faulty": true,
+    "reachable": true,
+    "hamilton_degraded": false,
+    "is_cycle": true,
+    "flow_count_faulty": 17,
+    "flow_count_expected": 17,
+    "partial_coverage": false,
+    "note": ""
+  },
+  {
+    "pattern": "reduce",
+    "rows": 12,
+    "cols": 16,
+    "mesh": "12×16",
+    "root": 0,
+    "region": "center",
+    "fault_type": "link_point",
+    "bad_nodes": [],
+    "bad_edges": [
+      "8,6->9,6",
+      "9,6->8,6"
+    ],
+    "z_healthy_ref": 26,
+    "z_healthy_scheduled": 26,
+    "z_faulty": 26,
+    "ratio": 1.0,
+    "stall_healthy": 0,
+    "stall_faulty": 0,
+    "peak_healthy": 1,
+    "peak_faulty": 1,
+    "ok_healthy": true,
+    "ok_faulty": true,
+    "reachable": true,
+    "hamilton_degraded": false,
+    "is_cycle": true,
+    "flow_count_faulty": 191,
+    "flow_count_expected": 191,
+    "partial_coverage": false,
+    "note": ""
+  },
+  {
+    "pattern": "allreduce",
+    "rows": 12,
+    "cols": 16,
+    "mesh": "12×16",
+    "root": 0,
+    "region": "center",
+    "fault_type": "link_point",
+    "bad_nodes": [],
+    "bad_edges": [
+      "8,6->9,6",
+      "9,6->8,6"
+    ],
+    "z_healthy_ref": 26,
+    "z_healthy_scheduled": 1,
+    "z_faulty": 4,
+    "ratio": 4.0,
+    "stall_healthy": 0,
+    "stall_faulty": 2,
+    "peak_healthy": 1,
+    "peak_faulty": 1,
+    "ok_healthy": true,
+    "ok_faulty": true,
+    "reachable": true,
+    "hamilton_degraded": false,
+    "is_cycle": true,
+    "flow_count_faulty": 712,
+    "flow_count_expected": 712,
+    "partial_coverage": false,
+    "note": ""
+  },
+  {
+    "pattern": "allgather",
+    "rows": 12,
+    "cols": 16,
+    "mesh": "12×16",
+    "root": 0,
+    "region": "center",
+    "fault_type": "link_point",
+    "bad_nodes": [],
+    "bad_edges": [
+      "8,6->9,6",
+      "9,6->8,6"
+    ],
+    "z_healthy_ref": 96,
+    "z_healthy_scheduled": 96,
+    "z_faulty": 193,
+    "ratio": 2.01,
+    "stall_healthy": 0,
+    "stall_faulty": 0,
+    "peak_healthy": 1,
+    "peak_faulty": 1,
+    "ok_healthy": true,
+    "ok_faulty": true,
+    "reachable": true,
+    "hamilton_degraded": true,
+    "is_cycle": false,
+    "flow_count_faulty": 191,
+    "flow_count_expected": 384,
+    "partial_coverage": true,
+    "note": "部分流(191/384); 哈密顿环→路径"
+  },
+  {
+    "pattern": "gather",
+    "rows": 12,
+    "cols": 16,
+    "mesh": "12×16",
+    "root": 0,
+    "region": "center",
+    "fault_type": "link_point",
+    "bad_nodes": [],
+    "bad_edges": [
+      "8,6->9,6",
+      "9,6->8,6"
+    ],
+    "z_healthy_ref": 96,
+    "z_healthy_scheduled": 96,
+    "z_faulty": 97,
+    "ratio": 1.01,
+    "stall_healthy": 0,
+    "stall_faulty": 0,
+    "peak_healthy": 1,
+    "peak_faulty": 1,
+    "ok_healthy": true,
+    "ok_faulty": true,
+    "reachable": true,
+    "hamilton_degraded": true,
+    "is_cycle": false,
+    "flow_count_faulty": 190,
+    "flow_count_expected": 191,
+    "partial_coverage": true,
+    "note": "部分流(190/191); 哈密顿环→路径"
+  },
+  {
+    "pattern": "alltoall",
+    "rows": 12,
+    "cols": 16,
+    "mesh": "12×16",
+    "root": 0,
+    "region": "center",
+    "fault_type": "link_point",
+    "bad_nodes": [],
+    "bad_edges": [
+      "8,6->9,6",
+      "9,6->8,6"
+    ],
+    "z_healthy_ref": 905,
+    "z_healthy_scheduled": 905,
+    "z_faulty": 1214,
+    "ratio": 1.341,
+    "stall_healthy": 9814908,
+    "stall_faulty": 10579626,
+    "peak_healthy": 1,
+    "peak_faulty": 1,
+    "ok_healthy": true,
+    "ok_faulty": true,
+    "reachable": true,
+    "hamilton_degraded": false,
+    "is_cycle": true,
+    "flow_count_faulty": 36672,
+    "flow_count_expected": 36672,
+    "partial_coverage": false,
+    "note": ""
   }
 ]
 </script>
